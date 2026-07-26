@@ -4,6 +4,7 @@
 
 mod error;
 mod model;
+mod package;
 mod parser;
 mod resource;
 
@@ -14,6 +15,7 @@ pub use model::{
     Page, PageId, PageObject, Rect, ResourceId, ResourceRef, Section, SectionGroup, SectionId,
     SourceId, Table, TableCell, TextAlignment, TextBlock, TextRun, TextStyle,
 };
+pub use package::{ExtractionReport, OnePkgExtractor};
 pub use parser::{LoadedNotebook, OneNoteLoader, ParseLimits};
 pub use resource::ResourceStore;
 

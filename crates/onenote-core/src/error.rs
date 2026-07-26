@@ -56,6 +56,39 @@ pub enum Error {
         #[source]
         source: std::io::Error,
     },
+
+    /// No supported external CAB extractor is available.
+    #[error("could not find 7zz or 7z in PATH; install 7-Zip to open .onepkg files")]
+    ExtractorNotFound,
+
+    /// The requested durable extraction destination already exists.
+    #[error("extraction destination already exists: {path}")]
+    DestinationExists {
+        /// Existing destination.
+        path: PathBuf,
+    },
+
+    /// The package failed structural or path validation.
+    #[error("invalid OneNote package {path}: {message}")]
+    InvalidPackage {
+        /// Rejected package.
+        path: PathBuf,
+        /// Validation detail.
+        message: String,
+    },
+
+    /// The external extractor failed.
+    #[error("extractor failed while processing {path}: {message}")]
+    ExtractionFailed {
+        /// Package being processed.
+        path: PathBuf,
+        /// Bounded failure detail.
+        message: String,
+    },
+
+    /// Package extraction was cancelled.
+    #[error("OneNote package extraction was cancelled")]
+    ExtractionCancelled,
 }
 
 /// Result type used throughout `onenote-core`.

@@ -1,5 +1,8 @@
-use onenote_core::{ElementContent, Error, NotebookEntry, ObjectKind, OneNoteLoader, ResourceRef};
+use onenote_core::{
+    ElementContent, Error, NotebookEntry, ObjectKind, OneNoteLoader, OnePkgExtractor, ResourceRef,
+};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 
 #[test]
 fn extracted_private_notebook_projects_all_native_sections() {
@@ -65,12 +68,44 @@ fn extracted_private_notebook_projects_all_native_sections() {
     }
 }
 
+#[test]
+fn supplied_package_extracts_on_disk_to_a_complete_native_tree() {
+    let Some(package) = package_path() else {
+        return;
+    };
+    let Ok(extractor) = OnePkgExtractor::detect() else {
+        return;
+    };
+    let temporary = tempfile::tempdir().expect("temporary extraction parent");
+    let destination = temporary.path().join("notebook");
+    let source_size = std::fs::metadata(&package).expect("package metadata").len();
+
+    let report = extractor
+        .extract(&package, &destination, &AtomicBool::new(false))
+        .expect("the supplied package must extract");
+
+    assert_eq!(report.section_files, 32);
+    assert_eq!(report.table_of_contents_files, 5);
+    assert_eq!(report.total_files, 37);
+    assert_eq!(
+        std::fs::metadata(&package).expect("package metadata").len(),
+        source_size,
+        "package source must remain unchanged"
+    );
+    assert!(report.destination.is_dir());
+}
+
 fn corpus_path() -> Option<PathBuf> {
     let path = std::env::var_os("ONENOTE_TEST_CORPUS").map_or_else(
         || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.extracted"),
         PathBuf::from,
     );
     path.is_dir().then_some(path)
+}
+
+fn package_path() -> Option<PathBuf> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.onepkg");
+    path.is_file().then_some(path)
 }
 
 fn native_files(root: &Path) -> Vec<PathBuf> {
