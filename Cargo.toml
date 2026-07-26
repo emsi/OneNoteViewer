@@ -6,6 +6,7 @@ members = [
     "crates/onenote-render-gtk",
     "crates/onenote-viewer",
 ]
+exclude = ["third_party/onenote.rs"]
 resolver = "2"
 
 [workspace.package]
@@ -23,7 +24,7 @@ onenote-core = { path = "crates/onenote-core" }
 onenote-index = { path = "crates/onenote-index" }
 onenote-render = { path = "crates/onenote-render" }
 onenote-render-gtk = { path = "crates/onenote-render-gtk" }
-onenote_parser = { git = "https://github.com/msiemens/onenote.rs.git", rev = "f9cdc59f984bc1f7f096b54100cefaaebc892573" }
+onenote_parser = { path = "third_party/onenote.rs/crates/parser" }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 serde_json = "1.0.140"

@@ -1,0 +1,17 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "1.1.1"
+authors = ["Markus Siemens <markus@m-siemens.de>"]
+edition = "2024"
+rust-version = "1.85"
+license = "MPL-2.0"
+repository = "https://github.com/msiemens/onenote.rs"
+
+[workspace.dependencies]
+onenote_parser-macros = { version = "=1.1.1", path = "crates/parser-macros" }
+
+[workspace.lints.clippy]
+disallowed_macros = "deny"
