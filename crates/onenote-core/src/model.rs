@@ -8,8 +8,12 @@ macro_rules! string_id {
         pub struct $name(String);
 
         impl $name {
-            pub(crate) fn new(value: String) -> Self {
-                Self(value)
+            /// Construct an identifier from its persisted representation.
+            ///
+            /// Callers normally receive identifiers from the parser or index;
+            /// this constructor supports durable storage and protocol adapters.
+            pub fn new(value: impl Into<String>) -> Self {
+                Self(value.into())
             }
 
             /// Return the stable identifier as text.
@@ -231,6 +235,13 @@ pub struct PageObject {
 }
 
 impl PageObject {
+    /// Build searchable visible text for this object without loading resources.
+    pub fn visible_text(&self) -> String {
+        let mut output = String::new();
+        self.append_visible_text(&mut output);
+        output
+    }
+
     fn append_visible_text(&self, output: &mut String) {
         self.kind.append_visible_text(output);
     }
