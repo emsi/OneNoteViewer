@@ -377,6 +377,8 @@ name = "onenote-render"
 version = "0.1.0"
 dependencies = [
  "onenote-core",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
