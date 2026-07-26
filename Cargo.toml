@@ -20,6 +20,8 @@ repository = "https://github.com/emsi/OneNoteViewer"
 anyhow = "1.0.98"
 blake3 = "1.8.2"
 gtk = { package = "gtk4", version = "0.9.6", features = ["v4_14"] }
+image = { version = "=0.25.8", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
+num-traits = "0.2.19"
 onenote-core = { path = "crates/onenote-core" }
 onenote-index = { path = "crates/onenote-index" }
 onenote-render = { path = "crates/onenote-render" }
