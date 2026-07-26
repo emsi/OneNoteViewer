@@ -47,13 +47,16 @@ Index/query API     UI-neutral page scene
    7-Zip process extracts into an on-disk staging directory, the result is
    validated and atomically published, and the resulting directory returns to
    step 1. Package entries never become an in-memory notebook representation.
-3. Parsing occurs on bounded worker threads. GTK objects remain on the main
-   thread.
+3. Discovery, parsing, and indexing run sequentially on one viewer-owned
+   worker; scene construction and queries run in short independent jobs. GTK
+   objects remain on the main thread. Bounded scheduling and cancellation are
+   still required before release.
 4. The adapter converts parser objects to an immutable domain model and emits
    structured warnings for skipped or degraded content.
-5. The indexer updates a transactionally isolated index generation.
-6. The UI swaps to the completed model/index. A failed refresh leaves the last
-   good generation available and shows the failure.
+5. The indexer updates a transactionally isolated index generation after the
+   parsed model becomes available to the UI.
+6. A failed index replacement leaves its last good generation available. Full
+   automatic/manual source refresh is not implemented yet.
 
 Source files are opened read-only. There is no write-back code path.
 The immutable domain model preserves semantic objects and their source
@@ -127,9 +130,10 @@ workspace instead of replacing the active set. Search result activation
 selects the owning notebook, section, and page before scrolling the matching
 canvas object into view.
 
-The index is stored below the XDG application data directory and tagged with a
-schema version, app version, source fingerprint, and parser version. Any
-mismatch triggers a rebuild. Deleting the index never loses notebook data.
+The index is stored below the XDG cache directory and carries a schema version
+plus per-source fingerprints. An incompatible schema currently returns a
+structured rebuild-required error; automated rebuild and app/parser version
+tagging remain open. Deleting the index never loses notebook data.
 
 `onenote-index` exposes ingestion and structured query operations as a public
 headless library. Search requests and results carry typed filters and stable
@@ -155,15 +159,20 @@ of application-global state, cancellable, and resource-bounded. See
 
 ## Concurrency and Memory
 
-- The viewer schedules parsing and indexing on a bounded worker pool; reusable
-  libraries create no process-global executor and accept caller cancellation.
-- Work is cancellable between sections and pages.
+- The viewer currently serializes discovery, parsing, and indexing on one
+  worker and runs scene/search jobs separately. It requires bounded scheduling
+  and operation cancellation before release.
+- Reusable index, scene, and package APIs accept caller cancellation at their
+  documented checkpoints; parser projection cancellation is not yet public.
 - Binary payloads are streamed and decoded lazily; attachments are not loaded
   while indexing unless a bounded extractor is explicitly enabled.
-- Images use decoded-size limits and thumbnail caches.
-- Libraries report progress through caller-provided callbacks/channels; the
-  viewer adapts them to GLib on the UI boundary.
-- A single malformed page should not abort other pages or notebooks.
+- Images use encoded/decoded size and dimension limits plus a bounded texture
+  cache.
+- The index library reports progress through caller callbacks and the viewer
+  adapts worker results to GLib polling. User-visible progress detail is not
+  wired yet.
+- Notebook failures are isolated in the viewer. Finer per-section/page parser
+  recovery remains corpus-dependent.
 
 Initial resource ceilings are defined in the limitations document and become
 configuration only after real corpus measurements.
@@ -180,7 +189,8 @@ configuration only after real corpus measurements.
   user-approved destination, followed by an explicit open action.
 - Open external links only after a user gesture and show non-HTTP(S) schemes.
 - Package extraction runs out of process into a private staging directory and
-  applies entry-count, expanded-size, path, file-type, and disk-space limits.
+  applies listing-size, entry-count, path, and file-type validation. Expanded
+  byte and disk-space ceilings remain a release blocker.
 - The Flatpak build requests no network permission for the core viewer.
 
 ## Packaging

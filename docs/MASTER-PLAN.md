@@ -1,7 +1,7 @@
 # OneNote Viewer Master Plan
 
-- **Status:** Planning baseline established; implementation not started
-- **Current phase:** Milestone 1 feasibility work, ready to start
+- **Status:** Functional implementation baseline; not release-ready
+- **Current phase:** Milestone 2 readable-viewer completion and evidence
 - **Last reconciled:** 2026-07-26 UTC
 
 ## Role of This Document
@@ -121,27 +121,48 @@ The detailed milestone sequence and exit gates are in the
 ### Current Status
 
 - Milestone 0 documentation and evidence baseline is complete.
-- The supplied private `.onepkg` has passed CAB integrity testing and was
-  extracted on disk to 32 native `.one` files and five `.onetoc2` files; all
-  expected native headers and the unchanged source hash were verified.
+- The five-crate Rust workspace and pinned Rust 1.85.1 toolchain are in place.
+- `onenote-core` projects native `.one`/`.onetoc2` sources into a public
+  semantic and geometry model, fingerprints source trees, lazily exposes
+  bounded resources, and manages validated, atomic, on-disk `.onepkg`
+  extraction through `7zz`/`7z`.
+- `onenote-render` builds deterministic UI-neutral scenes, and
+  `onenote-render-gtk` provides an independently runnable Pango/GSK page view
+  with culling, pan, zoom, hit testing, bounded asynchronous image decoding,
+  and Cairo ink/line primitives.
+- `onenote-index` provides transactional multi-source FTS5 indexing,
+  structured result locators, snippets, filtering, integrity checks, and a
+  versioned JSON Lines query adapter with an independent process test.
+- `onenote-viewer` provides persistent multi-notebook discovery and
+  navigation, background parsing/indexing/scene construction, global search
+  result navigation, a native freeform canvas, and package onboarding.
+- The supplied private `.onepkg` has passed unchanged-source extraction to 32
+  `.one` and five `.onetoc2` files. All 32 sections parse, every page builds a
+  finite scene, 637 pages index in the root notebook, and the complete viewer
+  opens and indexes it under Xvfb. A separate two-source run proved simultaneous
+  workspace and index behavior.
 - Ten primary Microsoft reference PDFs are pinned and reproducibly verified.
-- No application or library implementation has started.
-- The installed Rust 1.75 toolchain is below the pinned parser's Rust 1.85
-  requirement; toolchain setup is an explicit first implementation task.
+- Workspace tests, private-corpus tests, strict Clippy, formatting, and index
+  integrity checks pass.
+- This evidence is deliberately narrow. It does not prove release-grade
+  fidelity, accessibility, security, producer breadth, or distribution.
+  [Remaining work](REMAINING-WORK.md) is the authoritative completion-gap list.
 
 ### Next Execution Order
 
-1. Create the five-crate Cargo workspace and pin a suitable Rust toolchain and
-   reviewed parser revision.
-2. Prove `onenote-core` can parse the extracted private notebook and corpus
-   fixtures with bounded resources and structured diagnostics.
-3. Prove the UI-neutral scene and embeddable GTK renderer through a standalone
-   host application.
-4. Prove multi-source indexing, structured queries, stable result resolution,
-   and the versioned non-Rust protocol through independent clients.
-5. Compose the same public components into the multi-notebook desktop viewer.
-6. Expand producer, malformed-input, visual-fidelity, accessibility,
-   performance, and packaging evidence before compatibility claims.
+1. Complete viewer workflows: explicit link/attachment handling, package and
+   long-operation cancellation/progress, diagnostics, source refresh, and
+   fuller workspace restoration.
+2. Establish visual oracles and measured tolerances for rich text, tables,
+   images/printouts, ink, negative coordinates, overlap, and large pages.
+3. Map scene semantics into GTK accessibility, add keyboard navigation, and
+   pass Orca tests under GNOME/KDE and Wayland/X11.
+4. Expand licensed producer/feature and malformed/fuzz corpora; close parser,
+   allocation, path, and process-lifecycle risks with repeatable evidence.
+5. Benchmark and optimize cold parse/index, warm search, pan/zoom, image cache,
+   and large workspace memory.
+6. upstream or retire the three local parser compatibility patches, choose a
+   project license, publish API documentation, and complete Flatpak packaging.
 
 ## Definition of Success
 
@@ -181,7 +202,9 @@ Read the project documents in this order:
    contracts.
 6. **[Limitations](limitations.md):** open risks, accepted boundaries, and
    release blockers.
-7. **[Completion audit](plans/completion-audit.md):** historical evidence that
+7. **[Remaining work](REMAINING-WORK.md):** current implementation gaps and the
+   evidence required to close them.
+8. **[Completion audit](plans/completion-audit.md):** historical evidence that
    the documentation baseline was assembled; it is not the current plan.
 
 If documents disagree, the more specific accepted specification or ADR governs

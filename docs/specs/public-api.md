@@ -8,8 +8,8 @@ This specification refines the reusable-component deliverable in the
 OneNote Viewer must make local OneNote content useful beyond its own desktop
 shell. This specification defines supported integration boundaries for other
 note-taking, knowledge-management, desktop-search, and archival applications.
-It describes contracts; exact Rust names may change during milestone 1 before
-the first published API version.
+It describes contracts. The first Rust implementations now exist, but remain
+pre-1.0 and may change before the first published API version.
 
 The APIs preserve native OneNote semantics and freeform geometry. They do not
 provide HTML, Markdown, or PDF conversion.
@@ -32,10 +32,12 @@ provide HTML, Markdown, or PDF conversion.
 
 ## Common Domain API
 
-`onenote-core` is the shared foundation. It exposes read-only operations for a
-notebook directory, `.onetoc2`, or standalone `.one`, returning immutable
-domain objects plus diagnostics. Package extraction is a separate optional
-operation and is never required to consume an already extracted source.
+`onenote-core` is the shared foundation. `OneNoteLoader` exposes read-only
+operations for a `.onetoc2` or standalone `.one`, returning immutable domain
+objects plus diagnostics and a lazy `ResourceStore`. Directory root discovery
+currently belongs to the viewer and should move behind a reusable core API.
+`OnePkgExtractor` is a separate optional operation and is never required to
+consume an already extracted source.
 
 The public model includes:
 
@@ -60,8 +62,8 @@ without linking GTK or SQLite.
 layout inputs, stacking order, hit regions, accessibility semantics, resource
 handles, and source locators.
 
-Scene construction must be deterministic for the same model, render options,
-font environment, and viewport constraints. It supports cancellation and
+Scene construction is deterministic for the same model and render options. It
+supports cancellation and
 returns diagnostics for unsupported or approximated content. It performs no
 file selection, link launching, attachment execution, or application
 navigation.
@@ -76,10 +78,12 @@ page widget/controller. A host application supplies the page, viewport,
 theme/font context, and callbacks for link, attachment, selection, and
 navigation actions.
 
-The component owns pan, zoom, viewport culling, hit testing, and accessible
-page-object presentation. It does not own notebook navigation, search UI,
-window creation, recent files, or workspace persistence. A minimal example
-must embed it in a window that does not link `onenote-viewer`.
+The component owns pan, zoom, viewport culling, hit testing, bounded lazy image
+decode, and retention of scene accessibility semantics. Mapping each scene
+object to a keyboard-focusable GTK accessible child is not implemented. It
+does not own notebook navigation, search UI, window creation, recent files, or
+workspace persistence. The `standalone` example embeds it in a window without
+linking `onenote-viewer`.
 
 The first supported interface is a Rust crate. A GObject-introspectable wrapper
 for use from other GTK languages is a pre-1.0 integration goal; it must be
@@ -87,16 +91,17 @@ versioned and tested rather than exposing unstable Rust symbols as a C ABI.
 
 ## Index and Query APIs
 
-`onenote-index` is a headless library. It accepts explicit `onenote-core`
-sources or normalized page documents and owns its private, versioned storage.
-Its public operations cover:
+`onenote-index` is a headless library. It accepts an explicit `onenote-core`
+`Notebook` and owns its private, versioned storage. Its current public
+operations cover:
 
-- create/open/rebuild an index at a caller-selected location;
-- add, replace, refresh, and remove a source transactionally;
-- report source/index status and structured compatibility diagnostics;
+- create/open an index at a caller-selected location;
+- replace and remove a complete source transactionally;
+- report indexed source generations and verify index integrity;
 - execute bounded structured queries across caller-selected source scopes;
-- cancel ingestion and queries;
-- resolve stored search hits against the current source fingerprint.
+- cancel replacement and queries;
+- return source fingerprints with stored search hits so the caller can reject
+  stale results.
 
 A search request contains query text, source scope, field filters, result
 limit, and optional ranking/snippet options. A search hit contains rank,
@@ -120,9 +125,20 @@ versioned JSON Lines on standard input/output. The protocol:
 - writes diagnostics to protocol messages, not human prose mixed into stdout;
 - never becomes an always-running network service.
 
-The command is an adapter over `onenote-core` and `onenote-index`, not a second
-implementation. Its schema is versioned independently from internal Rust types
-and includes compatibility fixtures.
+The `onenote-query` command is an adapter over `onenote-core` and
+`onenote-index`, not a second implementation. Its schema is versioned
+independently from internal Rust types and has a process-level compatibility
+test.
+
+## Current Publication Status
+
+The library boundaries, Rustdoc comments, standalone GTK example, independent
+JSONL process client, structured errors, typed locators, resource limits, and
+cancellation tests exist. They are usable implementation boundaries but are
+not yet published/stable public artifacts. Missing quality-contract items are
+tracked in [remaining work](../REMAINING-WORK.md), especially malformed-input
+breadth, callback/thread documentation, golden protocol fixtures, semantic
+versioning guidance, GObject introspection, and a project license.
 
 ## Compatibility and Quality Contract
 

@@ -1,6 +1,6 @@
 # OneNote Viewer for Linux
 
-OneNote Viewer is a planned mature, native Linux desktop application for
+OneNote Viewer is a native Linux desktop application for
 opening, viewing, indexing, and searching local Microsoft OneNote notebooks.
 It reads the native `.one` and `.onetoc2` data directly and reconstructs the
 OneNote freeform page canvas; HTML, Markdown, PDF, or another linear document
@@ -18,10 +18,10 @@ index/query behavior live behind documented library boundaries so other
 note-taking and knowledge-management software can render `.one` sections or
 find relevant OneNote pages without adopting the complete desktop application.
 
-This repository currently contains the implementation specification,
-architecture decisions, delivery plan, and a versioned copy of the primary
-format references. Application code starts with the milestone 1 parser,
-renderer, and search feasibility work.
+This repository contains a working Rust/GTK implementation, its specifications
+and architecture decisions, and a versioned copy of the primary format
+references. The implementation is a functional pre-release baseline; it is not
+yet a broad format-compatibility or visual-fidelity claim.
 
 ## Scope
 
@@ -61,23 +61,48 @@ and document authority. The supporting documents are:
 - [Public integration API](docs/specs/public-api.md)
 - [Persisted feature inventory](docs/specs/feature-matrix.md)
 - [Known limitations and risks](docs/limitations.md)
+- [Remaining release work](docs/REMAINING-WORK.md)
 - [Roadmap and acceptance gates](docs/plans/roadmap.md)
 - [Reference provenance](docs/references/README.md)
 
 ## Status
 
-**Planning baseline established; implementation not started.**
+**Functional implementation baseline; compatibility and fidelity hardening are
+still in progress.**
 
-The supplied private `.onepkg` has been structurally extracted and validated,
-but semantic parser and renderer compatibility is not yet proven. The first
-implementation gate is a corpus-backed proof that the selected Rust parser can
-read representative OneNote Desktop notebooks without data loss. The project
-must not claim broad format compatibility until the fixture matrix in the
-roadmap is exercised.
+The five-crate workspace now parses native notebook trees, performs bounded
+on-disk `.onepkg` extraction, builds UI-neutral page scenes, renders them in an
+embeddable GTK widget, transactionally indexes multiple sources, exposes a
+versioned JSON Lines query process, and composes those components into a
+persistent multi-notebook GTK viewer. The supplied private package passes
+extraction, all-section parse, all-page scene, indexing, search, standalone
+renderer, and full viewer Xvfb tests.
+
+The tested corpus is still one private desktop package. Accessibility, measured
+layout fidelity, hostile-input coverage, several user actions, refresh,
+packaging, and licensing remain release blockers. See
+[remaining work](docs/REMAINING-WORK.md) for the exact gaps and completion
+evidence required.
+
+## Build and Run
+
+Ubuntu 24.04 development requires Rust 1.85.1, GTK 4.14 development files,
+Pango, Cairo, and SQLite development files. `7zz` or `7z` is optional for
+package import and is not needed to open an extracted notebook.
+
+```bash
+cargo run -p onenote-viewer -- /path/to/notebook
+cargo run -p onenote-render-gtk --example standalone -- /path/to/section.one
+cargo test --workspace --all-targets
+```
+
+The first command accepts a `.one`, `.onetoc2`, or directory. Additional paths
+add sources to the same workspace. `.onepkg` files are imported through the
+viewer so a durable destination can be selected.
 
 ## Repository Shape
 
-The intended code layout is a modular Cargo workspace:
+The code is a modular Cargo workspace:
 
 ```text
 crates/
@@ -92,21 +117,21 @@ packaging/          Flatpak and distribution metadata
 scripts/            Reproducible maintenance and validation commands
 ```
 
-Directories are added when they gain real contents. See the
-[repository layout](docs/architecture/repository-layout.md) for ownership
-rules and dependency direction.
+See the [repository layout](docs/architecture/repository-layout.md) for
+ownership rules and dependency direction.
 
 ## Safety Baseline
 
-Notebook files are untrusted input. Parsing is bounded, source paths are
-canonicalized, attachment names are sanitized, external links require user
-activation, and embedded files are never executed or previewed in-process.
-The SQLite index is disposable derived data under the user's XDG data/cache
-directories.
+Notebook files are untrusted input. Current code canonicalizes sources, applies
+projection and payload limits, decodes images lazily with allocation ceilings,
+validates package paths, stages extraction privately, and publishes packages
+atomically. It never writes notebook sources. The SQLite index is disposable
+derived data under the user's XDG cache directory. Remaining hostile-input and
+external-action work is tracked explicitly rather than implied complete.
 
 ## Licensing
 
-No project source license has been selected yet. That decision must be made by
-the copyright owner before application code is accepted. Downloaded reference
-documents retain their original terms; see
+No project source license has been selected yet. That decision must be made
+before redistribution or external contributions. The vendored parser retains
+MPL-2.0; downloaded reference documents retain their original terms. See
 [reference provenance](docs/references/README.md).

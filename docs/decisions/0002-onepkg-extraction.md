@@ -71,6 +71,10 @@ a reviewed extractor with compatible licensing or disable package extraction
 with the same clear explanation. Escaping the sandbox to run a host command is
 not an accepted design.
 
+The current native viewer attempts detection after the package and destination
+are selected and reports a structured error. Proactive button disablement and
+installation guidance are still UI work.
+
 ## Security and Resource Policy
 
 Archive listing is advisory until the extracted tree is independently checked.
@@ -85,9 +89,25 @@ The implementation must also apply:
   telemetry;
 - source hash or stable fingerprint checks around extraction.
 
-Production defaults will be selected from the milestone 1 corpus. Listing and
-extraction command output is parsed only under the forced locale and pinned
-7-Zip compatibility tests.
+The current implementation bounds listing capture to 16 MiB and extracted
+entries to 1,000,000. It does not yet enforce single/total expanded bytes,
+preflight disk space, force a locale, directly verify `MSCF`, or re-fingerprint
+the source after extraction. These remain release blockers; the decision above
+is not evidence that every step is already implemented.
+
+## Implementation Status
+
+`OnePkgExtractor` detects `7zz`/`7z`, validates a bounded structured listing,
+tests the archive, rejects unsafe paths, extracts without a shell into a private
+sibling staging directory, reaps/kills on cancellation, rejects symlinks and
+special files, checks canonical containment and native file counts, rejects an
+existing destination, and atomically publishes the durable tree. It never
+loads archive contents through the parser package API.
+
+The current viewer invokes that API off the GTK thread and opens the resulting
+directory through normal discovery. UI progress/cancellation and the resource
+checks listed immediately above are not implemented. The exact completion
+work is tracked in [remaining work](../REMAINING-WORK.md).
 
 ## Consequences
 

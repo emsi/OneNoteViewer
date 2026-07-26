@@ -5,6 +5,19 @@
 - **Decision owners:** Project maintainers
 - **Revisit after:** Milestone 1 parser/canvas/search spikes
 
+## 2026-07-26 Revisit
+
+The first implementations of all three spikes pass their functional and
+private-corpus tests, so Rust/GTK4/SQLite remains the selected stack. The GTK
+renderer runs independently and in the complete viewer under Xvfb; the index
+is transactional and the parser adapter isolates the vendored dependency.
+
+This does not close the five GTK fallback gates below. Frame pacing,
+mixed-script fixtures, GTK accessible canvas children, stable-memory
+measurements, and GNOME/KDE appearance still need recorded evidence. Qt is
+therefore a contingency, not an active parallel implementation. See
+[remaining work](../REMAINING-WORK.md).
+
 ## Decision
 
 Build a native Linux application in stable Rust using:
@@ -134,8 +147,9 @@ internals.
 
 ## Dependency Policy
 
-- Pin the Rust toolchain through `rust-toolchain.toml` once code exists.
-- Pin the parser to an exact commit during the spike and move to a crates.io
+- Keep the Rust 1.85.1 toolchain pinned through `rust-toolchain.toml`.
+- Keep the vendored parser tied to its exact recorded revision during
+  pre-release work and move to a crates.io
   release before beta.
 - Prefer system/Flatpak GTK, Pango, and GIO libraries.
 - Keep the 7-Zip dependency and sandbox behavior explicit as specified by ADR

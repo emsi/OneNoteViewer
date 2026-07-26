@@ -26,9 +26,18 @@ Run:
 ./scripts/validate-docs.sh
 ```
 
-Once Rust code exists, the required local checks will also include formatting,
-clippy with warnings denied, tests, dependency/license audit, and
-`git diff --check`.
+Required implementation checks are:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace --all-targets
+cargo doc --workspace --no-deps
+git diff --check
+```
+
+Dependency/license audit remains a release gate and cannot pass until the
+project source license is selected.
 
 The source-code license must be selected before external code contributions
 are accepted.

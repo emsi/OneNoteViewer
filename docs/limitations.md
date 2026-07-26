@@ -14,12 +14,12 @@ contains the user-facing behavior.
 
 ### L-001: Incomplete representative notebook corpus
 
-- **Status:** Planned
+- **Status:** Open
 - **Impact:** Compatibility and visual fidelity claims cannot yet be verified
   across producers and the full feature matrix.
-- **Evidence:** One private user package is now available and has been
-  structurally extracted, but it is not redistributable and does not establish
-  producer or feature breadth.
+- **Evidence:** One private user package is structurally extracted, all 32
+  sections parse, every page builds a scene, and the root's 637 pages index.
+  It is not redistributable and does not establish producer or feature breadth.
 - **Mitigation:** Build the producer/feature matrix in
   [the corpus specification](specs/test-corpus.md) before beta.
 - **Release gate:** All MVP rows have at least one legal positive fixture;
@@ -27,12 +27,15 @@ contains the user-facing behavior.
 
 ### L-002: Desktop parser support is not in a stable release
 
-- **Status:** Planned
+- **Status:** Open
 - **Impact:** The current crates.io `onenote_parser` 1.1.1 targets FSSHTTP
   content. Desktop revision-store support exists at upstream commit
   `f9cdc59...` and is described for the next major release.
-- **Mitigation:** Pin the commit only for milestone 1, review its diff and
-  security posture, contribute fixes upstream, and move to a tagged release.
+- **Current mitigation:** Revision `f9cdc59...` is vendored under MPL-2.0 and
+  isolated behind `onenote-core`. `third_party/onenote.rs/PATCHES.md` records
+  three narrow compatibility patches required by the private corpus.
+- **Remaining mitigation:** Review and upstream those patches, audit the
+  complete fork, and move to a tagged release or explicitly maintained fork.
 - **Package boundary:** Its unreleased `.onepkg` API is not used because it
   expands package contents in memory; ADR 0002 owns package extraction.
 - **Release gate:** Tagged parser version passes the complete input and
@@ -52,7 +55,7 @@ contains the user-facing behavior.
 
 ### L-004: Ink and OfficeMath are unofficially specified
 
-- **Status:** Planned
+- **Status:** Open
 - **Impact:** Rare stroke dimensions, pen styles, nested ink, and exotic math
   operators can render incorrectly.
 - **Mitigation:** Use the pinned `onenote.rs` informal specifications and
@@ -114,6 +117,12 @@ contains the user-facing behavior.
   fallback.
 - **Boundary:** The upstream in-memory package API is prohibited. Normal
   viewing and indexing never depend on the extractor.
+- **Current evidence:** Listing/path validation, entry count/type checks,
+  private staging, cancellation, destination conflicts, and atomic publication
+  are implemented. Tests cover unsafe paths, bounded listing capture,
+  pre-launch cancellation, unchanged-source real extraction, and corpus
+  counts. The viewer imports packages but does not yet expose progress or
+  cancellation.
 - **Release gate:** Missing-tool, corrupt/truncated, path, limit, cancellation,
   partial-output, and source-unchanged cases pass.
 
@@ -199,22 +208,28 @@ lost effects.
 - **Mitigation:** Scene objects expose accessible text/link/image roles,
   reading order, focus actions, and bounds; use standard GTK controls where
   possible.
+- **Current evidence:** UI-neutral scene semantics exist and navigation lists
+  use standard virtualized GTK controls. The custom canvas does not yet expose
+  scene nodes as accessible GTK children.
 - **Release gate:** Orca keyboard/screen-reader tests for text, links,
   attachments, navigation, zoom, and search results.
 
 ### L-019: Extreme page coordinates and sizes
 
-- **Status:** Planned
+- **Status:** Open
 - **Impact:** A malformed or legitimately huge canvas can overflow transforms,
   allocate enormous surfaces, or degrade pan/zoom.
 - **Mitigation:** finite-number validation, coordinate ceilings, viewport
   culling, tiled image decode, and visible warnings for clamped content.
+- **Current evidence:** Scene tests require finite bounds, viewport culling is
+  active, and numeric GTK conversions saturate. Coordinate ceilings, tiled
+  image decode, and user-visible clamp warnings are not implemented.
 
 ## Search Limitations
 
 ### L-020: Multilingual tokenization
 
-- **Status:** Planned
+- **Status:** Open
 - **Impact:** SQLite `unicode61` is robust baseline tokenization but does not
   segment/stem every language ideally.
 - **Mitigation:** multilingual fixtures, preserved language IDs, versioned
@@ -237,16 +252,23 @@ lost effects.
 - **Impact:** Files changed externally can make search disagree with the view.
 - **Mitigation:** source fingerprint per section, transactional generations,
   refresh notification, and automatic rebuild on parser/schema mismatch.
+- **Current evidence:** Sources are fingerprinted and index replacement is
+  transactional. The viewer does not yet monitor, notify, or refresh changed
+  source trees and does not automatically rebuild an incompatible schema.
 
 ## Security and Packaging Risks
 
 ### L-023: Hostile notebook content
 
-- **Status:** Planned
+- **Status:** Open
 - **Impact:** Integer overflows, decompression bombs, path traversal, image
   bombs, malicious links, and attachment filenames are expected attack inputs.
 - **Mitigation:** checked/bounded parsing, canonical root containment,
   payload streaming, content sniffing, no embedded web runtime, and fuzzing.
+- **Current evidence:** Canonical source access, projection/resource limits,
+  package containment checks, bounded image decode, inert URLs/attachments,
+  and no web runtime are implemented. Parser fuzzing, aggregate memory limits,
+  attachment extraction policy, and package expansion/disk ceilings remain.
 
 ### L-024: Flatpak access to notebook directory trees
 
@@ -262,7 +284,7 @@ lost effects.
 ### L-025: No source-code license selected
 
 - **Status:** Open
-- **Impact:** External contributions and redistribution of future code are
+- **Impact:** External contributions and redistribution of the current code are
   legally ambiguous.
 - **Mitigation:** Copyright owner chooses and adds a license before accepting
   implementation contributions. MPL-2.0 is operationally compatible with the
@@ -278,7 +300,7 @@ lost effects.
 
 ### L-027: Premature public API stability
 
-- **Status:** Planned
+- **Status:** Open
 - **Impact:** Freezing parser, scene, GTK, or query interfaces before corpus
   evidence can preserve poor abstractions; leaving them informal makes
   downstream reuse unreliable.
@@ -291,18 +313,20 @@ lost effects.
   documentation, protocol golden fixtures, and a reuse-compatible project
   license.
 
-## Initial Resource Ceilings
+## Implemented Resource Ceilings
 
-These are conservative design requirements, not yet tuned defaults:
+Current defensive defaults are:
 
-- maximum nesting/graph traversal depth: 256;
-- maximum archive entries: 10,000;
-- maximum single decoded image: 100 megapixels;
-- maximum generated diagnostic detail per object: 4 KiB;
-- maximum search result page: 100 results;
-- cancellation checkpoints at least once per page.
+- 10,000 sections, 1,000,000 pages/resources, 2,000,000 objects, and
+  10,000,000 ink points per projected object;
+- 1,000,000 extracted entries and a 16 MiB bounded archive listing;
+- 32 MiB encoded and 64 MiB decoded per image, maximum dimension 16,384, and a
+  128 MiB GTK texture cache;
+- 1,000,000 generated scene nodes per page;
+- 1,000 search results and 2,048 snippet characters per query.
 
-Byte limits for sections, attachments, archive expansion, total model memory,
-and coordinate ranges must be chosen from milestone 1 measurements. Until
-then, release builds must not accept untrusted `.onepkg` files even though the
-private package can exercise the extraction spike.
+These ceilings are code defaults, not corpus-tuned release guarantees.
+Section bytes, aggregate model memory, attachment extraction, expanded package
+bytes/disk, coordinates, graph depth, and concurrency queues still need
+measured limits. Until those and hostile-input tests pass, release builds must
+not claim arbitrary untrusted notebook/package safety.

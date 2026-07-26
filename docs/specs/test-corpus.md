@@ -28,6 +28,11 @@ Real notebooks supplied locally through `ONENOTE_TEST_CORPUS`; never committed.
 Tests report hashed case IDs and feature counts, not notebook text, filenames,
 authors, or screenshots.
 
+Current private evidence is one desktop `.onepkg`: extraction yields 32
+sections and five TOCs; the root notebook projects all sections, every page
+builds a finite scene, and 637 pages index and search. This is an implementation
+smoke corpus, not fulfillment of the producer or feature matrices below.
+
 ### Malformed/Fuzz Corpus
 
 Minimal generated truncations, length/count mutations, path escapes, archive

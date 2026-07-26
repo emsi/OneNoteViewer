@@ -25,64 +25,82 @@ Implementation compatibility is explicitly not claimed by this milestone.
 
 ## Milestone 1: Feasibility Spikes
 
-Run three tested feasibility workstreams. Their code may be discarded, but
-their fixtures, measurements, public-interface findings, and decisions remain
-project evidence.
+**Status: implementation spikes complete; evidence gates partially open**
+
+All three workstreams produced retained product components rather than
+throwaway code. Parser, scene, GTK, index, standalone-client, and private-corpus
+tests pass. The original performance, visual-oracle, accessibility, and broad
+corpus gates remain open and are listed in
+[remaining work](../REMAINING-WORK.md); therefore this milestone does not
+authorize a broad compatibility claim.
 
 ### Parser Spike
 
-- Create the Cargo workspace and `onenote-core`.
-- Pin a Rust toolchain meeting the reviewed parser's minimum version.
-- Pin reviewed `onenote_parser` desktop-support commit.
-- Load desktop `.one`, desktop `.onetoc2`, and FSSHTTP samples.
-- Turn the proven external `7z` procedure into a bounded package-orchestration
+- [x] Create the Cargo workspace and `onenote-core`.
+- [x] Pin Rust 1.85.1 and the reviewed parser revision.
+- [x] Load the supplied desktop `.one` and `.onetoc2` corpus.
+- [ ] Add an independently licensed FSSHTTP sample and broader producers.
+- [x] Turn the proven external `7z` procedure into a bounded package-orchestration
   API and reproduce extraction through automated integration tests.
-- Parse the already extracted private notebook tree and compare notebook-level
+- [x] Parse the extracted private notebook tree and compare notebook-level
   discovery with its individual `.one` sections and nested TOCs.
-- Dump stable domain-model JSON and structured warnings.
-- Establish memory/time/error baselines and malformed-input behavior.
-- Identify upstream API gaps for unknown objects, history, and resource limits.
+- [x] Expose a serializable stable domain model and structured diagnostics.
+- [ ] Establish recorded memory/time baselines and broad malformed-input behavior.
+- [x] Identify upstream API gaps for unknown objects, history, and resource
+  limits.
 
-**Gate:** representative desktop notebook loads without panic; page/title/text,
-images, attachments, tables, tags, ink, and math survive projection.
+**Gate status:** the complete private desktop notebook loads without panic and
+projects page/title/text, images, attachments, tables, and ink. Producer breadth,
+tag/math-specific fixtures, malformed inputs, and measurements remain open.
 
 ### Canvas Spike
 
-- Build `onenote-render` as a headless scene builder and
+- [x] Build `onenote-render` as a headless scene builder and
   `onenote-render-gtk` as a GTK4 custom widget consuming its synthetic scene.
-- Render Pango mixed-script rich text, an image, table, link, and ink.
-- Implement viewport culling, pan/zoom, hit testing, and accessibility nodes.
-- Embed the GTK component in a minimal host that does not depend on
+- [x] Render Pango rich text, images, tables, links, attachments, and ink.
+- [x] Implement viewport culling, pan/zoom, hit testing, and UI-neutral
+  accessibility semantics.
+- [x] Embed the GTK component in a minimal host that does not depend on
   `onenote-viewer`.
-- Capture GNOME/KDE, Wayland/X11 screenshots and Orca behavior.
+- [ ] Map semantic scene nodes to GTK accessibility nodes and capture
+  GNOME/KDE, Wayland/X11, and Orca evidence.
 
-**Gate:** all five fallback triggers in ADR 0001 pass. Otherwise prototype the
-same scene in Qt 6 and revisit the ADR before product code grows.
+**Gate status:** the GTK direction is retained after successful real-notebook
+Xvfb rendering and bounded-image/culling implementation. Frame pacing,
+mixed-script fixtures, accessibility, stable-memory measurement, and desktop
+appearance remain unproven, so ADR 0001 is not fully closed.
 
 ### Search Spike
 
-- Implement the page document extractor and a disposable FTS5 database.
-- Verify title/body/tag/alt/ink/attachment/link queries and snippets.
-- Exercise the structured library API from a separate Rust client and the
+- [x] Implement the page document extractor and a disposable FTS5 database.
+- [x] Verify structured multi-field extraction, safe queries, filters,
+  snippets, geometry locators, and source removal.
+- [x] Exercise the structured library API through tests and the
   versioned JSON Lines protocol from a non-Rust test process.
-- Benchmark incremental index and cancellation.
+- [x] Prove transactional rollback on cancellation.
+- [ ] Benchmark incremental refresh and warm/cold latency on recorded hardware.
 
-**Gate:** correctness fixtures pass and warm latency meets the search targets
-on recorded baseline hardware.
+**Gate status:** correctness, integrity, multi-source, cancellation, and
+independent protocol fixtures pass. Recorded latency targets remain open.
 
 ## Milestone 2: Readable Notebook MVP
 
-- Open/close/reopen multiple notebook roots.
-- Notebook/section-group/section/page navigation.
-- One-time `.onepkg` extraction with missing-tool, progress, cancellation,
+**Status: in progress**
+
+- [x] Open/close/reopen multiple notebook roots.
+- [x] Virtualized notebook/section-group/section/page navigation.
+- [ ] Complete `.onepkg` UI progress and cancellation; core missing-tool,
+  cancellation,
   staging cleanup, and destination-conflict handling.
-- Active-page freeform canvas with text, lists, tables, images, and printouts.
-- Read-only tags, links, attachment metadata/extraction, ink, and basic math.
-- Global search with result navigation.
-- Persistent all-open-notebooks workspace and default global search scope.
-- Published Rust API documentation and standalone renderer/query examples.
-- Per-page and per-section compatibility warnings.
-- Source-change detection and manual refresh.
+- [x] Active-page freeform canvas with rich text, lists, tables, lazy images,
+  attachments, ink, placeholders, pan, and zoom.
+- [ ] Complete tags, basic math, confirmed links, and safe attachment extraction.
+- [x] Global search with result navigation to matching object geometry.
+- [x] Persistent all-open-notebooks workspace and default global search scope.
+- [x] Standalone renderer and query consumers.
+- [ ] Publish Rust API documentation and compatibility/migration policy.
+- [ ] Add per-page/per-section compatibility warning surfaces.
+- [ ] Add source-change detection and manual transactional refresh.
 
 **Exit criteria:**
 
@@ -96,6 +114,9 @@ on recorded baseline hardware.
 - public errors, cancellation, limits, locators, and protocol-version fixtures
   pass;
 - `cargo fmt`, clippy, tests, and dependency/license audit pass.
+
+Current implementation and evidence gaps are itemized in
+[`docs/REMAINING-WORK.md`](../REMAINING-WORK.md).
 
 ## Milestone 3: Compatibility and Fidelity
 

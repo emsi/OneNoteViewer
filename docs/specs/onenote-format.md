@@ -537,8 +537,12 @@ Required fatal examples:
 
 ## 10. Parser Dependency Profile
 
-Use `onenote_parser` through `onenote-core`; do not fork the bit parser in the
-application.
+Use `onenote_parser` only through `onenote-core`; parser types and revision
+internals must not spread into the application. The current reviewed snapshot
+is vendored because the private desktop corpus needs unreleased support and
+three narrow compatibility patches. Those patches are documented in
+`third_party/onenote.rs/PATCHES.md` and remain candidates for upstreaming, not
+permission to build an unrelated parser.
 
 Before beta, the chosen upstream release/commit must demonstrate:
 
@@ -551,11 +555,12 @@ Before beta, the chosen upstream release/commit must demonstrate:
 - per-page/section warnings;
 - ink and math projection;
 
-The current research pin is
+The current implementation pin is
 `f9cdc59f984bc1f7f096b54100cefaaebc892573` from 2026-07-23. It includes
-unreleased desktop work. It also contains an in-memory package reader that
-this application explicitly does not use. Production must move to a reviewed
-tagged release or carry a documented temporary pin.
+unreleased desktop work plus the documented local patches. It also contains an
+in-memory package reader that this application explicitly does not use.
+Production must move to a reviewed tagged release or explicitly accept and
+maintain the documented fork.
 
 ## 11. Implementation Acceptance
 

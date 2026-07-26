@@ -20,6 +20,11 @@ Delivery levels:
 - **Later:** model or placeholder in MVP; richer display follows.
 - **Unsupported:** detected with an explicit limitation.
 
+This is a target inventory, not an implementation-status table. The current
+code covers only a subset of rows even when their target level is MVP. See
+[remaining work](../REMAINING-WORK.md) and the roadmap before making a support
+claim.
+
 ## Notebook and Navigation
 
 | Feature | Evidence | MVP behavior | Level |

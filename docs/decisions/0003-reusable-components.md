@@ -77,6 +77,19 @@ can replace SQLite behind the query contract without changing consumers.
 - Premature generalization is controlled by accepting abstractions only when
   exercised by the viewer and at least one independent example consumer.
 
+## Implementation Status
+
+All five crates and the one-way dependency graph now exist. The GTK standalone
+example consumes only `onenote-core`, `onenote-render`, and
+`onenote-render-gtk`; the JSON Lines process integration test consumes the
+versioned query adapter independently. The viewer composes only public crate
+exports.
+
+These are pre-1.0 implementation boundaries, not published stable artifacts.
+Licensing, generated documentation publication, fuller contract tests,
+GObject introspection, and callback/thread compatibility guarantees remain in
+[the release-gap register](../REMAINING-WORK.md).
+
 ## Rejected Alternatives
 
 - **Keep rendering inside the viewer:** prevents supported embedding and makes

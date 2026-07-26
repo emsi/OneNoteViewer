@@ -36,12 +36,14 @@ normative.
 
 - [Roadmap and milestone gates](plans/roadmap.md)
 - [Potential limitations](limitations.md)
+- [Current remaining work](REMAINING-WORK.md)
 - [Documentation baseline audit](plans/completion-audit.md)
 - [Reference manifest and provenance](references/README.md)
 
-The roadmap is the detailed execution schedule beneath the master plan. The
-completion audit records how the documentation baseline was assembled; it is
-not a current project plan.
+The roadmap is the detailed execution schedule beneath the master plan.
+Remaining work records implementation and release gaps. The completion audit
+records how the original documentation baseline was assembled; it is
+historical evidence, not a current project plan or implementation status.
 
 ## Documentation Rules
 

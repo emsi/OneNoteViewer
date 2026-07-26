@@ -1,0 +1,133 @@
+# Remaining Work
+
+- **Status:** Active release-gap register
+- **Last reconciled:** 2026-07-26 UTC
+
+This file records what the current implementation does **not** yet prove or
+complete. It is the dedicated bridge between the implemented baseline, the
+[master plan](MASTER-PLAN.md), the [roadmap](plans/roadmap.md), and the detailed
+[risk register](limitations.md). A target feature is not complete merely
+because its model type or first rendering path exists.
+
+## Release Blockers
+
+### 1. Measured Freeform Fidelity
+
+**Why open:** The scene builder preserves top-level geometry and stacking, but
+uses conservative text-height estimates and approximate internal outline/table
+flow. Ink is fitted to projected bounds. No OneNote Desktop screenshot oracle,
+geometry tolerance, mixed-font baseline, or printout comparison is committed.
+
+**Completion:** Add licensed pages and matching OneNote Desktop captures for
+negative coordinates, overlap, rich runs, RTL, nested lists/tables, images,
+printouts, ink, and math. Record object/text baselines and accepted tolerances;
+make visual regressions testable on fixed fonts and renderers.
+
+### 2. Accessibility and Keyboard Canvas Navigation
+
+**Why open:** `PageScene` carries semantic labels and roles, and GTK navigation
+uses standard virtualized controls, but scene nodes are not exposed as
+focusable GTK accessible children. Links and attachments cannot be reached by
+keyboard. Orca has not been tested.
+
+**Completion:** Implement a virtual accessible object/focus model synchronized
+with viewport and hit regions. Add keyboard reading order and activation, then
+record Orca tests under GNOME and KDE on Wayland and X11.
+
+### 3. Complete Viewer Actions and Operations
+
+**Why open:** The viewer resolves search hits and imports packages, but does not
+yet implement confirmed external links, attachment extraction/opening,
+operation cancellation/progress, per-source diagnostics, manual refresh, or
+automatic source-change refresh. Package cancellation exists in the core API
+but is not wired to the UI. Active page, zoom, and pane state are not restored.
+
+**Completion:** Add explicit host policies for renderer actions; bounded,
+sanitized attachment extraction; cancellable operations with progress; source
+fingerprint monitoring and transactional refresh; diagnostics surfaces; and
+versioned workspace state with corruption recovery tests.
+
+### 4. Parser and Corpus Breadth
+
+**Why open:** All 32 sections in one private desktop package parse only after
+three narrow patches to vendored unreleased parser code. This does not prove
+OneNote 2016, Microsoft 365, Mac backup, FSSHTTP download, encrypted/corrupt,
+or feature-matrix breadth. The private package cannot be redistributed.
+
+**Completion:** Add legal synthetic and producer fixtures for every MVP matrix
+row, upstream the compatibility patches, move to a reviewed tagged parser (or
+document a maintained fork), and publish producer-specific results without a
+blanket “supports OneNote” claim.
+
+### 5. Hostile-Input and Resource Proof
+
+**Why open:** Projection counts, archive listing/entry counts, resource reads,
+image dimensions/allocations, scene nodes, results, snippets, and texture cache
+are bounded. Package paths and staging are validated. Missing are parser fuzz
+coverage, total model-memory/section-byte ceilings, expanded-package byte and
+disk-space ceilings, extraction process-group termination, coordinate clamps,
+tiled oversized images, and crash/recovery testing.
+
+**Completion:** Add fuzzers and malformed corpora for every binary boundary;
+checked total-byte/depth/coordinate budgets; extraction expansion/disk checks;
+whole-process cancellation tests; peak RSS/time assertions; and source/durable
+destination unchanged checks for every failure mode.
+
+### 6. Performance and Scale Evidence
+
+**Why open:** The full private root opens and indexes 637 pages, and viewport
+culling plus lazy image decode are implemented, but no baseline hardware,
+latency, frame pacing, peak memory, or large multi-source measurements are
+recorded. The viewer uses one sequential load/index worker and a clear-all
+texture-cache eviction policy.
+
+**Completion:** Benchmark cold parse/index, incremental refresh, warm queries,
+page switching, pan/zoom, and image-heavy pages. Record hardware and thresholds,
+add bounded scheduling/cancellation, and replace coarse cache eviction or
+layout work only where measurements justify it.
+
+### 7. Public API Publication
+
+**Why open:** The Rust component boundaries, standalone GTK example, and JSONL
+process client exist and are tested. The APIs are still pre-1.0, generated docs
+are not published, thread/callback guarantees need fuller prose, the renderer
+has no GObject-introspection wrapper, and the project has no reuse license.
+
+**Completion:** Close the quality checklist in `specs/public-api.md`, publish
+rustdoc and protocol fixtures, define semantic-versioning/migration policy,
+add a non-Rust renderer binding if retained as a goal, and select a license
+that permits intended downstream reuse.
+
+### 8. Distribution and Desktop Integration
+
+**Why open:** There is no Flatpak manifest, desktop file, AppStream metadata,
+icon set, MIME association, portal validation, dependency/license audit, or
+release artifact. Host `7z` is not available inside a normal Flatpak sandbox
+without an explicit packaging decision.
+
+**Completion:** Choose a license, package a pinned reviewed extractor or
+disable package import in Flatpak, add no-network portal tests, supply desktop
+metadata/assets, run dependency/security/license audits, and produce
+reproducible signed artifacts.
+
+## Implemented Evidence
+
+The following are complete enough to build on, but remain pre-1.0:
+
+- source-native semantic projection with typed identities, hierarchy,
+  geometry, diagnostics, lazy bounded resources, and source fingerprints;
+- validated on-disk `.onepkg` extraction with private staging and atomic
+  publication through an external `7zz`/`7z`;
+- UI-neutral retained scenes with placeholders, culling, hit regions, and
+  semantics;
+- embeddable GTK `PageView` with Pango/GSK/Cairo rendering, pan/zoom, and
+  bounded asynchronous raster decode;
+- transactional multi-source FTS5 indexing and structured Rust/JSONL queries;
+- native GTK multi-notebook shell with virtualized navigation, persistence,
+  background work, global search, and result-to-canvas navigation;
+- private-corpus extraction, parse, scene, index/search, standalone renderer,
+  full-viewer, and two-source Xvfb evidence;
+- workspace-wide tests and strict Clippy passing on the pinned toolchain.
+
+Closing this file requires evidence, not deleting or weakening the associated
+acceptance criteria.

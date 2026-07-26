@@ -8,7 +8,7 @@ modular Cargo workspace separates public domain, layout, GTK rendering, and
 index/query APIs from the desktop application. The viewer is one consumer of
 those components rather than their owner.
 
-## Planned Tree
+## Current Tree
 
 ```text
 .
@@ -17,13 +17,8 @@ those components rather than their owner.
 ├── crates/
 │   ├── onenote-core/
 │   │   ├── src/
-│   │   │   ├── source/
-│   │   │   ├── package/
-│   │   │   ├── model/
-│   │   │   └── diagnostics/
 │   │   └── tests/
 │   ├── onenote-index/
-│   │   ├── migrations/
 │   │   ├── src/
 │   │   │   └── bin/
 │   │   └── tests/
@@ -32,26 +27,25 @@ those components rather than their owner.
 │   │   └── tests/
 │   ├── onenote-render-gtk/
 │   │   ├── src/
-│   │   └── tests/
+│   │   └── examples/
 │   └── onenote-viewer/
-│       ├── resources/
-│       ├── src/
-│       │   ├── app/
-│       │   └── widgets/
-│       └── tests/
+│       └── src/
 ├── docs/
 │   ├── architecture/
 │   ├── decisions/
 │   ├── plans/
 │   ├── references/
 │   └── specs/
-├── fixtures/
-│   ├── generated/
-│   └── README.md
-├── packaging/
-│   └── flatpak/
-└── scripts/
+├── scripts/
+│   ├── fetch-references.sh
+│   └── validate-docs.sh
+└── third_party/
+    └── onenote.rs/
 ```
+
+The source files are currently flat within these small crates. Directory
+submodules should be introduced only when ownership becomes clearer, not to
+imitate the earlier planned tree.
 
 ## Ownership Boundaries
 
@@ -119,10 +113,15 @@ creates render nodes. Public interfaces follow
 
 - `docs/references/` contains redistributed primary specifications and a
   checksum manifest, not arbitrary web captures.
-- `fixtures/` contains only small synthetic or explicitly licensed data. A
-  private corpus is supplied through an ignored environment-specific path.
-- `packaging/` starts with Flatpak only after the app runs from a normal build.
-- `scripts/` contains short reproducible checks, not a second build system.
+- A future `fixtures/` contains only small synthetic or explicitly licensed
+  data. The current private corpus is supplied through an ignored
+  environment-specific path.
+- `third_party/onenote.rs/` is the reviewed MPL-2.0 parser snapshot plus three
+  documented compatibility patches.
+- `scripts/` contains reproducible reference and documentation validation, not
+  a second build system.
+- `packaging/` remains a future directory and should appear only when it
+  contains working artifacts.
 
 ## Deliberate Omissions
 
@@ -131,5 +130,5 @@ creates render nodes. Public interfaces follow
 - No network service or background daemon.
 - No database repository abstraction beyond the concrete SQLite index.
 - No generated documentation site; Markdown remains reviewable in Git.
-- No vendored fork of `onenote.rs` unless an upstream blocker cannot be fixed
-  on an acceptable schedule.
+- No expansion of the vendored `onenote.rs` fork beyond narrow, documented
+  compatibility fixes intended for upstream submission.
