@@ -2,7 +2,7 @@ use crate::model::{
     Attachment, Color, Diagnostic, DiagnosticSeverity, ElementContent, Image, Ink, InkPoint,
     InkStroke, ListMarker, Notebook, NotebookEntry, ObjectId, ObjectKind, Outline, OutlineElement,
     Page, PageId, PageObject, Rect, ResourceId, ResourceRef, Section, SectionGroup, SectionId,
-    SourceId, Table, TableCell, TextAlignment, TextBlock, TextRun, TextStyle,
+    SourceFingerprint, SourceId, Table, TableCell, TextAlignment, TextBlock, TextRun, TextStyle,
 };
 use crate::resource::ResourceLoader;
 use crate::{Error, ResourceStore, Result, PIXELS_PER_HALF_INCH};
@@ -101,28 +101,33 @@ impl OneNoteLoader {
     }
 
     fn load_notebook(&self, path: &Path) -> Result<LoadedNotebook> {
+        let fingerprint = source_fingerprint(path)?;
         let parsed = Parser::new()
             .parse_notebook(host_typed_path(path))
             .map_err(|error| Error::Parse {
                 path: path.to_path_buf(),
                 message: error.to_string(),
             })?;
-        Projector::new(path, self.limits).notebook(&parsed)
+        ensure_source_unchanged(path, &fingerprint)?;
+        Projector::new(path, fingerprint, self.limits).notebook(&parsed)
     }
 
     fn load_section(&self, path: &Path) -> Result<LoadedNotebook> {
+        let fingerprint = source_fingerprint(path)?;
         let parsed = Parser::new()
             .parse_section(host_typed_path(path))
             .map_err(|error| Error::Parse {
                 path: path.to_path_buf(),
                 message: error.to_string(),
             })?;
-        Projector::new(path, self.limits).standalone_section(&parsed)
+        ensure_source_unchanged(path, &fingerprint)?;
+        Projector::new(path, fingerprint, self.limits).standalone_section(&parsed)
     }
 }
 
 struct Projector {
     source_id: SourceId,
+    fingerprint: SourceFingerprint,
     source_path: PathBuf,
     limits: ParseLimits,
     section_count: usize,
@@ -132,10 +137,12 @@ struct Projector {
 }
 
 impl Projector {
-    fn new(path: &Path, limits: ParseLimits) -> Self {
-        let source_id = SourceId::new(stable_id(&[b"source", path_identity(path).as_bytes()]));
+    fn new(path: &Path, fingerprint: SourceFingerprint, limits: ParseLimits) -> Self {
+        let path_bytes = path_identity(path);
+        let source_id = SourceId::new(stable_id(&[b"source", &path_bytes]));
         Self {
             source_id,
+            fingerprint,
             source_path: path.to_path_buf(),
             limits,
             section_count: 0,
@@ -150,6 +157,7 @@ impl Projector {
         let entries = self.entries(parsed.entries(), "root", &mut diagnostics)?;
         let notebook = Notebook {
             source_id: self.source_id.clone(),
+            fingerprint: self.fingerprint.clone(),
             name: notebook_name(&self.source_path),
             color: parsed.color().map(project_color),
             entries,
@@ -167,6 +175,7 @@ impl Projector {
         Ok(LoadedNotebook {
             notebook: Notebook {
                 source_id: self.source_id.clone(),
+                fingerprint: self.fingerprint.clone(),
                 name,
                 color: section.color,
                 entries: vec![NotebookEntry::Section(section)],
@@ -882,8 +891,122 @@ fn stable_id(parts: &[&[u8]]) -> String {
     Uuid::new_v5(&Uuid::NAMESPACE_URL, &bytes).to_string()
 }
 
-fn path_identity(path: &Path) -> String {
-    path.to_string_lossy().into_owned()
+fn source_fingerprint(path: &Path) -> Result<SourceFingerprint> {
+    let root = if has_extension(path, "onetoc2") {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    let mut files = if root.is_dir() {
+        native_source_files(root)?
+    } else {
+        vec![path.to_path_buf()]
+    };
+    files.sort();
+
+    let mut hasher = blake3::Hasher::new();
+    for file in files {
+        let metadata = fs_metadata(&file)?;
+        if !metadata.is_file() {
+            return Err(Error::Parse {
+                path: file,
+                message: "source manifest contains a non-regular file".to_owned(),
+            });
+        }
+        let relative = file.strip_prefix(root).unwrap_or(&file);
+        let relative_bytes = path_identity(relative);
+        hasher.update(&(relative_bytes.len() as u64).to_le_bytes());
+        hasher.update(&relative_bytes);
+        hasher.update(&metadata.len().to_le_bytes());
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
+        hasher.update(
+            &modified
+                .map_or(0, |duration| duration.as_secs())
+                .to_le_bytes(),
+        );
+        hasher.update(
+            &modified
+                .map_or(0, |duration| duration.subsec_nanos())
+                .to_le_bytes(),
+        );
+    }
+    Ok(SourceFingerprint::new(
+        hasher.finalize().to_hex().to_string(),
+    ))
+}
+
+fn ensure_source_unchanged(path: &Path, before: &SourceFingerprint) -> Result<()> {
+    let after = source_fingerprint(path)?;
+    if &after == before {
+        Ok(())
+    } else {
+        Err(Error::Parse {
+            path: path.to_path_buf(),
+            message: "source files changed while parsing".to_owned(),
+        })
+    }
+}
+
+fn native_source_files(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut pending = vec![root.to_path_buf()];
+    let mut files = Vec::new();
+    while let Some(directory) = pending.pop() {
+        for entry in std::fs::read_dir(&directory).map_err(|source| Error::Io {
+            path: directory.clone(),
+            source,
+        })? {
+            let entry = entry.map_err(|source| Error::Io {
+                path: directory.clone(),
+                source,
+            })?;
+            let file_type = entry.file_type().map_err(|source| Error::Io {
+                path: entry.path(),
+                source,
+            })?;
+            let path = entry.path();
+            if file_type.is_symlink() {
+                return Err(Error::Parse {
+                    path,
+                    message: "source tree contains a symbolic link".to_owned(),
+                });
+            }
+            if file_type.is_dir() {
+                pending.push(path);
+            } else if file_type.is_file()
+                && (has_extension(&path, "one") || has_extension(&path, "onetoc2"))
+            {
+                files.push(path);
+            }
+        }
+    }
+    Ok(files)
+}
+
+fn fs_metadata(path: &Path) -> Result<std::fs::Metadata> {
+    std::fs::metadata(path).map_err(|source| Error::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+fn has_extension(path: &Path, expected: &str) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case(expected))
+}
+
+#[cfg(unix)]
+fn path_identity(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(windows)]
+fn path_identity(path: &Path) -> Vec<u8> {
+    path.to_string_lossy().as_bytes().to_vec()
 }
 
 #[cfg(unix)]

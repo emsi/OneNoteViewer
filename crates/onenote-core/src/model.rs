@@ -27,6 +27,7 @@ macro_rules! string_id {
 }
 
 string_id!(SourceId);
+string_id!(SourceFingerprint);
 string_id!(SectionId);
 string_id!(PageId);
 string_id!(ObjectId);
@@ -103,6 +104,8 @@ pub struct Diagnostic {
 pub struct Notebook {
     /// Stable identity of this source path.
     pub source_id: SourceId,
+    /// Metadata-manifest fingerprint of the source tree at parse time.
+    pub fingerprint: SourceFingerprint,
     /// Display name derived from the notebook folder.
     pub name: String,
     /// Optional notebook accent color.
