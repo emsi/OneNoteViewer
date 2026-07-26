@@ -1,0 +1,20 @@
+/target/
+/.idea/
+/.vscode/
+*.swp
+*.tmp
+
+# Real notebooks are private and must never be committed.
+/onepkg/
+/test-corpus/
+*.one
+*.onetoc2
+*.onepkg
+*.onecache
+*.onebin
+*.onetmp
+
+# Allow deliberately reviewed fixtures despite the global format ignores.
+!/fixtures/**/*.one
+!/fixtures/**/*.onetoc2
+!/fixtures/**/*.onepkg

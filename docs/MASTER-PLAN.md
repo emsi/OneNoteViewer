@@ -1,0 +1,189 @@
+# OneNote Viewer Master Plan
+
+- **Status:** Planning baseline established; implementation not started
+- **Current phase:** Milestone 1 feasibility work, ready to start
+- **Last reconciled:** 2026-07-26 UTC
+
+## Role of This Document
+
+This is the canonical entry point and master plan for the OneNote Viewer
+project. It defines the overall outcome, non-negotiable boundaries, major
+deliverables, current phase, and the authority of the supporting documents.
+
+It does not duplicate binary-format tables, API schemas, or individual feature
+rows. Those details live in the linked specifications. A change to product
+scope, architectural direction, delivery order, or definition of success must
+update this document and the affected detailed document together.
+
+## Mission
+
+Deliver a robust, mature, native Linux application that opens, renders,
+indexes, and searches local Microsoft OneNote notebooks while preserving their
+source-native freeform layout.
+
+The same implementation must also make OneNote content useful outside this
+application. Other software must be able to:
+
+- parse native `.one` sections and notebook trees into a documented semantic
+  and geometry model;
+- embed the page renderer without adopting the OneNote Viewer application
+  shell;
+- index multiple notebooks and find relevant pages, objects, and source data
+  through a supported query interface.
+
+## Non-Negotiable Outcomes
+
+1. **Native, spatial rendering:** `.one` and `.onetoc2` are parsed directly.
+   HTML, Markdown, PDF, or another note model never becomes the viewer or
+   indexer's canonical representation.
+2. **Freeform fidelity:** coordinates, extents, overlap, stacking, ink,
+   printouts, images, tables, rich text, and object relationships are
+   preserved or visibly diagnosed.
+3. **Multi-notebook workspace:** several notebooks remain open and one local
+   search spans all active sources.
+4. **Read-only and offline:** source notebook trees are never modified, and
+   viewing/indexing requires no Microsoft account or network service.
+5. **Bounded package onboarding:** `.onepkg` is extracted once, on disk, by a
+   managed external extractor into a durable native notebook tree. Complete
+   archive contents are never accumulated in application memory.
+6. **Reusable components:** parsing/domain, UI-neutral scene construction,
+   GTK rendering, and index/query behavior are supported integration
+   boundaries, not viewer-private code.
+7. **Robust public contracts:** integrations use structured errors, stable
+   source-scoped locators, explicit limits, cancellation, versioning, and
+   independent consumer tests.
+8. **Honest compatibility:** unsupported and unknown content remains visible
+   through diagnostics. Compatibility claims name the tested producers and
+   features.
+
+The normative behavioral detail is in
+[the product requirements](specs/product-requirements.md).
+
+## Deliverables
+
+### Native Access Foundation
+
+`onenote-core` provides read-only source discovery, parser isolation,
+immutable domain objects, geometry, diagnostics, lazy payload access, and
+stable source-scoped identities. Upstream parser and revision-store internals
+do not cross its public boundary.
+
+### Reusable Rendering
+
+`onenote-render` converts domain pages into a deterministic, UI-neutral
+`PageScene`. `onenote-render-gtk` supplies an embeddable Pango/GSK component
+with pan, zoom, culling, hit testing, and accessibility. A standalone host
+must render a `.one` page without linking `onenote-viewer`.
+
+### Reusable Index and Query
+
+`onenote-index` transactionally indexes multiple explicit sources and returns
+structured matches with source, notebook, section, page, object, and geometry
+locators. A versioned JSON Lines adapter provides the same query behavior to
+non-Rust software without exposing SQLite or creating a network service.
+
+### Desktop Viewer
+
+`onenote-viewer` composes the public components into the OneNote-like
+notebook/section-group/section/page/canvas experience. It owns windows,
+workspace persistence, navigation UI, and desktop integration, but receives no
+private parser, renderer, or index access unavailable to other consumers.
+
+### ONEPKG Onboarding
+
+The application detects `7zz`/`7z`, validates the CAB package, extracts to a
+private on-disk staging directory, validates native files and paths, and
+atomically publishes an unused destination. Missing-tool and sandbox behavior
+are explicit and do not impair normal folder viewing.
+
+## Architecture Baseline
+
+```text
+onenote-viewer ---> onenote-render-gtk ---> onenote-render ---> onenote-core
+       |                                                    ^
+       +----------> onenote-index --------------------------+
+
+non-Rust clients ---> versioned query adapter ---> onenote-index
+other GTK apps ----> onenote-render-gtk
+future backends ---> onenote-render
+```
+
+No dependency points toward `onenote-viewer`. Detailed ownership and runtime
+flow are defined by the
+[repository layout](architecture/repository-layout.md) and
+[system architecture](architecture/system-architecture.md).
+
+## Delivery Plan
+
+The detailed milestone sequence and exit gates are in the
+[roadmap](plans/roadmap.md).
+
+### Current Status
+
+- Milestone 0 documentation and evidence baseline is complete.
+- The supplied private `.onepkg` has passed CAB integrity testing and was
+  extracted on disk to 32 native `.one` files and five `.onetoc2` files; all
+  expected native headers and the unchanged source hash were verified.
+- Ten primary Microsoft reference PDFs are pinned and reproducibly verified.
+- No application or library implementation has started.
+- The installed Rust 1.75 toolchain is below the pinned parser's Rust 1.85
+  requirement; toolchain setup is an explicit first implementation task.
+
+### Next Execution Order
+
+1. Create the five-crate Cargo workspace and pin a suitable Rust toolchain and
+   reviewed parser revision.
+2. Prove `onenote-core` can parse the extracted private notebook and corpus
+   fixtures with bounded resources and structured diagnostics.
+3. Prove the UI-neutral scene and embeddable GTK renderer through a standalone
+   host application.
+4. Prove multi-source indexing, structured queries, stable result resolution,
+   and the versioned non-Rust protocol through independent clients.
+5. Compose the same public components into the multi-notebook desktop viewer.
+6. Expand producer, malformed-input, visual-fidelity, accessibility,
+   performance, and packaging evidence before compatibility claims.
+
+## Definition of Success
+
+The first mature release requires all of the following:
+
+- representative native freeform pages match measured OneNote Desktop layout
+  and content behavior within documented tolerances;
+- multiple notebook roots remain open, persist across launches, and participate
+  in one search scope;
+- package onboarding is bounded, cancellable, recoverable, and independent
+  from normal viewing;
+- standalone renderer and search clients use only supported public interfaces;
+- malformed and oversized input cannot panic, hang, escape source/staging
+  roots, or cause unbounded allocation;
+- deleting indexes and caches loses no notebook information;
+- source trees remain byte-for-byte unchanged after viewing and indexing;
+- accessibility, responsiveness, dependency, license, and distribution gates
+  pass;
+- release notes state precisely which producers and features were tested.
+
+Detailed acceptance criteria remain normative in the product, format, search,
+public API, corpus, feature, limitation, and roadmap documents.
+
+## Document Authority
+
+Read the project documents in this order:
+
+1. **This master plan:** overall scope, deliverables, current phase, and
+   definition of success.
+2. **[Product requirements](specs/product-requirements.md):** normative user and
+   product behavior.
+3. **[Roadmap](plans/roadmap.md):** implementation sequence, milestones, and
+   exit gates.
+4. **Architecture and accepted ADRs:** component ownership and reasons for
+   cross-cutting decisions.
+5. **Detailed specifications:** format, feature, search, public API, and corpus
+   contracts.
+6. **[Limitations](limitations.md):** open risks, accepted boundaries, and
+   release blockers.
+7. **[Completion audit](plans/completion-audit.md):** historical evidence that
+   the documentation baseline was assembled; it is not the current plan.
+
+If documents disagree, the more specific accepted specification or ADR governs
+its subject, but this master plan must be updated immediately so the main entry
+never presents stale scope or status.
