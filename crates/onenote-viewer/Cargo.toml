@@ -8,10 +8,17 @@ repository.workspace = true
 publish = false
 
 [dependencies]
+anyhow.workspace = true
+gtk.workspace = true
 onenote-core.workspace = true
 onenote-index.workspace = true
 onenote-render.workspace = true
 onenote-render-gtk.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

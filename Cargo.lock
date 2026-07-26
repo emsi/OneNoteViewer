@@ -891,10 +891,15 @@ dependencies = [
 name = "onenote-viewer"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "gtk4",
  "onenote-core",
  "onenote-index",
  "onenote-render",
  "onenote-render-gtk",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]
