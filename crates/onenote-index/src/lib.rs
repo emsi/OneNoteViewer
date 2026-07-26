@@ -6,6 +6,7 @@ mod document;
 mod error;
 mod index;
 mod model;
+pub mod protocol;
 mod query;
 
 pub use error::{Error, Result};
