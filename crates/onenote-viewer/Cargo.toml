@@ -1,0 +1,17 @@
+[package]
+name = "onenote-viewer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+onenote-core.workspace = true
+onenote-index.workspace = true
+onenote-render.workspace = true
+onenote-render-gtk.workspace = true
+
+[lints]
+workspace = true
