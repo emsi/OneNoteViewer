@@ -565,20 +565,7 @@ impl Viewer {
             return;
         };
         match target {
-            NavigationTarget::Notebook { source } => {
-                self.state.borrow_mut().active_source = Some(source);
-                let section_id = self
-                    .state
-                    .borrow()
-                    .sources
-                    .get(source)
-                    .and_then(|source| first_section(&source.loaded.notebook.entries))
-                    .map(|section| section.id.clone());
-                if let Some(section_id) = section_id {
-                    self.notebook_tree.select_section(source, &section_id);
-                }
-            }
-            NavigationTarget::Group { source } => {
+            NavigationTarget::Notebook { source } | NavigationTarget::Group { source } => {
                 self.state.borrow_mut().active_source = Some(source);
             }
             NavigationTarget::Section { source, section_id } => {
@@ -1077,10 +1064,12 @@ fn navigation_band(title: &str, list: &gtk::ListView, width: i32) -> gtk::Box {
 }
 
 fn icon_button(icon_name: &str, tooltip: &str) -> gtk::Button {
-    gtk::Button::builder()
+    let button = gtk::Button::builder()
         .icon_name(icon_name)
         .tooltip_text(tooltip)
-        .build()
+        .build();
+    button.add_css_class("icon-button");
+    button
 }
 
 fn separator() -> gtk::Separator {
@@ -1159,24 +1148,67 @@ fn install_resources() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         "
-        window { background: #f7f7f8; color: #202124; }
-        headerbar { background: #ffffff; border-bottom: 1px solid #d9dadd; }
-        .brand { font-size: 16px; font-weight: 700; color: #5b2d90; }
+        window, window:backdrop { background: #f7f7f8; color: #202124; }
+        headerbar, headerbar:backdrop {
+            background: #ffffff;
+            color: #202124;
+            border-bottom: 1px solid #d9dadd;
+        }
+        .icon-button, .icon-button:backdrop,
+        .icon-button image, .icon-button image:backdrop {
+            background: #f7f7f8;
+            color: #202124;
+        }
+        .icon-button:hover { background: #e7e8eb; }
+        .brand, .brand:backdrop {
+            font-size: 16px;
+            font-weight: 700;
+            color: #5b2d90;
+        }
         searchentry { min-height: 34px; }
-        .navigation-band { background: #f3f3f5; }
-        .nav-heading { font-size: 11px; font-weight: 700; color: #666970; }
-        listview { background: transparent; }
-        listview row { border-radius: 4px; margin: 1px 6px; }
-        listview row:selected { background: #e8def3; color: #2d183d; }
+        .navigation-band, .navigation-band:backdrop {
+            background: #f3f3f5;
+            color: #202124;
+        }
+        .navigation-band label, .navigation-band label:backdrop,
+        treeexpander, treeexpander:backdrop,
+        treeexpander > expander, treeexpander > expander:backdrop {
+            color: #202124;
+        }
+        .nav-heading, .nav-heading:backdrop {
+            font-size: 11px;
+            font-weight: 700;
+            color: #666970;
+        }
+        listview, listview:backdrop { background: transparent; color: #202124; }
+        listview row, listview row:backdrop {
+            border-radius: 4px;
+            margin: 1px 6px;
+            color: #202124;
+        }
+        listview row:selected, listview row:selected:backdrop {
+            background: #e8def3;
+            color: #2d183d;
+        }
         .notebook-row { font-weight: 600; }
         .group-row { font-weight: 500; }
         .notebook-tree row:selected { border-left: 3px solid #6b3a96; }
         .page-list row:selected { border-left: 3px solid #b35a24; }
         .result-row { line-height: 1.25; }
-        .page-title { font-size: 20px; font-weight: 650; }
-        .page-date, .page-context, .status { font-size: 12px; color: #666970; }
-        .empty-title { font-size: 20px; font-weight: 600; }
-        .empty-icon { color: #777a80; }
+        .page-title, .page-title:backdrop {
+            font-size: 20px;
+            font-weight: 650;
+            color: #202124;
+        }
+        .page-date, .page-date:backdrop,
+        .page-context, .page-context:backdrop,
+        .status, .status:backdrop { font-size: 12px; color: #666970; }
+        .empty-title, .empty-title:backdrop {
+            font-size: 20px;
+            font-weight: 600;
+            color: #202124;
+        }
+        .empty-icon, .empty-icon:backdrop { color: #777a80; }
         ",
     );
     gtk::style_context_add_provider_for_display(

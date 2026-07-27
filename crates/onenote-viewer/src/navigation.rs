@@ -48,11 +48,7 @@ pub(crate) struct NotebookTree {
 impl NotebookTree {
     pub(crate) fn new() -> Self {
         let roots = gio::ListStore::new::<glib::BoxedAnyObject>();
-        let model = gtk::TreeListModel::new(roots.clone(), false, false, |item| {
-            let item = item.downcast_ref::<glib::BoxedAnyObject>()?;
-            let node = item.borrow::<NavigationNode>();
-            (!node.children.is_empty()).then(|| node_model(&node.children).upcast())
-        });
+        let model = tree_model(roots.clone());
         let selection = gtk::SingleSelection::new(Some(model.clone()));
         selection.set_autoselect(false);
         selection.set_can_unselect(true);
@@ -60,9 +56,13 @@ impl NotebookTree {
         let view = gtk::ListView::builder()
             .model(&selection)
             .factory(&factory)
-            .single_click_activate(false)
+            .single_click_activate(true)
             .css_classes(["notebook-tree"])
             .build();
+        let model_for_activation = model.clone();
+        view.connect_activate(move |_, position| {
+            toggle_expansion(&model_for_activation, position);
+        });
         Self {
             roots,
             model,
@@ -201,6 +201,25 @@ fn node_model(nodes: &[NavigationNode]) -> gio::ListStore {
     model
 }
 
+fn tree_model(roots: gio::ListStore) -> gtk::TreeListModel {
+    gtk::TreeListModel::new(roots, false, false, |item| {
+        let item = item.downcast_ref::<glib::BoxedAnyObject>()?;
+        let node = item.borrow::<NavigationNode>();
+        (!node.children.is_empty()).then(|| node_model(&node.children).upcast())
+    })
+}
+
+fn toggle_expansion(model: &gtk::TreeListModel, position: u32) -> bool {
+    let Some(row) = model.row(position) else {
+        return false;
+    };
+    if !row.is_expandable() {
+        return false;
+    }
+    row.set_expanded(!row.is_expanded());
+    true
+}
+
 fn tree_factory() -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| setup_tree_item(item));
@@ -334,7 +353,10 @@ fn safe_text(value: &str) -> std::borrow::Cow<'_, str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{entry_nodes, NavigationTarget};
+    use super::{
+        entry_nodes, node_model, toggle_expansion, tree_model, NavigationNode, NavigationTarget,
+    };
+    use gtk::prelude::*;
     use onenote_core::{NotebookEntry, Section, SectionGroup, SectionId};
 
     #[test]
@@ -360,5 +382,34 @@ mod tests {
             nodes[0].children[0].target,
             NavigationTarget::Section { source: 3, .. }
         ));
+    }
+
+    #[test]
+    fn activating_expandable_row_toggles_its_children() {
+        if gtk::init().is_err() {
+            return;
+        }
+        let child = NavigationNode {
+            label: "Section".to_owned(),
+            target: NavigationTarget::Section {
+                source: 0,
+                section_id: SectionId::new("section"),
+            },
+            color: None,
+            children: Vec::new(),
+        };
+        let group = NavigationNode {
+            label: "Group".to_owned(),
+            target: NavigationTarget::Group { source: 0 },
+            color: None,
+            children: vec![child],
+        };
+        let model = tree_model(node_model(&[group]));
+
+        assert_eq!(model.n_items(), 1);
+        assert!(toggle_expansion(&model, 0));
+        assert_eq!(model.n_items(), 2);
+        assert!(toggle_expansion(&model, 0));
+        assert_eq!(model.n_items(), 1);
     }
 }
