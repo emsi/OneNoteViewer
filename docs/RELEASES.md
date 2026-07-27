@@ -130,7 +130,9 @@ tracked or staged changes so that its contents match the executable. CI
 launches the native and AppImage executables under Xvfb. It also installs and
 launches the generated Flatpak under Xvfb, and verifies from inside the
 installed sandbox that its bundled `7zz` supports CAB archives. The AppImage
-payload receives the same extractor check before upload.
+payload receives the same extractor check before upload. Each executable also
+renders every application symbolic icon to pixels with its packaged GTK
+runtime; missing, empty, or implausibly filled icons fail the workflow.
 
 After changing `Cargo.lock`, regenerate the Flatpak source list:
 

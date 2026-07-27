@@ -25,6 +25,7 @@ enum Invocation {
     Source,
     ThirdPartyNotices,
     ThirdPartyLicenses,
+    CheckIcons,
 }
 
 fn main() -> Result<()> {
@@ -46,6 +47,7 @@ fn main() -> Result<()> {
         ]),
         Invocation::ThirdPartyNotices => write_stdout(&[THIRD_PARTY_NOTICES]),
         Invocation::ThirdPartyLicenses => write_stdout(&[THIRD_PARTY_LICENSES]),
+        Invocation::CheckIcons => app::check_icons(),
     }
 }
 
@@ -60,6 +62,7 @@ fn invocation(arguments: Vec<OsString>) -> Invocation {
         Some("--source") => Invocation::Source,
         Some("--third-party-notices") => Invocation::ThirdPartyNotices,
         Some("--third-party-licenses") => Invocation::ThirdPartyLicenses,
+        Some("--check-icons") => Invocation::CheckIcons,
         _ => Invocation::Run(arguments.into_iter().map(PathBuf::from).collect()),
     }
 }
@@ -96,6 +99,10 @@ mod tests {
         assert!(matches!(
             invocation(vec![OsString::from("--third-party-licenses")]),
             Invocation::ThirdPartyLicenses
+        ));
+        assert!(matches!(
+            invocation(vec![OsString::from("--check-icons")]),
+            Invocation::CheckIcons
         ));
     }
 

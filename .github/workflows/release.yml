@@ -41,6 +41,10 @@ jobs:
           binary=$(find dist -maxdepth 1 -type f -name '*.bin' -print -quit)
           test -n "${binary}"
           test -x "${binary}"
+          G_DEBUG=fatal-warnings \
+            GTK_A11Y=none \
+            GSK_RENDERER=cairo \
+            xvfb-run -a "${binary}" --check-icons
           GTK_A11Y=none \
             GSK_RENDERER=cairo \
             ONENOTE_VIEWER_SMOKE_QUIT_MS=5000 \
@@ -69,6 +73,13 @@ jobs:
           flatpak install --noninteractive ./OneNoteViewer-linux-x86_64.flatpak
           flatpak run --command=7zz io.github.emsi.OneNoteViewer i |
             grep 'Cab' >/dev/null
+          xvfb-run -a \
+            flatpak run \
+              --env=G_DEBUG=fatal-warnings \
+              --env=GTK_A11Y=none \
+              --env=GSK_RENDERER=cairo \
+              io.github.emsi.OneNoteViewer \
+              --check-icons
           xvfb-run -a \
             flatpak run \
               --env=GTK_A11Y=none \
@@ -115,6 +126,11 @@ jobs:
           test -n "${appimage}"
           test -x "${appimage}"
           APPIMAGE_EXTRACT_AND_RUN=1 "${appimage}" --version
+          APPIMAGE_EXTRACT_AND_RUN=1 \
+            G_DEBUG=fatal-warnings \
+            GTK_A11Y=none \
+            GSK_RENDERER=cairo \
+            xvfb-run -a "${appimage}" --check-icons
           APPIMAGE_EXTRACT_AND_RUN=1 \
             GTK_A11Y=none \
             GSK_RENDERER=cairo \

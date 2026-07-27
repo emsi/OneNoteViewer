@@ -1,9 +1,12 @@
+use std::fs;
+use std::path::Path;
 use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-env-changed=ONENOTE_VIEWER_SOURCE_REVISION");
     println!("cargo:rerun-if-changed=../../.git/HEAD");
     println!("cargo:rerun-if-changed=../../.git/index");
+    validate_symbolic_icons(Path::new("resources/icons/scalable/actions"));
 
     let revision = std::env::var("ONENOTE_VIEWER_SOURCE_REVISION")
         .ok()
@@ -16,6 +19,39 @@ fn main() {
         "resources/onenote-viewer.gresource.xml",
         "onenote-viewer.gresource",
     );
+}
+
+fn validate_symbolic_icons(directory: &Path) {
+    let entries = fs::read_dir(directory).expect("read symbolic icon directory");
+    for entry in entries {
+        let path = entry.expect("read symbolic icon entry").path();
+        if path.extension().and_then(|value| value.to_str()) != Some("svg") {
+            continue;
+        }
+        println!("cargo:rerun-if-changed={}", path.display());
+        let source = fs::read_to_string(&path).expect("read symbolic icon");
+        for unsupported in ["<line ", "<polyline ", "<polygon ", "<ellipse ", "<text "] {
+            assert!(
+                !source.contains(unsupported),
+                "{} uses unsupported GTK symbolic SVG element {}",
+                path.display(),
+                unsupported.trim()
+            );
+        }
+        for line in source.lines().map(str::trim_start) {
+            if ["<path ", "<circle ", "<rect "]
+                .iter()
+                .any(|primitive| line.starts_with(primitive))
+            {
+                assert!(
+                    line.contains("class=\"foreground-stroke\"")
+                        || line.contains("class=\"foreground-fill\""),
+                    "{} has a graphic primitive without a GTK symbolic color class",
+                    path.display()
+                );
+            }
+        }
+    }
 }
 
 fn source_revision() -> String {

@@ -21,9 +21,24 @@ const PAGE_NAVIGATION_WIDTH: i32 = 280;
 const COLLAPSED_NAVIGATION_WIDTH: i32 = 42;
 const NAVIGATION_SEPARATOR_WIDTH: i32 = 1;
 const SEARCH_RESULTS_WIDTH: i32 = 520;
+const SYMBOLIC_ICON_NAMES: [&str; 13] = [
+    "onenote-chevron-down-symbolic",
+    "onenote-chevron-right-symbolic",
+    "onenote-close-symbolic",
+    "onenote-folder-symbolic",
+    "onenote-import-package-symbolic",
+    "onenote-notebook-symbolic",
+    "onenote-open-file-symbolic",
+    "onenote-open-folder-symbolic",
+    "onenote-panel-collapse-symbolic",
+    "onenote-panel-expand-symbolic",
+    "onenote-zoom-in-symbolic",
+    "onenote-zoom-out-symbolic",
+    "onenote-zoom-reset-symbolic",
+];
 
 pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
-    gio::resources_register_include!("onenote-viewer.gresource")?;
+    register_resources()?;
     let (workspace_path, index_path) = workspace::paths()?;
     workspace::ensure_index_parent(&index_path)?;
     let persisted = workspace::load(&workspace_path).unwrap_or_default();
@@ -66,6 +81,73 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
     } else {
         anyhow::bail!("GTK application exited with status {status:?}")
     }
+}
+
+pub(crate) fn check_icons() -> Result<()> {
+    register_resources()?;
+    gtk::init()?;
+    install_resources();
+
+    let display = gdk_display();
+    let theme = gtk::IconTheme::for_display(&display);
+    let renderer = gtk::gsk::CairoRenderer::new();
+    renderer.realize_for_display(&display)?;
+    let colors = [
+        gtk::gdk::RGBA::new(0.125, 0.129, 0.141, 1.0),
+        gtk::gdk::RGBA::new(0.75, 0.0, 0.0, 1.0),
+        gtk::gdk::RGBA::new(0.8, 0.45, 0.0, 1.0),
+        gtk::gdk::RGBA::new(0.0, 0.55, 0.2, 1.0),
+        gtk::gdk::RGBA::new(0.35, 0.18, 0.56, 1.0),
+    ];
+    let viewport = gtk::graphene::Rect::new(0.0, 0.0, 24.0, 24.0);
+
+    for name in SYMBOLIC_ICON_NAMES {
+        if !theme.has_icon(name) {
+            anyhow::bail!("symbolic icon is not registered: {name}");
+        }
+        let paintable = theme.lookup_icon(
+            name,
+            &[],
+            24,
+            1,
+            gtk::TextDirection::None,
+            gtk::IconLookupFlags::FORCE_SYMBOLIC,
+        );
+        let symbolic = paintable
+            .dynamic_cast::<gtk::SymbolicPaintable>()
+            .map_err(|_| anyhow::anyhow!("icon is not symbolic: {name}"))?;
+        let snapshot = gtk::Snapshot::new();
+        symbolic.snapshot_symbolic(&snapshot, 24.0, 24.0, &colors);
+        let node = snapshot
+            .to_node()
+            .ok_or_else(|| anyhow::anyhow!("symbolic icon rendered no content: {name}"))?;
+        let texture = renderer.render_texture(&node, Some(&viewport));
+        let mut pixels = vec![0; 24 * 24 * 4];
+        texture.download(&mut pixels, 24 * 4);
+        let painted = pixels
+            .chunks_exact(4)
+            .filter(|pixel| u32::from_ne_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]) >> 24 != 0)
+            .count();
+        if !(4..=432).contains(&painted) {
+            anyhow::bail!(
+                "symbolic icon has implausible painted coverage: {name} ({painted}/576 pixels)"
+            );
+        }
+    }
+    renderer.unrealize();
+    println!(
+        "Verified {} symbolic icons with GTK {}.{}.{}",
+        SYMBOLIC_ICON_NAMES.len(),
+        gtk::major_version(),
+        gtk::minor_version(),
+        gtk::micro_version()
+    );
+    Ok(())
+}
+
+fn register_resources() -> Result<()> {
+    gio::resources_register_include!("onenote-viewer.gresource")?;
+    Ok(())
 }
 
 fn smoke_quit_delay() -> Option<Duration> {
@@ -1274,6 +1356,14 @@ fn install_resources() {
         treeexpander, treeexpander:backdrop,
         treeexpander > expander, treeexpander > expander:backdrop {
             color: #202124;
+        }
+        treeexpander > expander {
+            min-width: 16px;
+            min-height: 16px;
+            -gtk-icon-source: -gtk-icontheme(\"onenote-chevron-right-symbolic\");
+        }
+        treeexpander > expander:checked {
+            -gtk-icon-source: -gtk-icontheme(\"onenote-chevron-down-symbolic\");
         }
         .nav-heading, .nav-heading:backdrop {
             font-size: 11px;

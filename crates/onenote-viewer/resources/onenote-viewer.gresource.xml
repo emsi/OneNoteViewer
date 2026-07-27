@@ -4,6 +4,8 @@
     <file>LUCIDE-LICENSE</file>
   </gresource>
   <gresource prefix="/io/github/emsi/OneNoteViewer/icons/scalable/actions">
+    <file alias="onenote-chevron-down-symbolic.svg">icons/scalable/actions/onenote-chevron-down-symbolic.svg</file>
+    <file alias="onenote-chevron-right-symbolic.svg">icons/scalable/actions/onenote-chevron-right-symbolic.svg</file>
     <file alias="onenote-close-symbolic.svg">icons/scalable/actions/onenote-close-symbolic.svg</file>
     <file alias="onenote-folder-symbolic.svg">icons/scalable/actions/onenote-folder-symbolic.svg</file>
     <file alias="onenote-import-package-symbolic.svg">icons/scalable/actions/onenote-import-package-symbolic.svg</file>
