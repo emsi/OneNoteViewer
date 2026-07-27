@@ -119,13 +119,21 @@ unless GTK was deliberately installed under a nonstandard prefix.
 
 ## Portable Release Builds
 
-GitHub Actions and local scripts produce a Flatpak bundle and an optimized
-native Linux archive. The Flatpak is the recommended artifact for testing on
-different distributions because it supplies a consistent GTK runtime:
+GitHub Actions and local scripts produce a Flatpak bundle, a directly runnable
+optimized Linux executable, and a native Linux archive. The Flatpak is the
+recommended artifact for testing on different distributions because it
+supplies a consistent GTK runtime:
 
 ```bash
 flatpak install --user ./OneNoteViewer-linux-x86_64.flatpak
 flatpak run io.github.emsi.OneNoteViewer
+```
+
+For a quick native test on the build host:
+
+```bash
+./scripts/package-native-release.sh
+./dist/OneNoteViewer-*-linux-x86_64.bin /path/to/notebook
 ```
 
 See [release builds](docs/RELEASES.md) for artifact selection, local build

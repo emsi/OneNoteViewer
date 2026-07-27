@@ -100,12 +100,12 @@ that permits intended downstream reuse.
 
 ### 8. Distribution and Desktop Integration
 
-**Why open:** Automated unsigned preview Flatpak and native archives now exist,
-with a desktop file, icon, checksums, and tag-based GitHub Release publishing.
-There is still no AppStream metadata, MIME association, portal test suite,
-dependency/license audit, signing, or stable release artifact. Host `7z` is
-not available inside a normal Flatpak sandbox without an explicit packaging
-decision.
+**Why open:** Automated unsigned preview Flatpak, quick-run executable, and
+native archive build paths now exist, with a desktop file, icon, checksums, and
+tag-based GitHub Release publishing. There is still no AppStream metadata, MIME
+association, portal test suite, dependency/license audit, signing, or stable
+release artifact. Host `7z` is not available inside a normal Flatpak sandbox
+without an explicit packaging decision.
 
 **Completion:** Choose a license, package a pinned reviewed extractor or keep
 package import explicitly unavailable in Flatpak, add no-network portal tests,

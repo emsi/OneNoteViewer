@@ -20,7 +20,7 @@ jobs:
       - name: Install GTK build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libgtk-4-dev
+          sudo apt-get install --yes libgtk-4-dev xvfb
 
       - name: Verify and package
         run: |
@@ -31,11 +31,23 @@ jobs:
           cargo test --workspace --all-targets --locked
           ./scripts/package-native-release.sh
 
-      - name: Upload native archive
+      - name: Smoke-test quick-run executable
+        run: |
+          binary=$(find dist -maxdepth 1 -type f -name '*.bin' -print -quit)
+          test -n "${binary}"
+          test -x "${binary}"
+          GTK_A11Y=none \
+            GSK_RENDERER=cairo \
+            ONENOTE_VIEWER_SMOKE_QUIT_MS=5000 \
+            xvfb-run -a "${binary}"
+
+      - name: Upload native artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: onenote-viewer-native-x86_64
           path: |
+            dist/*.bin
+            dist/*.bin.sha256
             dist/*.tar.gz
             dist/*.tar.gz.sha256
           if-no-files-found: error
@@ -90,7 +102,7 @@ jobs:
       - name: Generate combined checksums
         run: |
           cd dist
-          sha256sum ./*.flatpak ./*.tar.gz > SHA256SUMS
+          sha256sum ./*.bin ./*.flatpak ./*.tar.gz > SHA256SUMS
 
       - name: Create GitHub release
         env:
@@ -100,6 +112,7 @@ jobs:
             --verify-tag \
             --generate-notes \
             --title "OneNote Viewer ${GITHUB_REF_NAME}" \
+            dist/*.bin \
             dist/*.flatpak \
             dist/*.tar.gz \
             dist/*.sha256 \

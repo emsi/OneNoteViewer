@@ -1,6 +1,6 @@
 # Release Builds
 
-The project produces two Linux preview artifacts. Neither requires Rust,
+The project produces three Linux preview artifacts. None requires Rust,
 Cargo, compiler headers, or `pkg-config` on the machine used to run it.
 
 ## Artifact Choice
@@ -27,6 +27,27 @@ directory permission. `.onepkg` extraction is disabled in practice because
 the sandbox does not include `7zz`/`7z`; select an already extracted notebook
 tree. A reviewed bundled extractor remains release work.
 
+### Quick-Run Executable
+
+`OneNoteViewer-<version>-linux-x86_64.bin` is the optimized viewer executable
+without an archive wrapper. Locally produced files are immediately executable:
+
+```bash
+./dist/OneNoteViewer-*-linux-x86_64.bin /path/to/notebook
+```
+
+For a file downloaded from GitHub as a workflow artifact or Release asset,
+grant execute permission once before running it:
+
+```bash
+chmod +x OneNoteViewer-*-linux-x86_64.bin
+./OneNoteViewer-*-linux-x86_64.bin /path/to/notebook
+```
+
+This is the fastest test path on Ubuntu 24.04 or compatible systems that
+already provide GTK 4.14 or newer. It has the same runtime dependencies as the
+native archive below. Prefer Flatpak for cross-distribution testing.
+
 ### Native Archive
 
 `OneNoteViewer-<version>-linux-x86_64.tar.gz` is smaller and can be unpacked
@@ -44,11 +65,11 @@ host. Prefer Flatpak when testing on a different distribution.
 
 ## Automated Builds
 
-`.github/workflows/release.yml` builds both artifacts:
+`.github/workflows/release.yml` builds all three artifacts:
 
 - manually through **Actions > Release builds > Run workflow**;
 - automatically for tags matching `v*`;
-- tagged builds create a GitHub Release and attach both artifacts plus SHA-256
+- tagged builds create a GitHub Release and attach all artifacts plus SHA-256
   checksums.
 
 A release tag must equal `v` plus `[workspace.package].version`; for example,
@@ -73,7 +94,9 @@ sudo apt install flatpak flatpak-builder
 ./scripts/build-flatpak-release.sh
 ```
 
-Both scripts write ignored artifacts and checksum files under `dist/`.
+Both scripts write ignored artifacts and checksum files under `dist/`. The
+native packaging script also verifies the quick-run executable in CI by
+launching it under Xvfb.
 
 After changing `Cargo.lock`, regenerate the Flatpak source list:
 

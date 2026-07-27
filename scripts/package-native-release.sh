@@ -26,6 +26,7 @@ fi
 cargo build --locked --release -p onenote-viewer
 
 archive="OneNoteViewer-${version}-linux-${arch}.tar.gz"
+executable="OneNoteViewer-${version}-linux-${arch}.bin"
 staging=$(mktemp -d)
 trap 'rm -rf "$staging"' EXIT HUP INT TERM
 directory="$staging/OneNoteViewer-${version}-linux-${arch}"
@@ -47,5 +48,8 @@ tar \
     -cf "$uncompressed" \
     "$(basename "$directory")"
 gzip -n -c "$uncompressed" >"dist/$archive"
+install -m 0755 target/release/onenote-viewer "dist/$executable"
 sha256sum "dist/$archive" >"dist/$archive.sha256"
+sha256sum "dist/$executable" >"dist/$executable.sha256"
 printf 'Created %s\n' "$root/dist/$archive"
+printf 'Created %s\n' "$root/dist/$executable"

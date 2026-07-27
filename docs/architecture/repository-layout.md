@@ -130,8 +130,9 @@ creates render nodes. Public interfaces follow
 - `scripts/` contains native dependency preflight plus reproducible reference
   retrieval, documentation validation, and release packaging entry points, not
   a second build system.
-- `packaging/` contains the Flatpak manifest/assets and native archive runtime
-  guidance. Generated artifacts are written to ignored `dist/`.
+- `packaging/` contains the Flatpak manifest/assets and native
+  executable/archive runtime guidance. Generated artifacts are written to
+  ignored `dist/`.
 
 ## Deliberate Omissions
 
