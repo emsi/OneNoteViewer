@@ -1,0 +1,6 @@
+# Generated reports and dependency manifests.
+/THIRD-PARTY-LICENSES.html linguist-generated=true
+/packaging/flatpak/cargo-sources.json linguist-generated=true
+
+# Retained upstream parser source snapshot.
+/third_party/onenote.rs/** linguist-vendored=true
