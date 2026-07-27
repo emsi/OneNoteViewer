@@ -143,8 +143,15 @@ pub(crate) fn check_icons() -> Result<()> {
         }
     }
     renderer.unrealize();
+    let collapsed_minimum = collapsed_navigation_minimum_width();
+    if collapsed_minimum > COLLAPSED_NAVIGATION_WIDTH {
+        anyhow::bail!(
+            "collapsed navigation requires {collapsed_minimum}px but receives \
+             {COLLAPSED_NAVIGATION_WIDTH}px"
+        );
+    }
     println!(
-        "Verified {} symbolic icons with GTK {}.{}.{}",
+        "Verified {} symbolic icons and collapsed navigation layout with GTK {}.{}.{}",
         SYMBOLIC_ICON_NAMES.len(),
         gtk::major_version(),
         gtk::minor_version(),
@@ -169,6 +176,15 @@ fn transparent_probe(name: &str) -> Option<(usize, usize)> {
         "onenote-zoom-reset-symbolic" => Some((12, 12)),
         _ => None,
     }
+}
+
+fn collapsed_navigation_minimum_width() -> i32 {
+    let (_, page_list) = list_view(&gtk::StringList::new(&[]), "page-list");
+    let pages = CollapsibleNavigationBand::new("PAGES", &page_list, PAGE_NAVIGATION_WIDTH, None);
+    pages.connect_width_changed(|_| {});
+    pages.toggle.emit_clicked();
+    let (minimum, _, _, _) = pages.root.measure(gtk::Orientation::Horizontal, -1);
+    minimum
 }
 
 fn register_resources() -> Result<()> {
@@ -1140,6 +1156,7 @@ fn bind_string(item: &glib::Object, multiline: bool) {
 
 struct CollapsibleNavigationBand {
     root: gtk::Box,
+    header: gtk::Box,
     heading: gtk::Label,
     body: gtk::ScrolledWindow,
     toggle: gtk::Button,
@@ -1189,6 +1206,7 @@ impl CollapsibleNavigationBand {
         root.append(&body);
         Self {
             root,
+            header,
             heading,
             body,
             toggle,
@@ -1202,6 +1220,7 @@ impl CollapsibleNavigationBand {
         F: Fn(i32) + 'static,
     {
         let root = self.root.clone();
+        let header = self.header.clone();
         let heading = self.heading.clone();
         let body = self.body.clone();
         let header_action = self.header_action.clone();
@@ -1213,6 +1232,13 @@ impl CollapsibleNavigationBand {
             if let Some(action) = &header_action {
                 action.set_visible(!collapse);
             }
+            header.set_margin_start(if collapse { 0 } else { 12 });
+            header.set_margin_end(if collapse { 0 } else { 6 });
+            header.set_halign(if collapse {
+                gtk::Align::Center
+            } else {
+                gtk::Align::Fill
+            });
             let width = if collapse {
                 COLLAPSED_NAVIGATION_WIDTH
             } else {
@@ -1534,6 +1560,11 @@ mod tests {
             COLLAPSED_NAVIGATION_WIDTH + PAGE_NAVIGATION_WIDTH + NAVIGATION_SEPARATOR_WIDTH
         );
         pages.toggle.emit_clicked();
+        let (page_minimum, _, _, _) = pages.root.measure(gtk::Orientation::Horizontal, -1);
+        assert!(
+            page_minimum <= COLLAPSED_NAVIGATION_WIDTH,
+            "collapsed pages require {page_minimum}px but receive {COLLAPSED_NAVIGATION_WIDTH}px"
+        );
         assert_eq!(
             total_width.get(),
             COLLAPSED_NAVIGATION_WIDTH * 2 + NAVIGATION_SEPARATOR_WIDTH
