@@ -12,6 +12,8 @@ those components rather than their owner.
 
 ```text
 .
+├── .github/workflows/
+│   └── release.yml
 ├── Cargo.toml
 ├── Cargo.lock
 ├── crates/
@@ -36,9 +38,15 @@ those components rather than their owner.
 │   ├── plans/
 │   ├── references/
 │   └── specs/
+├── packaging/
+│   ├── flatpak/
+│   └── native/
 ├── scripts/
+│   ├── build-flatpak-release.sh
 │   ├── check-system-deps.sh
 │   ├── fetch-references.sh
+│   ├── package-native-release.sh
+│   ├── update-flatpak-sources.sh
 │   └── validate-docs.sh
 └── third_party/
     └── onenote.rs/
@@ -120,9 +128,10 @@ creates render nodes. Public interfaces follow
 - `third_party/onenote.rs/` is the reviewed MPL-2.0 parser snapshot plus three
   documented compatibility patches.
 - `scripts/` contains native dependency preflight plus reproducible reference
-  and documentation validation, not a second build system.
-- `packaging/` remains a future directory and should appear only when it
-  contains working artifacts.
+  retrieval, documentation validation, and release packaging entry points, not
+  a second build system.
+- `packaging/` contains the Flatpak manifest/assets and native archive runtime
+  guidance. Generated artifacts are written to ignored `dist/`.
 
 ## Deliberate Omissions
 

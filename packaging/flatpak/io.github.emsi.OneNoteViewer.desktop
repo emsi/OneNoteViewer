@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=OneNote Viewer
+GenericName=Notebook Viewer
+Comment=View and search local Microsoft OneNote notebooks
+Exec=onenote-viewer
+Icon=io.github.emsi.OneNoteViewer
+Terminal=false
+Categories=Office;Viewer;
+Keywords=OneNote;Notebook;Notes;Viewer;Search;
+StartupNotify=true

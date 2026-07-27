@@ -133,14 +133,17 @@ use an unqualified "supports OneNote."
 
 ## Milestone 4: Distribution
 
-- Choose and apply the project source license.
-- Flatpak manifest with no network permission and portal-based access.
-- Flatpak installation, portal, no-network, notebook-tree, and package
+- [ ] Choose and apply the project source license.
+- [x] Add preview Flatpak and native archive manifests/scripts with no Flatpak
+  network or broad filesystem permission.
+- [x] Add local and `v*` tag/dispatch build paths for both preview artifacts.
+- [ ] Flatpak installation, portal, no-network, notebook-tree, and package
   onboarding smoke tests.
-- Desktop metadata, icons, MIME associations, and reproducible builds.
-- Performance, accessibility, security, and privacy review.
-- Signed release artifacts and a documented update process.
-- Versioned library artifacts, API documentation, integration examples, and
+- [ ] Complete AppStream metadata, MIME associations, and reproducibility
+  comparison.
+- [ ] Performance, accessibility, security, and privacy review.
+- [ ] Signed stable release artifacts and a documented update process.
+- [ ] Versioned library artifacts, API documentation, integration examples, and
   migration notes for public interface changes.
 
 Flatpak package onboarding ships only if a reviewed extractor is bundled; the

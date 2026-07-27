@@ -1,0 +1,39 @@
+id: io.github.emsi.OneNoteViewer
+runtime: org.gnome.Platform
+runtime-version: '50'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: onenote-viewer
+
+finish-args:
+  - --device=dri
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+
+modules:
+  - name: onenote-viewer
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/onenote-viewer/cargo
+        CARGO_NET_OFFLINE: 'true'
+    build-commands:
+      - install -Dm0644 cargo/config .cargo/config.toml
+      - cargo build --offline --frozen --release -p onenote-viewer
+      - install -Dm0755 target/release/onenote-viewer /app/bin/onenote-viewer
+      - install -Dm0644 packaging/flatpak/io.github.emsi.OneNoteViewer.desktop /app/share/applications/io.github.emsi.OneNoteViewer.desktop
+      - install -Dm0644 packaging/flatpak/io.github.emsi.OneNoteViewer.svg /app/share/icons/hicolor/scalable/apps/io.github.emsi.OneNoteViewer.svg
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .flatpak-builder
+          - .git
+          - dist
+          - onepkg
+          - target
+          - test-corpus
+      - cargo-sources.json

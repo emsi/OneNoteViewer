@@ -37,6 +37,7 @@ normative.
 - [Roadmap and milestone gates](plans/roadmap.md)
 - [Potential limitations](limitations.md)
 - [Current remaining work](REMAINING-WORK.md)
+- [Release build and artifact guide](RELEASES.md)
 - [Documentation baseline audit](plans/completion-audit.md)
 - [Reference manifest and provenance](references/README.md)
 

@@ -62,6 +62,7 @@ and document authority. The supporting documents are:
 - [Persisted feature inventory](docs/specs/feature-matrix.md)
 - [Known limitations and risks](docs/limitations.md)
 - [Remaining release work](docs/REMAINING-WORK.md)
+- [Release builds](docs/RELEASES.md)
 - [Roadmap and acceptance gates](docs/plans/roadmap.md)
 - [Reference provenance](docs/references/README.md)
 
@@ -115,6 +116,20 @@ If Cargo reports that `gtk4.pc` or `graphene-gobject-1.0.pc` is missing, the
 development packages are not installed on that host. An unset
 `PKG_CONFIG_PATH` is normal for distribution packages; do not set it manually
 unless GTK was deliberately installed under a nonstandard prefix.
+
+## Portable Release Builds
+
+GitHub Actions and local scripts produce a Flatpak bundle and an optimized
+native Linux archive. The Flatpak is the recommended artifact for testing on
+different distributions because it supplies a consistent GTK runtime:
+
+```bash
+flatpak install --user ./OneNoteViewer-linux-x86_64.flatpak
+flatpak run io.github.emsi.OneNoteViewer
+```
+
+See [release builds](docs/RELEASES.md) for artifact selection, local build
+commands, checksums, sandbox constraints, and tag-based GitHub releases.
 
 The first command accepts a `.one`, `.onetoc2`, or directory. Additional paths
 add sources to the same workspace. `.onepkg` files are imported through the

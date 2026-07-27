@@ -19,6 +19,8 @@ Before submitting implementation work:
 7. Prefer a structured warning over silently dropping unknown content.
 8. Add resource-limit and malformed-input tests for new decoders.
 9. Update the feature matrix, limitation entry, and corpus matrix together.
+10. After changing `Cargo.lock`, run `./scripts/update-flatpak-sources.sh` and
+    commit the regenerated Flatpak source manifest.
 
 Run:
 

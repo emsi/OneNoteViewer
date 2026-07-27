@@ -1,0 +1,106 @@
+name: Release builds
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  native:
+    name: Native Linux x86_64
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install GTK build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libgtk-4-dev
+
+      - name: Verify and package
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version=$(sed -n '/^\[workspace\.package\]$/,/^\[/ { s/^version = "\([^"]*\)"/\1/p; }' Cargo.toml)
+            test "${GITHUB_REF_NAME}" = "v${version}"
+          fi
+          cargo test --workspace --all-targets --locked
+          ./scripts/package-native-release.sh
+
+      - name: Upload native archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: onenote-viewer-native-x86_64
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  flatpak:
+    name: Flatpak x86_64
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      options: --privileged
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Build Flatpak bundle
+        uses: flatpak/flatpak-github-actions/flatpak-builder@401fe28a8384095fc1531b9d320b292f0ee45adb
+        with:
+          bundle: OneNoteViewer-linux-x86_64.flatpak
+          manifest-path: packaging/flatpak/io.github.emsi.OneNoteViewer.yml
+          cache-key: flatpak-builder-${{ github.sha }}
+          upload-artifact: false
+
+      - name: Generate Flatpak checksum
+        run: sha256sum OneNoteViewer-linux-x86_64.flatpak > OneNoteViewer-linux-x86_64.flatpak.sha256
+
+      - name: Upload Flatpak bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: onenote-viewer-flatpak-x86_64
+          path: |
+            OneNoteViewer-linux-x86_64.flatpak
+            OneNoteViewer-linux-x86_64.flatpak.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish tagged release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - native
+      - flatpak
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: onenote-viewer-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate combined checksums
+        run: |
+          cd dist
+          sha256sum ./*.flatpak ./*.tar.gz > SHA256SUMS
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --verify-tag \
+            --generate-notes \
+            --title "OneNote Viewer ${GITHUB_REF_NAME}" \
+            dist/*.flatpak \
+            dist/*.tar.gz \
+            dist/*.sha256 \
+            dist/SHA256SUMS

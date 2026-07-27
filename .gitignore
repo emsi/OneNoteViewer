@@ -1,4 +1,8 @@
 /target/
+/dist/
+/.flatpak-builder/
+/flatpak_app/
+/flatpak_repo/
 /.idea/
 /.vscode/
 *.swp
