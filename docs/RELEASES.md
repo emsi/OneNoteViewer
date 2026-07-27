@@ -127,8 +127,10 @@ sudo apt install \
 All three scripts write ignored artifacts and checksum files under `dist/`.
 Native packaging also creates a corresponding-source archive and refuses
 tracked or staged changes so that its contents match the executable. CI
-launches the native and AppImage executables under Xvfb and verifies that both
-portable artifacts contain a CAB-capable `7zz`.
+launches the native and AppImage executables under Xvfb. It also installs and
+launches the generated Flatpak under Xvfb, and verifies from inside the
+installed sandbox that its bundled `7zz` supports CAB archives. The AppImage
+payload receives the same extractor check before upload.
 
 After changing `Cargo.lock`, regenerate the Flatpak source list:
 
