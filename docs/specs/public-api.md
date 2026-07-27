@@ -146,7 +146,9 @@ cancellation tests exist. They are usable implementation boundaries but are
 not yet published/stable public artifacts. Missing quality-contract items are
 tracked in [remaining work](../REMAINING-WORK.md), especially malformed-input
 breadth, callback/thread documentation, golden protocol fixtures, semantic
-versioning guidance, GObject introspection, and a project license.
+versioning guidance, and GObject introspection. The GPL-3.0-or-later project
+license permits reuse and redistribution but does not make the pre-1.0
+interfaces stable.
 
 ## Compatibility and Quality Contract
 
@@ -161,7 +163,8 @@ Before an interface is called public:
 7. serialization protocols have golden fixtures and explicit version fields;
 8. logs and diagnostics avoid notebook content and private filenames by
    default;
-9. the project license permits intended library reuse and redistribution.
+9. the project license permits intended library reuse and redistribution
+   (**satisfied by GPL-3.0-or-later**).
 
 Pre-1.0 APIs may evolve from corpus evidence, but changes require release notes
 and migration guidance. Internal modules remain private unless they satisfy

@@ -36,6 +36,7 @@ flatpak remote-add \
 flatpak-builder \
     --user \
     --force-clean \
+    --disable-rofiles-fuse \
     --install-deps-from=flathub \
     --repo="$repo_dir" \
     "$build_dir" \

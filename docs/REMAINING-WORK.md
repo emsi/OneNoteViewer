@@ -104,13 +104,13 @@ layout work only where measurements justify it.
 
 **Why open:** The Rust component boundaries, standalone GTK example, and JSONL
 process client exist and are tested. The APIs are still pre-1.0, generated docs
-are not published, thread/callback guarantees need fuller prose, the renderer
-has no GObject-introspection wrapper, and the project has no reuse license.
+are not published, thread/callback guarantees need fuller prose, and the
+renderer has no GObject-introspection wrapper. GPL-3.0-or-later now provides a
+clear reuse and redistribution license.
 
 **Completion:** Close the quality checklist in `specs/public-api.md`, publish
 rustdoc and protocol fixtures, define semantic-versioning/migration policy,
-add a non-Rust renderer binding if retained as a goal, and select a license
-that permits intended downstream reuse.
+and add a non-Rust renderer binding if retained as a goal.
 
 ### 9. Distribution and Desktop Integration
 
@@ -118,13 +118,15 @@ that permits intended downstream reuse.
 native archive build paths now exist, with a desktop file, icon, checksums, and
 tag-based GitHub Release publishing. There is still no AppStream metadata, MIME
 association, portal test suite, dependency/license audit, signing, or stable
-release artifact. Host `7z` is not available inside a normal Flatpak sandbox
-without an explicit packaging decision.
+release artifact. The source license and locked Cargo license report are now
+packaged, but native-library/Flatpak runtime auditing still needs release
+evidence. Host `7z` is not available inside a normal Flatpak sandbox without an
+explicit packaging decision.
 
-**Completion:** Choose a license, package a pinned reviewed extractor or keep
-package import explicitly unavailable in Flatpak, add no-network portal tests,
-supply AppStream/MIME metadata, run dependency/security/license audits, and
-produce reproducible signed artifacts.
+**Completion:** Package a pinned reviewed extractor or keep package import
+explicitly unavailable in Flatpak, add no-network portal tests, supply
+AppStream/MIME metadata, audit native/runtime dependencies, and produce
+reproducible signed artifacts.
 
 ## Implemented Evidence
 

@@ -22,12 +22,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes libgtk-4-dev xvfb
 
+      - name: Install license audit tool
+        run: cargo +stable install cargo-about --version 0.9.1 --locked --features cli
+
       - name: Verify and package
         run: |
           if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
             version=$(sed -n '/^\[workspace\.package\]$/,/^\[/ { s/^version = "\([^"]*\)"/\1/p; }' Cargo.toml)
             test "${GITHUB_REF_NAME}" = "v${version}"
           fi
+          ./scripts/check-licenses.sh
           cargo test --workspace --all-targets --locked
           ./scripts/package-native-release.sh
 

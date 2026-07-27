@@ -1,6 +1,7 @@
 # Release Builds
 
-The project produces three Linux preview artifacts. None requires Rust,
+The project produces four Linux preview artifacts. None of the runnable
+artifacts requires Rust,
 Cargo, compiler headers, or `pkg-config` on the machine used to run it.
 
 ## Artifact Choice
@@ -61,11 +62,28 @@ tar -xzf OneNoteViewer-*-linux-x86_64.tar.gz
 ```
 
 The archive includes the exact `ldd` runtime-library inventory from its build
-host. Prefer Flatpak when testing on a different distribution.
+host, project and third-party licenses, the build revision, and corresponding
+source instructions. Prefer Flatpak when testing on a different distribution.
+
+### Corresponding Source Archive
+
+`OneNoteViewer-<version>-source.tar.gz` contains the exact committed source
+revision used for the native binaries, including `Cargo.lock`, build scripts,
+the retained MPL parser snapshot, and license notices. It is produced with
+`git archive`, so native packaging refuses tracked or staged source changes.
+
+The public source repository and parser fork remain the preferred modification
+forms. Runnable binaries report their source revision and license locations:
+
+```bash
+./onenote-viewer --source
+./onenote-viewer --license
+./onenote-viewer --third-party-notices
+```
 
 ## Automated Builds
 
-`.github/workflows/release.yml` builds all three artifacts:
+`.github/workflows/release.yml` builds all four artifacts:
 
 - manually through **Actions > Release builds > Run workflow**;
 - automatically for tags matching `v*`;
@@ -94,9 +112,10 @@ sudo apt install flatpak flatpak-builder
 ./scripts/build-flatpak-release.sh
 ```
 
-Both scripts write ignored artifacts and checksum files under `dist/`. The
-native packaging script also verifies the quick-run executable in CI by
-launching it under Xvfb.
+Both scripts write ignored artifacts and checksum files under `dist/`. Native
+packaging also creates a corresponding-source archive and refuses tracked or
+staged changes so that its contents match the executable. CI verifies the
+quick-run executable by launching it under Xvfb.
 
 After changing `Cargo.lock`, regenerate the Flatpak source list:
 
@@ -110,7 +129,7 @@ running it through `uv`.
 ## Release Boundaries
 
 These are unsigned preview/test artifacts, not a claim of stable OneNote
-compatibility or store readiness. A project source license, signed artifacts,
-AppStream metadata, bundled/sandboxed package extraction, portal testing, and
-the remaining security/accessibility/fidelity gates are still required for a
-public stable release.
+compatibility or store readiness. Signed artifacts, AppStream metadata,
+bundled/sandboxed package extraction, portal testing, and the remaining
+security/accessibility/fidelity gates are still required for a public stable
+release.

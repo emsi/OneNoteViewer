@@ -16,6 +16,12 @@ those components rather than their owner.
 │   └── release.yml
 ├── Cargo.toml
 ├── Cargo.lock
+├── LICENSE
+├── SOURCE-CODE.md
+├── THIRD-PARTY-NOTICES.md
+├── THIRD-PARTY-LICENSES.html
+├── about.toml
+├── about.hbs
 ├── crates/
 │   ├── onenote-core/
 │   │   ├── src/
@@ -43,6 +49,7 @@ those components rather than their owner.
 │   └── native/
 ├── scripts/
 │   ├── build-flatpak-release.sh
+│   ├── check-licenses.sh
 │   ├── check-system-deps.sh
 │   ├── fetch-references.sh
 │   ├── package-native-release.sh
@@ -130,9 +137,12 @@ creates render nodes. Public interfaces follow
 - `third_party/onenote.rs/` is the retained MPL-2.0 parser audit snapshot. The
   active Cargo dependency is the public fork at the immutable revision recorded
   in the workspace manifest and lockfile.
+- The root license and notice files define the GPL project boundary, preserve
+  separately licensed material, identify corresponding source, and record the
+  generated license texts for the locked dependency graph.
 - `scripts/` contains native dependency preflight plus reproducible reference
-  retrieval, documentation validation, and release packaging entry points, not
-  a second build system.
+  retrieval, license/documentation validation, and release packaging entry
+  points, not a second build system.
 - `packaging/` contains the Flatpak manifest/assets and native
   executable/archive runtime guidance. Generated artifacts are written to
   ignored `dist/`.

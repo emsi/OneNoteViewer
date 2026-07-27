@@ -285,14 +285,18 @@ lost effects.
   Bundle a reviewed compatible extractor or clearly disable package onboarding;
   do not escape the sandbox to invoke a host executable.
 
-### L-025: No source-code license selected
+### L-025: Source-code licensing and third-party boundaries
 
-- **Status:** Open
-- **Impact:** External contributions and redistribution of the current code are
-  legally ambiguous.
-- **Mitigation:** Copyright owner chooses and adds a license before accepting
-  implementation contributions. MPL-2.0 is operationally compatible with the
-  selected parser; GPL-3.0-or-later is another coherent project choice.
+- **Status:** Mitigated
+- **Impact:** Project and dependency terms must remain available when source or
+  binaries are redistributed.
+- **Mitigation:** Project-owned code and documentation use
+  GPL-3.0-or-later. The parser remains MPL-2.0 and is additionally distributed
+  under GPL-3.0-or-later in the combined work; icon and Microsoft-document
+  terms remain separate. Release artifacts carry the complete notices,
+  corresponding-source instructions, and a generated locked-dependency report.
+- **Residual risk:** Every dependency update still requires a license audit,
+  and native/Flatpak runtime components require release-specific inventories.
 
 ### L-026: Sensitivity labels and information-rights management
 
@@ -314,8 +318,8 @@ lost effects.
   consumer.
 - **Release gate:** The public integration API quality contract passes,
   including structured errors, cancellation, limits, thread/callback
-  documentation, protocol golden fixtures, and a reuse-compatible project
-  license.
+  documentation and protocol golden fixtures. The reuse-compatible license
+  requirement is satisfied by GPL-3.0-or-later.
 
 ## Implemented Resource Ceilings
 

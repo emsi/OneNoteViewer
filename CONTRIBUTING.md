@@ -38,8 +38,16 @@ cargo doc --workspace --no-deps
 git diff --check
 ```
 
-Dependency/license audit remains a release gate and cannot pass until the
-project source license is selected.
+Contributions are accepted under the project's GPL-3.0-or-later license unless
+a file is explicitly governed by a compatible third-party license. Preserve
+all existing notices and update `THIRD-PARTY-NOTICES.md` when adding or
+changing third-party material.
 
-The source-code license must be selected before external code contributions
-are accepted.
+After changing `Cargo.lock` or dependency licensing, install the pinned audit
+tool and refresh the checked-in report:
+
+```sh
+cargo +stable install cargo-about --version 0.9.1 --locked --features cli
+./scripts/check-licenses.sh --update
+./scripts/check-licenses.sh
+```

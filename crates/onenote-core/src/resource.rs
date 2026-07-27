@@ -143,6 +143,8 @@ impl ResourceStore {
     }
 }
 
+// The upstream non-exhaustive enum requires a conservative fallback.
+#[allow(clippy::match_same_arms)]
 pub(crate) fn resource_status(status: FileDataStatus) -> ResourceStatus {
     match status {
         FileDataStatus::Available => ResourceStatus::Available,

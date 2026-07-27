@@ -179,8 +179,9 @@ The detailed milestone sequence and exit gates are in the
    allocation, path, and process-lifecycle risks with repeatable evidence.
 6. Benchmark and optimize cold parse/index, warm search, pan/zoom, image cache,
    and large workspace memory.
-7. Upstream or retire the five local parser compatibility patches, choose a
-   project license, publish API documentation, and complete Flatpak packaging.
+7. Upstream or retire the five local parser compatibility patches, publish API
+   documentation, and complete stable Flatpak packaging. GPL-3.0-or-later and
+   third-party/corresponding-source packaging are already established.
 
 ## Definition of Success
 

@@ -18,3 +18,17 @@ The Flatpak supplies a consistent GTK runtime.
 
 .onepkg onboarding additionally requires 7zz or 7z. Opening an already
 extracted .one/.onetoc2 notebook tree does not require 7-Zip.
+
+OneNote Viewer is free software licensed under GPL-3.0-or-later. LICENSE
+contains the complete project license. SOURCE-CODE.md identifies the exact
+source locations; BUILD-REVISION records the source revision used for this
+binary. THIRD-PARTY-NOTICES.md, THIRD-PARTY-LICENSES.html,
+ONENOTE-PARSER-MPL-2.0.txt, and LUCIDE-LICENSE preserve dependency licenses
+and attribution.
+
+The executable also exposes this information directly:
+
+    ./onenote-viewer --license
+    ./onenote-viewer --source
+    ./onenote-viewer --third-party-notices
+    ./onenote-viewer --third-party-licenses

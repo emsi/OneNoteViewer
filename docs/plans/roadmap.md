@@ -140,7 +140,8 @@ use an unqualified "supports OneNote."
 
 ## Milestone 4: Distribution
 
-- [ ] Choose and apply the project source license.
+- [x] Apply GPL-3.0-or-later, preserve third-party license boundaries, and
+  package corresponding-source and dependency notices.
 - [x] Add preview Flatpak, quick-run executable, and native archive build paths
   with no Flatpak network or broad filesystem permission.
 - [x] Add local and `v*` tag/dispatch workflows for all preview artifacts.

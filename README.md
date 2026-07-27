@@ -85,8 +85,8 @@ creation time are shown once above the freeform body. Bundled symbolic action
 icons avoid a dependency on a particular host icon theme.
 
 The tested corpus is still one private desktop package. Accessibility, measured
-layout fidelity, hostile-input coverage, several user actions, refresh,
-packaging, and licensing remain release blockers. See
+layout fidelity, hostile-input coverage, several user actions, refresh, and
+stable packaging remain release blockers. See
 [remaining work](docs/REMAINING-WORK.md) for the exact gaps and completion
 evidence required.
 
@@ -179,7 +179,14 @@ external-action work is tracked explicitly rather than implied complete.
 
 ## Licensing
 
-No project source license has been selected yet. That decision must be made
-before redistribution or external contributions. The parser fork and retained
-source snapshot remain MPL-2.0; downloaded reference documents retain their
-original terms. See [reference provenance](docs/references/README.md).
+OneNote Viewer is free software licensed under the
+[GNU General Public License, version 3 or later](LICENSE).
+
+The active OneNote parser fork and retained parser source remain available
+under MPL-2.0 and are additionally distributed under GPL-3.0-or-later as part
+of the combined application under MPL 2.0 section 3.3. Lucide and
+Feather-derived icons retain their ISC/MIT terms. Microsoft reference
+documents are not covered by the project GPL and retain their embedded terms.
+See [third-party notices](THIRD-PARTY-NOTICES.md), the generated
+[dependency license report](THIRD-PARTY-LICENSES.html), and
+[corresponding-source information](SOURCE-CODE.md).
