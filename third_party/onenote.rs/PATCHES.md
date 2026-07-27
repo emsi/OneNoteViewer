@@ -3,7 +3,7 @@
 The active application dependency is the public
 [`emsi/onenote.rs`](https://github.com/emsi/onenote.rs) fork, pinned in the
 workspace manifest to merge revision
-`f716dbbc35203666750ae509470f5ef730390bfb`. That revision starts from upstream
+`3cc4e985d842c76dc04055955b460713d6f6ea24`. That revision starts from upstream
 `f9cdc59f984bc1f7f096b54100cefaaebc892573` (version 1.1.1) and contains the
 compatibility patches below.
 
