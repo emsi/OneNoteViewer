@@ -60,5 +60,5 @@ flatpak build-bundle \
     "$bundle" \
     io.github.emsi.OneNoteViewer \
     --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
-sha256sum "$bundle" >"$bundle.sha256"
+(cd dist && sha256sum "$(basename "$bundle")" >"$(basename "$bundle").sha256")
 printf 'Created %s\n' "$root/$bundle"

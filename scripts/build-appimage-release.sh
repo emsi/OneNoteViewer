@@ -156,5 +156,5 @@ ARCH="$arch" APPIMAGE_EXTRACT_AND_RUN=1 "$appimagetool" \
     "$appdir" \
     "$bundle"
 chmod +x "$bundle"
-sha256sum "$bundle" >"$bundle.sha256"
+(cd dist && sha256sum "$(basename "$bundle")" >"$(basename "$bundle").sha256")
 printf 'Created %s\n' "$root/$bundle"

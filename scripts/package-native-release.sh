@@ -73,9 +73,12 @@ git archive \
     --prefix="OneNoteViewer-${version}-source/" \
     HEAD >"$source_tar"
 gzip -n -c "$source_tar" >"dist/$source_archive"
-sha256sum "dist/$archive" >"dist/$archive.sha256"
-sha256sum "dist/$executable" >"dist/$executable.sha256"
-sha256sum "dist/$source_archive" >"dist/$source_archive.sha256"
+(
+    cd dist
+    sha256sum "$archive" >"$archive.sha256"
+    sha256sum "$executable" >"$executable.sha256"
+    sha256sum "$source_archive" >"$source_archive.sha256"
+)
 printf 'Created %s\n' "$root/dist/$archive"
 printf 'Created %s\n' "$root/dist/$executable"
 printf 'Created %s\n' "$root/dist/$source_archive"

@@ -64,6 +64,18 @@ jobs:
           cache-key: flatpak-builder-${{ github.sha }}
           upload-artifact: false
 
+      - name: Verify bundled application and extractor
+        run: |
+          flatpak install --noninteractive ./OneNoteViewer-linux-x86_64.flatpak
+          flatpak run --command=7zz io.github.emsi.OneNoteViewer i |
+            grep 'Cab' >/dev/null
+          xvfb-run -a \
+            flatpak run \
+              --env=GTK_A11Y=none \
+              --env=GSK_RENDERER=cairo \
+              --env=ONENOTE_VIEWER_SMOKE_QUIT_MS=5000 \
+              io.github.emsi.OneNoteViewer
+
       - name: Generate Flatpak checksum
         run: sha256sum OneNoteViewer-linux-x86_64.flatpak > OneNoteViewer-linux-x86_64.flatpak.sha256
 
