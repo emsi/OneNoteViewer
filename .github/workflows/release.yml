@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   native:
-    name: Native Linux x86_64
+    name: Native build and test gate
     runs-on: ubuntu-24.04
     steps:
       - name: Check out source
@@ -45,17 +45,6 @@ jobs:
             ONENOTE_VIEWER_SMOKE_QUIT_MS=5000 \
             xvfb-run -a "${binary}"
 
-      - name: Upload native artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: onenote-viewer-native-x86_64
-          path: |
-            dist/*.bin
-            dist/*.bin.sha256
-            dist/*.tar.gz
-            dist/*.tar.gz.sha256
-          if-no-files-found: error
-
   flatpak:
     name: Flatpak x86_64
     runs-on: ubuntu-24.04
@@ -86,12 +75,64 @@ jobs:
             OneNoteViewer-linux-x86_64.flatpak.sha256
           if-no-files-found: error
 
+  appimage:
+    name: AppImage x86_64
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Install build and smoke-test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            adwaita-icon-theme \
+            libgtk-4-dev \
+            librsvg2-common \
+            patchelf \
+            shared-mime-info \
+            xvfb
+
+      - name: Build AppImage
+        run: ./scripts/build-appimage-release.sh
+
+      - name: Verify bundled application and extractor
+        run: |
+          appimage=$(realpath "$(find dist -maxdepth 1 -type f -name '*.AppImage' -print -quit)")
+          test -n "${appimage}"
+          test -x "${appimage}"
+          APPIMAGE_EXTRACT_AND_RUN=1 "${appimage}" --version
+          APPIMAGE_EXTRACT_AND_RUN=1 \
+            GTK_A11Y=none \
+            GSK_RENDERER=cairo \
+            ONENOTE_VIEWER_SMOKE_QUIT_MS=5000 \
+            xvfb-run -a "${appimage}" 2>&1 | tee appimage-smoke.log
+          if grep -E 'Failed to load icon|Unrecognized image file format' appimage-smoke.log; then
+            exit 1
+          fi
+          mkdir payload-check
+          cd payload-check
+          "${appimage}" --appimage-extract >/dev/null
+          ./squashfs-root/usr/bin/7zz i | grep 'Cab' >/dev/null
+          test -s squashfs-root/usr/share/licenses/io.github.emsi.OneNoteViewer/7-ZIP-LICENSE.txt
+          test -s squashfs-root/usr/share/sources/io.github.emsi.OneNoteViewer/7z2602-src.tar.xz
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: onenote-viewer-appimage-x86_64
+          path: |
+            dist/*.AppImage
+            dist/*.AppImage.sha256
+          if-no-files-found: error
+
   release:
     name: Publish tagged release
     if: startsWith(github.ref, 'refs/tags/v')
     needs:
       - native
       - flatpak
+      - appimage
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -106,7 +147,7 @@ jobs:
       - name: Generate combined checksums
         run: |
           cd dist
-          sha256sum ./*.bin ./*.flatpak ./*.tar.gz > SHA256SUMS
+          sha256sum ./*.AppImage ./*.flatpak > SHA256SUMS
 
       - name: Create GitHub release
         env:
@@ -116,8 +157,7 @@ jobs:
             --verify-tag \
             --generate-notes \
             --title "OneNote Viewer ${GITHUB_REF_NAME}" \
-            dist/*.bin \
+            dist/*.AppImage \
             dist/*.flatpak \
-            dist/*.tar.gz \
             dist/*.sha256 \
             dist/SHA256SUMS

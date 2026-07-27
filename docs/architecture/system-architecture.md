@@ -199,10 +199,13 @@ configuration only after real corpus measurements.
 
 ## Packaging
 
-The first distributable target is Flatpak using a stable GNOME runtime,
-document portals, and no network access. Native distribution packages may
-follow. Development builds remain ordinary Cargo builds so packaging does not
-hide dependency or runtime failures.
+The primary distributable target is Flatpak using a stable GNOME runtime,
+document portals, and no network access. An AppImage provides an
+installation-free alternative for current x86-64 distributions. Both portable
+formats bundle a pinned external `7zz` process and its corresponding source;
+the Flatpak runtime remains separate. Dynamically linked native products are
+built and tested but not published. Development builds remain ordinary Cargo
+builds so packaging does not hide dependency or runtime failures.
 
 Reusable Rust crates, API documentation, examples, the headless query adapter,
 and eventually the GObject-introspectable renderer wrapper are separate release

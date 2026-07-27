@@ -114,19 +114,17 @@ and add a non-Rust renderer binding if retained as a goal.
 
 ### 9. Distribution and Desktop Integration
 
-**Why open:** Automated unsigned preview Flatpak, quick-run executable, and
-native archive build paths now exist, with a desktop file, icon, checksums, and
-tag-based GitHub Release publishing. There is still no AppStream metadata, MIME
-association, portal test suite, dependency/license audit, signing, or stable
-release artifact. The source license and locked Cargo license report are now
-packaged, but native-library/Flatpak runtime auditing still needs release
-evidence. Host `7z` is not available inside a normal Flatpak sandbox without an
-explicit packaging decision.
+**Why open:** Automated unsigned preview Flatpak and AppImage release paths now
+exist, with a desktop file, icon, checksums, and tag-based GitHub publishing.
+The dynamically linked native executable remains an unpublished CI/local test
+product. Both portable formats bundle a checksum-pinned `7zz` plus its license
+and corresponding source. There is still no AppStream metadata, MIME
+association, portal/package-import test suite, complete AppImage runtime
+license audit, signing, or stable release artifact.
 
-**Completion:** Package a pinned reviewed extractor or keep package import
-explicitly unavailable in Flatpak, add no-network portal tests, supply
-AppStream/MIME metadata, audit native/runtime dependencies, and produce
-reproducible signed artifacts.
+**Completion:** Add no-network portal and packaged `.onepkg` tests, supply
+AppStream/MIME metadata, audit bundled/runtime dependencies, test the AppImage
+on supported distributions, and produce reproducible signed artifacts.
 
 ## Implemented Evidence
 

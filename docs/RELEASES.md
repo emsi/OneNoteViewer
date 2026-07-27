@@ -1,8 +1,9 @@
 # Release Builds
 
-The project produces four Linux preview artifacts. None of the runnable
-artifacts requires Rust,
-Cargo, compiler headers, or `pkg-config` on the machine used to run it.
+GitHub releases publish two runnable Linux preview artifacts: Flatpak and
+AppImage. Neither requires Rust, Cargo, compiler headers, or `pkg-config` on
+the machine used to run it. Native binaries remain local and CI-only build
+products.
 
 ## Artifact Choice
 
@@ -24,55 +25,49 @@ notebooks through the desktop portal. Host paths passed as command-line
 arguments are not exported into the sandbox automatically.
 
 The preview Flatpak intentionally has no network permission or broad home
-directory permission. `.onepkg` extraction is disabled in practice because
-the sandbox does not include `7zz`/`7z`; select an already extracted notebook
-tree. A reviewed bundled extractor remains release work.
+directory permission. It includes a private, pinned `7zz` executable, its
+license, and corresponding source, so `.onepkg` import does not depend on a
+host-installed extractor. Package input and the durable destination must be
+selected through the application's portal-backed choosers.
 
-### Quick-Run Executable
+### AppImage
 
-`OneNoteViewer-<version>-linux-x86_64.bin` is the optimized viewer executable
-without an archive wrapper. Locally produced files are immediately executable:
-
-```bash
-./dist/OneNoteViewer-*-linux-x86_64.bin /path/to/notebook
-```
-
-For a file downloaded from GitHub as a workflow artifact or Release asset,
-grant execute permission once before running it:
+`OneNoteViewer-<version>-x86_64.AppImage` is the installation-free portable
+artifact. It bundles GTK and the other non-base runtime libraries, GTK data,
+image loaders, and the private `7zz` extractor:
 
 ```bash
-chmod +x OneNoteViewer-*-linux-x86_64.bin
-./OneNoteViewer-*-linux-x86_64.bin /path/to/notebook
+chmod +x OneNoteViewer-*-x86_64.AppImage
+./OneNoteViewer-*-x86_64.AppImage /path/to/notebook
 ```
 
-This is the fastest test path on Ubuntu 24.04 or compatible systems that
-already provide GTK 4.14 or newer. It has the same runtime dependencies as the
-native archive below. Prefer Flatpak for cross-distribution testing.
+AppImages normally mount themselves through FUSE. On a host without compatible
+FUSE support, use the built-in extraction fallback:
 
-### Native Archive
+```bash
+./OneNoteViewer-*-x86_64.AppImage --appimage-extract-and-run
+```
 
-`OneNoteViewer-<version>-linux-x86_64.tar.gz` is smaller and can be unpacked
-anywhere. It is dynamically linked and intended for Ubuntu 24.04 or compatible
-hosts with GTK 4.14 or newer:
+The AppImage is built on Ubuntu 24.04. It is intended for current x86-64 Linux
+desktop distributions with a compatible glibc, X11 or Wayland, graphics
+drivers, fonts, and desktop services. Flatpak remains the stronger option when
+the host distribution is older or materially different.
+
+### Unpublished Native Build
+
+`scripts/package-native-release.sh` still creates a quick-run `.bin`, native
+archive, and corresponding-source archive under `dist/`. They are useful on
+the development host and for CI smoke tests, but the workflow does not upload
+or attach them to GitHub releases. They are dynamically linked and intended
+for Ubuntu 24.04 or compatible hosts with GTK 4.14 or newer:
 
 ```bash
 sudo apt install libgtk-4-1 libgraphene-1.0-0
-tar -xzf OneNoteViewer-*-linux-x86_64.tar.gz
-./OneNoteViewer-*-linux-x86_64/onenote-viewer /path/to/notebook
+./scripts/package-native-release.sh
+./dist/OneNoteViewer-*-linux-x86_64.bin /path/to/notebook
 ```
 
-The archive includes the exact `ldd` runtime-library inventory from its build
-host, project and third-party licenses, the build revision, and corresponding
-source instructions. Prefer Flatpak when testing on a different distribution.
-
-### Corresponding Source Archive
-
-`OneNoteViewer-<version>-source.tar.gz` contains the exact committed source
-revision used for the native binaries, including `Cargo.lock`, build scripts,
-the retained MPL parser snapshot, and license notices. It is produced with
-`git archive`, so native packaging refuses tracked or staged source changes.
-
-The public source repository and parser fork remain the preferred modification
+The public source repository and parser fork are the preferred modification
 forms. Runnable binaries report their source revision and license locations:
 
 ```bash
@@ -83,19 +78,21 @@ forms. Runnable binaries report their source revision and license locations:
 
 ## Automated Builds
 
-`.github/workflows/release.yml` builds all four artifacts:
+`.github/workflows/release.yml`:
 
 - manually through **Actions > Release builds > Run workflow**;
 - automatically for tags matching `v*`;
-- tagged builds create a GitHub Release and attach all artifacts plus SHA-256
-  checksums.
+- always builds and tests the native binary without uploading it;
+- builds Flatpak and AppImage workflow artifacts;
+- creates tagged GitHub Releases containing only Flatpak, AppImage, and their
+  SHA-256 checksums.
 
 A release tag must equal `v` plus `[workspace.package].version`; for example,
 version `0.1.0` uses tag `v0.1.0`.
 
-The workflow pins third-party actions by commit. Flatpak Cargo inputs are
-downloaded by checksum from `packaging/flatpak/cargo-sources.json`, generated
-from `Cargo.lock`.
+The workflow pins third-party actions by commit. Flatpak Cargo inputs,
+linuxdeploy, appimagetool, the AppImage runtime, and the bundled 7-Zip binary
+and source are all verified against committed SHA-256 values.
 
 ## Local Builds
 
@@ -112,10 +109,26 @@ sudo apt install flatpak flatpak-builder
 ./scripts/build-flatpak-release.sh
 ```
 
-Both scripts write ignored artifacts and checksum files under `dist/`. Native
-packaging also creates a corresponding-source archive and refuses tracked or
-staged changes so that its contents match the executable. CI verifies the
-quick-run executable by launching it under Xvfb.
+Flatpak Builder uses bubblewrap and therefore requires user namespaces. It
+cannot run inside an unprivileged Docker/dev container that blocks namespace
+creation, even when Flatpak and its runtimes are installed. In that situation,
+run the script directly on the host or use the GitHub Actions workflow.
+
+AppImage preview:
+
+```bash
+sudo apt install \
+  adwaita-icon-theme curl file libgtk-4-dev librsvg2-common patchelf \
+  shared-mime-info
+./scripts/build-appimage-release.sh
+./dist/OneNoteViewer-*-x86_64.AppImage
+```
+
+All three scripts write ignored artifacts and checksum files under `dist/`.
+Native packaging also creates a corresponding-source archive and refuses
+tracked or staged changes so that its contents match the executable. CI
+launches the native and AppImage executables under Xvfb and verifies that both
+portable artifacts contain a CAB-capable `7zz`.
 
 After changing `Cargo.lock`, regenerate the Flatpak source list:
 
@@ -130,6 +143,6 @@ running it through `uv`.
 
 These are unsigned preview/test artifacts, not a claim of stable OneNote
 compatibility or store readiness. Signed artifacts, AppStream metadata,
-bundled/sandboxed package extraction, portal testing, and the remaining
+cross-distribution and portal test coverage, and the remaining
 security/accessibility/fidelity gates are still required for a public stable
 release.

@@ -142,9 +142,10 @@ use an unqualified "supports OneNote."
 
 - [x] Apply GPL-3.0-or-later, preserve third-party license boundaries, and
   package corresponding-source and dependency notices.
-- [x] Add preview Flatpak, quick-run executable, and native archive build paths
-  with no Flatpak network or broad filesystem permission.
-- [x] Add local and `v*` tag/dispatch workflows for all preview artifacts.
+- [x] Add publishable Flatpak and AppImage paths, plus unpublished native
+  build/test products, with no Flatpak network or broad filesystem permission.
+- [x] Add local and `v*` tag/dispatch workflows that publish only the portable
+  preview artifacts.
 - [ ] Flatpak installation, portal, no-network, notebook-tree, and package
   onboarding smoke tests.
 - [ ] Complete AppStream metadata, MIME associations, and reproducibility
@@ -154,9 +155,9 @@ use an unqualified "supports OneNote."
 - [ ] Versioned library artifacts, API documentation, integration examples, and
   migration notes for public interface changes.
 
-Flatpak package onboarding ships only if a reviewed extractor is bundled; the
-viewer remains fully functional for already extracted notebook trees if it is
-not.
+Flatpak and AppImage package onboarding use a checksum-pinned bundled `7zz`
+process with its license and corresponding source. Portal installation and
+end-to-end package-import tests remain release work.
 
 ## Deferred Backlog
 

@@ -45,9 +45,11 @@ those components rather than their owner.
 │   ├── references/
 │   └── specs/
 ├── packaging/
+│   ├── appimage/
 │   ├── flatpak/
 │   └── native/
 ├── scripts/
+│   ├── build-appimage-release.sh
 │   ├── build-flatpak-release.sh
 │   ├── check-licenses.sh
 │   ├── check-system-deps.sh
@@ -143,7 +145,7 @@ creates render nodes. Public interfaces follow
 - `scripts/` contains native dependency preflight plus reproducible reference
   retrieval, license/documentation validation, and release packaging entry
   points, not a second build system.
-- `packaging/` contains the Flatpak manifest/assets and native
+- `packaging/` contains Flatpak and AppImage launch assets plus native
   executable/archive runtime guidance. Generated artifacts are written to
   ignored `dist/`.
 

@@ -281,9 +281,10 @@ lost effects.
   sibling sections and nested groups.
 - **Mitigation:** select/grant the notebook directory, test persistent document
   portal permissions, and clearly request the minimal necessary tree.
-- **Package constraint:** Flatpak cannot assume the host `7z` is visible.
-  Bundle a reviewed compatible extractor or clearly disable package onboarding;
-  do not escape the sandbox to invoke a host executable.
+- **Package constraint:** Flatpak cannot assume the host `7z` is visible. The
+  current manifest bundles a checksum-pinned `7zz` and corresponding source;
+  destination portal grants and end-to-end packaged import still need tests.
+  Do not escape the sandbox to invoke a host executable.
 
 ### L-025: Source-code licensing and third-party boundaries
 
@@ -296,7 +297,8 @@ lost effects.
   terms remain separate. Release artifacts carry the complete notices,
   corresponding-source instructions, and a generated locked-dependency report.
 - **Residual risk:** Every dependency update still requires a license audit,
-  and native/Flatpak runtime components require release-specific inventories.
+  and bundled AppImage/native runtime components require release-specific
+  inventories.
 
 ### L-026: Sensitivity labels and information-rights management
 

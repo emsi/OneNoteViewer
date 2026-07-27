@@ -38,8 +38,10 @@ links for the complete locked Cargo dependency graph. It is generated from
 `Cargo.lock` with the pinned process documented in `scripts/check-licenses.sh`.
 
 The application dynamically uses GTK, GLib, Pango, Cairo, Graphene, HarfBuzz,
-and their platform dependencies. Native archives do not bundle those system
+and their platform dependencies. Native builds do not bundle those system
 libraries. Flatpak obtains them from the separately distributed GNOME runtime.
+The AppImage bundles the runtime libraries identified by the license and
+package metadata under its `usr/share/doc/` directory.
 
 SQLite is compiled through the `rusqlite` `bundled` feature. SQLite is in the
 public domain: <https://www.sqlite.org/copyright.html>.
@@ -64,9 +66,15 @@ Microsoft names and product names are trademarks of their respective owners.
 OneNote Viewer is an independent project and is not affiliated with or endorsed
 by Microsoft.
 
-## External Package Extractor
+## Package Extractor
 
-OneNote Viewer can invoke an installed `7zz` or `7z` executable as a separate
-process for one-time `.onepkg` extraction. The extractor is not linked into or
-bundled with OneNote Viewer. 7-Zip is separately distributed under its own
-terms; see <https://www.7-zip.org/license.html>.
+OneNote Viewer invokes `7zz` or `7z` as a separate process for one-time
+`.onepkg` extraction. Native development builds use an installed executable.
+The Flatpak and AppImage bundle the official 7-Zip 26.02 `7zzs` console
+executable as `7zz`; it is not linked into OneNote Viewer.
+
+7-Zip is copyright Igor Pavlov and is distributed under the GNU Lesser General
+Public License 2.1 or later, with additional component notices described in its
+`License.txt`. Portable artifacts include that exact license and the unmodified
+`7z2602-src.tar.xz` corresponding source archive. Upstream source:
+<https://github.com/ip7z/7zip/releases/tag/26.02>.

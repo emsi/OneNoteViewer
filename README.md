@@ -124,8 +124,8 @@ unless GTK was deliberately installed under a nonstandard prefix.
 
 ## Portable Release Builds
 
-GitHub Actions and local scripts produce a Flatpak bundle, a directly runnable
-optimized Linux executable, and a native Linux archive. The Flatpak is the
+GitHub releases publish a Flatpak bundle and an AppImage. Both include the
+external 7-Zip console tool needed for `.onepkg` extraction. Flatpak is the
 recommended artifact for testing on different distributions because it
 supplies a consistent GTK runtime:
 
@@ -134,7 +134,14 @@ flatpak install --user ./OneNoteViewer-linux-x86_64.flatpak
 flatpak run io.github.emsi.OneNoteViewer
 ```
 
-For a quick native test on the build host:
+The AppImage runs without installation:
+
+```bash
+chmod +x OneNoteViewer-*-x86_64.AppImage
+./OneNoteViewer-*-x86_64.AppImage
+```
+
+For a quick unpublished native test on the build host:
 
 ```bash
 ./scripts/package-native-release.sh
@@ -142,7 +149,8 @@ For a quick native test on the build host:
 ```
 
 See [release builds](docs/RELEASES.md) for artifact selection, local build
-commands, checksums, sandbox constraints, and tag-based GitHub releases.
+commands, checksums, sandbox constraints, AppImage compatibility, and
+tag-based GitHub releases.
 
 The first command accepts a `.one`, `.onetoc2`, or directory. Additional paths
 add sources to the same workspace. `.onepkg` files are imported through the

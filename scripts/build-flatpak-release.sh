@@ -12,6 +12,19 @@ for command in flatpak flatpak-builder; do
     fi
 done
 
+if command -v unshare >/dev/null 2>&1 && ! unshare --user --map-root-user true 2>/dev/null; then
+    cat >&2 <<'EOF'
+Flatpak cannot build in this environment because user namespaces are blocked.
+This commonly happens inside an unprivileged Docker or development container;
+bubblewrap needs permission to create namespaces even when Flatpak is installed.
+
+Run this script directly on the host, start the container with the privileges
+required for nested namespaces, or use the GitHub Actions release workflow.
+Changing PKG_CONFIG_PATH or reinstalling Flatpak will not fix this condition.
+EOF
+    exit 1
+fi
+
 version=$(sed -n '
     /^\[workspace\.package\]$/,/^\[/ {
         s/^version = "\([^"]*\)"/\1/p

@@ -1,0 +1,27 @@
+#!/bin/sh
+set -eu
+
+appdir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+export PATH="$appdir/usr/bin:${PATH:-/usr/local/bin:/usr/bin:/bin}"
+export LD_LIBRARY_PATH="$appdir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export XDG_DATA_DIRS="$appdir/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+export GSETTINGS_SCHEMA_DIR="$appdir/usr/share/glib-2.0/schemas"
+
+pixbuf_root="$appdir/usr/lib/gdk-pixbuf-2.0/2.10.0"
+if [ -x "$pixbuf_root/gdk-pixbuf-query-loaders" ]; then
+    export GDK_PIXBUF_MODULEDIR="$pixbuf_root/loaders"
+    runtime_root=${XDG_RUNTIME_DIR:-/tmp}
+    cache_dir=$(mktemp -d "$runtime_root/onenote-viewer-pixbuf.XXXXXX")
+    cache_file="$cache_dir/loaders.cache"
+    "$pixbuf_root/gdk-pixbuf-query-loaders" >"$cache_file"
+    export GDK_PIXBUF_MODULE_FILE="$cache_file"
+fi
+
+status=0
+"$appdir/usr/bin/onenote-viewer" "$@" || status=$?
+if [ -n "${cache_file:-}" ]; then
+    rm -f "$cache_file"
+    rmdir "$cache_dir"
+fi
+exit "$status"

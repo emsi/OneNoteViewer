@@ -32,7 +32,8 @@ Build a native Linux application in stable Rust using:
 - Cairo only where GSK lacks a suitable drawing primitive;
 - SQLite FTS5 through `rusqlite` for a disposable local search index;
 - GIO for file selection, URI launching, and registered-application handling;
-- Flatpak as the first distribution format.
+- Flatpak as the primary distribution format and AppImage as an
+  installation-free alternative.
 
 No JavaScript, TypeScript, Node, npm, NVM, browser engine, or web server is
 required. The selected stack is Linux-first rather than pretending that
