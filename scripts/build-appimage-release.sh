@@ -72,7 +72,8 @@ download_verified "$sevenzip_binary_url" "$sevenzip_binary" "$sevenzip_binary_sh
 download_verified "$sevenzip_source_url" "$sevenzip_source" "$sevenzip_source_sha256"
 chmod +x "$linuxdeploy" "$appimagetool"
 
-cargo build --frozen --locked --release -p onenote-viewer
+cargo fetch --locked
+cargo build --offline --frozen --locked --release -p onenote-viewer
 
 rm -rf "$appdir"
 mkdir -p \

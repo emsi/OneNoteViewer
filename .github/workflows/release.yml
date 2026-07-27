@@ -31,8 +31,9 @@ jobs:
             version=$(sed -n '/^\[workspace\.package\]$/,/^\[/ { s/^version = "\([^"]*\)"/\1/p; }' Cargo.toml)
             test "${GITHUB_REF_NAME}" = "v${version}"
           fi
+          cargo fetch --locked
           ./scripts/check-licenses.sh
-          cargo test --workspace --all-targets --locked
+          cargo test --workspace --all-targets --locked --offline
           ./scripts/package-native-release.sh
 
       - name: Smoke-test quick-run executable
