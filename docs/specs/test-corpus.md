@@ -28,6 +28,10 @@ Real notebooks supplied locally through `ONENOTE_TEST_CORPUS`; never committed.
 Tests report hashed case IDs and feature counts, not notebook text, filenames,
 authors, or screenshots.
 
+Manifest-free backup-folder snapshots use the separate
+`ONENOTE_BACKUP_TEST_CORPUS` path so their per-file parser regression can run
+without changing the manifest-backed package corpus.
+
 Current private evidence is one desktop `.onepkg`: extraction yields 32
 sections and five TOCs; the root notebook projects all sections, every page
 builds a finite scene, and 637 pages index and search. This is an implementation
@@ -102,12 +106,38 @@ Every failure must leave the source and any pre-existing destination unchanged
 and remove only the newly created staging directory. Tests monitor peak
 application memory to prove package contents are not accumulated in-process.
 
+## Backup-Folder Cases
+
+The manifest-free backup-loader suite remains distinct from `.onepkg`
+extraction and from manifest-backed notebook discovery:
+
+- recursive directories with root and nested logical sections but no
+  `.onetoc2`;
+- both evidence-backed dated filename families, undated sections, malformed
+  dates, and names containing unrelated `(On ...)` text;
+- several snapshots per logical section with latest, as-of, and exact-date
+  selection;
+- tied dates, case/Unicode logical-key collisions, and conflicting candidates;
+- corrupt newest snapshots under strict and explicit fallback policy;
+- recycle-bin exclusion and explicit inclusion;
+- shuffled traversal, symlinks, depth/count limits, cancellation, and source
+  mutation during inspection/load;
+- one aggregate source identity, nested section groups, lazy merged resources,
+  transactional indexing, refresh, and workspace restoration;
+- the private backup corpus, checked only through aggregate physical/logical
+  section and group counts without logging private paths.
+
+The complete contract and delivery gates are in the
+[backup-folder loader plan](../plans/backup-folder-loader.md).
+
 ## Public Integration Cases
 
 Reusable components require consumers outside the desktop viewer:
 
 - a headless Rust client opens a standalone `.one` through `onenote-core` and
   inspects semantic content, geometry, diagnostics, and lazy payload handles;
+- a headless Rust client inspects and loads a manifest-free backup folder as
+  one notebook through public `onenote-core` APIs;
 - a minimal GTK host embeds `onenote-render-gtk`, renders pages from the
   private and redistributable corpus, and handles link/attachment/navigation
   callbacks without linking `onenote-viewer`;

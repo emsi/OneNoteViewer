@@ -1,13 +1,16 @@
-# OneNote Parser Fork
+# OneNote Parser Compatibility Patches
 
-This directory vendors `onenote.rs` revision
-`f9cdc59f984bc1f7f096b54100cefaaebc892573` (version 1.1.1) under its original
-MPL-2.0 license. It contains only the parser and parser-macro source required
-at runtime; upstream test samples and snapshots are intentionally omitted.
+The active application dependency is the public
+[`emsi/onenote.rs`](https://github.com/emsi/onenote.rs) fork, pinned in the
+workspace manifest to merge revision
+`f716dbbc35203666750ae509470f5ef730390bfb`. That revision starts from upstream
+`f9cdc59f984bc1f7f096b54100cefaaebc892573` (version 1.1.1) and contains the
+compatibility patches below.
 
-The application depends on this audited snapshot instead of exposing the
-upstream parser as a public API. Keep local changes narrow and suitable for
-upstream submission.
+This directory retains an MPL-2.0 source snapshot for audit history and
+fallback inspection; Cargo does not build it. Upstream test samples and
+snapshots are intentionally omitted here. The application exposes the parser
+only through `onenote-core`.
 
 ## Local Compatibility Patches
 
@@ -19,7 +22,40 @@ upstream submission.
 3. Page-size and paragraph-alignment parsing use that lossless conversion.
    This accepts native sections emitted with a wider property encoding without
    truncating malformed values.
+4. Desktop attachment resolution classifies the `file_data_ref` before
+   requiring an embedded `FileDataStore`. Explicitly invalid and missing
+   payloads retain their metadata and a public availability status, allowing
+   consumers to render a broken-content indicator instead of silently treating
+   them as empty files. Internal `<ifndf>` references still require and resolve
+   through the store.
+5. `OutlineGroup` accepts a missing `LastModifiedTime` while emitting a
+   page-scoped parser warning. `[MS-ONE]` requires that value, but the
+   high-level outline-group model does not consume it; preserving the group's
+   children is safer than rejecting the complete section and does not invent a
+   timestamp.
 
 The supplied private corpus has one section requiring patch 1 and two sections
 that reach a wider numeric property requiring patches 2 and 3. All 32 native
-sections parse after these changes.
+sections parse after these changes. In the separate manifest-free private
+backup corpus, 25 of 83 physical snapshots require patch 4 to get past an
+`<invfdo>` declaration when no file-data store exists, and two snapshots of one
+logical section require patch 5. All 83 snapshots parse independently after
+the patches; the corpus remains private and is tested only when
+`ONENOTE_BACKUP_TEST_CORPUS` is set.
+
+## Upstream Tracking
+
+The changes are split into independently reviewable draft pull requests:
+
+- [msiemens/onenote.rs#36](https://github.com/msiemens/onenote.rs/pull/36)
+  preserves unavailable attachment payloads and fixes
+  [issue #35](https://github.com/msiemens/onenote.rs/issues/35).
+- [msiemens/onenote.rs#37](https://github.com/msiemens/onenote.rs/pull/37)
+  recovers outlines with omitted timestamps and fixes
+  [issue #33](https://github.com/msiemens/onenote.rs/issues/33).
+- [msiemens/onenote.rs#38](https://github.com/msiemens/onenote.rs/pull/38)
+  accepts losslessly convertible enum property widths and fixes
+  [issue #34](https://github.com/msiemens/onenote.rs/issues/34).
+
+Until those changes are accepted in an upstream release, update the pinned
+fork revision deliberately and review the corresponding lockfile change.

@@ -42,7 +42,11 @@ Index/query API     UI-neutral page scene
 1. The user chooses a notebook directory, `.onetoc2`, or `.one` through the
    desktop file chooser. Discovery canonicalizes the chosen root and records a
    source identity based on canonical path, file identities, sizes, and
-   modification timestamps.
+   modification timestamps. A directory with a usable root `.onetoc2` follows
+   the manifest hierarchy. A manifest-free backup directory follows the
+   planned reusable
+   [backup-folder loader](../plans/backup-folder-loader.md), which reconstructs
+   one synthetic notebook and retains snapshot-selection provenance.
 2. Selecting `.onepkg` starts the separate workflow in ADR 0002: an external
    7-Zip process extracts into an on-disk staging directory, the result is
    validated and atomically published, and the resulting directory returns to

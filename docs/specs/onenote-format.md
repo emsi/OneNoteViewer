@@ -41,6 +41,8 @@ against fixtures.
 
 - A notebook directory containing `Open Notebook.onetoc2` or another
   `.onetoc2` plus referenced `.one` section files.
+- A manifest-free OneNote backup directory containing recursively grouped
+  `.one` section snapshots.
 - A selected `.onetoc2` notebook table-of-contents file.
 - A standalone `.one` section.
 - A `.onepkg` export, through the managed on-disk extraction in ADR 0002.
@@ -86,6 +88,14 @@ names, and child filenames. Section groups can be represented by nested
 directories and nested TOC entries. The filesystem is only a container; order
 must come from the TOC when it is valid. Orphan `.one` files may be offered in
 an "unlisted sections" group with a warning, never silently discarded.
+
+A selected directory without a usable root `.onetoc2` follows a distinct
+backup-folder profile. Its relative directories become synthetic section
+groups, recognized dated filenames are grouped as snapshots of a logical
+section, and selection/reconstructed ordering are reported as provenance
+rather than attributed to the binary format. The evidence profiles, limits,
+and implementation gates are defined in the
+[backup-folder loader plan](../plans/backup-folder-loader.md).
 
 Resolve referenced child paths relative to the TOC that owns them. Before any
 open:
@@ -549,11 +559,12 @@ Required fatal examples:
 ## 10. Parser Dependency Profile
 
 Use `onenote_parser` only through `onenote-core`; parser types and revision
-internals must not spread into the application. The current reviewed snapshot
-is vendored because the private desktop corpus needs unreleased support and
-three narrow compatibility patches. Those patches are documented in
-`third_party/onenote.rs/PATCHES.md` and remain candidates for upstreaming, not
-permission to build an unrelated parser.
+internals must not spread into the application. The public fork is pinned to an
+immutable revision because the private desktop and backup corpora need
+unreleased support and five narrow compatibility patches. Those patches and
+their upstream pull requests are documented in
+`third_party/onenote.rs/PATCHES.md`; the local source tree is retained for
+audit history but is not the Cargo dependency.
 
 Before beta, the chosen upstream release/commit must demonstrate:
 

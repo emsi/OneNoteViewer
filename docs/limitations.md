@@ -31,11 +31,12 @@ contains the user-facing behavior.
 - **Impact:** The current crates.io `onenote_parser` 1.1.1 targets FSSHTTP
   content. Desktop revision-store support exists at upstream commit
   `f9cdc59...` and is described for the next major release.
-- **Current mitigation:** Revision `f9cdc59...` is vendored under MPL-2.0 and
-  isolated behind `onenote-core`. `third_party/onenote.rs/PATCHES.md` records
-  three narrow compatibility patches required by the private corpus.
-- **Remaining mitigation:** Review and upstream those patches, audit the
-  complete fork, and move to a tagged release or explicitly maintained fork.
+- **Current mitigation:** The public `emsi/onenote.rs` fork is pinned to
+  revision `f716dbb...` and isolated behind `onenote-core`.
+  `third_party/onenote.rs/PATCHES.md` records the five narrow compatibility
+  patches, their upstream issues, and draft pull requests.
+- **Remaining mitigation:** Complete upstream review and move to a tagged
+  upstream release when it contains the required fixes.
 - **Package boundary:** Its unreleased `.onepkg` API is not used because it
   expands package contents in memory; ADR 0002 owns package extraction.
 - **Release gate:** Tagged parser version passes the complete input and
@@ -132,7 +133,10 @@ contains the user-facing behavior.
 - **Impact:** Desktop local files, backups, modern exports, OneDrive downloads,
   and Mac backups can use different persistence paths and extensions.
 - **Mitigation:** Identify by bytes, record producer coverage, retain warnings,
-  and never equate one passing source with all `.one` files.
+  and never equate one passing source with all `.one` files. Manifest-free
+  backup aggregation uses explicit evidence-backed filename profiles,
+  provenance, and conservative fallbacks as specified in the
+  [backup-folder loader plan](plans/backup-folder-loader.md).
 
 ### L-011: Corrupt or partially copied notebooks
 

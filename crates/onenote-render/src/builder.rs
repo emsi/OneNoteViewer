@@ -5,7 +5,7 @@ use crate::scene::{
 use crate::{Error, Result};
 use onenote_core::{
     Attachment, Color, ElementContent, Image, Ink, ListMarker, ObjectKind, Outline, OutlineElement,
-    Page, PageObject, PageObjectRole, Rect, Table, TextBlock,
+    Page, PageObject, PageObjectRole, Rect, ResourceStatus, Table, TextBlock,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -26,6 +26,12 @@ const PLACEHOLDER_COLOR: Color = Color {
     red: 243,
     green: 242,
     blue: 241,
+    alpha: 255,
+};
+const UNAVAILABLE_RESOURCE_COLOR: Color = Color {
+    red: 255,
+    green: 235,
+    blue: 235,
     alpha: 255,
 };
 
@@ -415,6 +421,21 @@ impl BuildState<'_> {
         image: Image,
         z_index: i32,
     ) -> Result<()> {
+        if image.resource.status != ResourceStatus::Available {
+            let label = if image.resource.status == ResourceStatus::Missing {
+                "Image data missing"
+            } else {
+                "Broken image"
+            };
+            return self.unavailable_resource(
+                object,
+                bounds,
+                z_index,
+                label.to_owned(),
+                AccessibilityRole::Image,
+                image.resource.status,
+            );
+        }
         let hyperlink = image.hyperlink.clone();
         let label = image
             .alt_text
@@ -454,6 +475,22 @@ impl BuildState<'_> {
         attachment: Attachment,
         z_index: i32,
     ) -> Result<()> {
+        if attachment.resource.status != ResourceStatus::Available {
+            let name = bounded_label(&attachment.resource.name, 128);
+            let label = if attachment.resource.status == ResourceStatus::Missing {
+                format!("Attachment data missing: {name}")
+            } else {
+                format!("Broken attachment: {name}")
+            };
+            return self.unavailable_resource(
+                object,
+                bounds,
+                z_index,
+                label,
+                AccessibilityRole::Attachment,
+                attachment.resource.status,
+            );
+        }
         let resource_id = attachment.resource.id.clone();
         let label = attachment.resource.name.clone();
         let node_id = self.push_node(
@@ -472,6 +509,48 @@ impl BuildState<'_> {
             source_object_id: object.id.clone(),
             bounds,
             action: HitAction::OpenAttachment(resource_id),
+        });
+        Ok(())
+    }
+
+    fn unavailable_resource(
+        &mut self,
+        object: &PageObject,
+        bounds: Rect,
+        z_index: i32,
+        label: String,
+        role: AccessibilityRole,
+        status: ResourceStatus,
+    ) -> Result<()> {
+        self.push_node(
+            object,
+            bounds,
+            z_index,
+            ScenePrimitive::Fill {
+                color: UNAVAILABLE_RESOURCE_COLOR,
+                corner_radius: 3.0,
+            },
+            AccessibilitySemantics::decoration(),
+        )?;
+        self.push_node(
+            object,
+            bounds,
+            z_index + 1,
+            ScenePrimitive::Placeholder {
+                label: label.clone(),
+            },
+            AccessibilitySemantics {
+                role,
+                label,
+                description: Some(format!(
+                    "The OneNote source marks this resource as {status:?}"
+                )),
+            },
+        )?;
+        self.diagnostics.push(SceneDiagnostic {
+            code: "resource_unavailable".to_owned(),
+            message: format!("A referenced resource is unavailable ({status:?})"),
+            object_id: Some(object.id.clone()),
         });
         Ok(())
     }
@@ -735,7 +814,10 @@ fn scene_bounds(page: &Page, nodes: &[SceneNode], options: SceneOptions) -> Rect
 mod tests {
     use super::{SceneBuilder, SceneOptions};
     use crate::{Error, ScenePrimitive};
-    use onenote_core::{ObjectId, ObjectKind, Page, PageId, PageObject, PageObjectRole, Rect};
+    use onenote_core::{
+        Attachment, Image, ObjectId, ObjectKind, Page, PageId, PageObject, PageObjectRole, Rect,
+        ResourceId, ResourceRef, ResourceStatus,
+    };
     use std::sync::atomic::AtomicBool;
 
     #[test]
@@ -858,6 +940,88 @@ mod tests {
             .all(|node| node.source_object_id == ObjectId::new("body")));
         assert!((scene.bounds.x - 120.0).abs() < f32::EPSILON);
         assert!((scene.bounds.y - 260.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn unavailable_resources_render_as_inert_labeled_placeholders() {
+        let unavailable = |name: &str, status| ResourceRef {
+            id: ResourceId::new(format!("resource-{name}")),
+            name: name.to_owned(),
+            media_type: "application/octet-stream".to_owned(),
+            size: 0,
+            status,
+        };
+        let page = Page {
+            id: PageId::new("page"),
+            native_id: String::new(),
+            title: String::new(),
+            level: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            author: None,
+            height: None,
+            objects: vec![
+                PageObject {
+                    id: ObjectId::new("image"),
+                    role: PageObjectRole::Body,
+                    bounds: Rect {
+                        x: 10.0,
+                        y: 10.0,
+                        width: 100.0,
+                        height: 80.0,
+                    },
+                    z_index: 0,
+                    kind: ObjectKind::Image(Image {
+                        resource: unavailable("image", ResourceStatus::Invalid),
+                        width: None,
+                        height: None,
+                        alt_text: None,
+                        search_text: None,
+                        hyperlink: Some("https://example.invalid".to_owned()),
+                        is_background: false,
+                    }),
+                },
+                PageObject {
+                    id: ObjectId::new("attachment"),
+                    role: PageObjectRole::Body,
+                    bounds: Rect {
+                        x: 10.0,
+                        y: 100.0,
+                        width: 180.0,
+                        height: 44.0,
+                    },
+                    z_index: 1,
+                    kind: ObjectKind::Attachment(Attachment {
+                        resource: unavailable("report.pdf", ResourceStatus::Missing),
+                        width: None,
+                        height: None,
+                    }),
+                },
+            ],
+        };
+
+        let scene = SceneBuilder::default()
+            .build(&page, &AtomicBool::new(false))
+            .expect("scene");
+        let labels: Vec<_> = scene
+            .nodes
+            .iter()
+            .filter_map(|node| match &node.primitive {
+                ScenePrimitive::Placeholder { label } => Some(label.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        assert_eq!(
+            labels,
+            vec!["Broken image", "Attachment data missing: report.pdf"]
+        );
+        assert!(scene.hit_regions.is_empty());
+        assert_eq!(scene.diagnostics.len(), 2);
+        assert!(scene
+            .diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.code == "resource_unavailable"));
     }
 
     #[test]

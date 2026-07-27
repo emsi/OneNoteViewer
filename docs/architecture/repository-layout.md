@@ -127,8 +127,9 @@ creates render nodes. Public interfaces follow
 - A future `fixtures/` contains only small synthetic or explicitly licensed
   data. The current private corpus is supplied through an ignored
   environment-specific path.
-- `third_party/onenote.rs/` is the reviewed MPL-2.0 parser snapshot plus three
-  documented compatibility patches.
+- `third_party/onenote.rs/` is the retained MPL-2.0 parser audit snapshot. The
+  active Cargo dependency is the public fork at the immutable revision recorded
+  in the workspace manifest and lockfile.
 - `scripts/` contains native dependency preflight plus reproducible reference
   retrieval, documentation validation, and release packaging entry points, not
   a second build system.
@@ -143,5 +144,5 @@ creates render nodes. Public interfaces follow
 - No network service or background daemon.
 - No database repository abstraction beyond the concrete SQLite index.
 - No generated documentation site; Markdown remains reviewable in Git.
-- No expansion of the vendored `onenote.rs` fork beyond narrow, documented
-  compatibility fixes intended for upstream submission.
+- No expansion of the `onenote.rs` fork beyond narrow, documented
+  compatibility fixes submitted for upstream review.

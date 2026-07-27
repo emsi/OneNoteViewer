@@ -14,7 +14,7 @@ use crate::onestore::Object;
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct Data {
-    pub(crate) last_modified: Time,
+    pub(crate) last_modified: Option<Time>,
     pub(crate) children: Vec<ExGuid>,
     pub(crate) child_level: u8,
 }
@@ -22,9 +22,7 @@ pub(crate) struct Data {
 pub(crate) fn parse(object: &Object) -> Result<Data> {
     assert_property_set(object, PropertySetId::OutlineGroup)?;
 
-    let last_modified = Time::parse(PropertyType::LastModifiedTime, object)?.ok_or_else(|| {
-        ErrorKind::MalformedOneNoteFileData("outline group has no last modified time".into())
-    })?;
+    let last_modified = Time::parse(PropertyType::LastModifiedTime, object)?;
     let children =
         ObjectReference::parse_vec(PropertyType::ElementChildNodes, object)?.unwrap_or_default();
     let child_level = simple::parse_u8(PropertyType::OutlineElementChildLevel, object)?

@@ -1,5 +1,5 @@
-use crate::{Error, ResourceId, Result};
-use onenote_parser::contents::{EmbeddedFile, Image};
+use crate::{Error, ResourceId, ResourceStatus, Result};
+use onenote_parser::contents::{EmbeddedFile, FileDataStatus, Image};
 use std::collections::HashMap;
 use std::io::Read;
 
@@ -15,6 +15,14 @@ impl ResourceLoader {
             Self::Image(image) => image.size().unwrap_or(0),
             Self::Attachment(file) => file.size(),
         }
+    }
+
+    fn status(&self) -> ResourceStatus {
+        let status = match self {
+            Self::Image(image) => image.data_status(),
+            Self::Attachment(file) => file.data_status(),
+        };
+        resource_status(status)
     }
 
     fn reader(&self) -> Option<Box<dyn Read>> {
@@ -68,18 +76,38 @@ impl ResourceStore {
             .ok_or_else(|| Error::ResourceNotFound { id: id.clone() })
     }
 
+    /// Return whether the referenced source payload can be read.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::ResourceNotFound`] when the identifier does not belong
+    /// to this store.
+    pub fn status(&self, id: &ResourceId) -> Result<ResourceStatus> {
+        self.loaders
+            .get(id)
+            .map(ResourceLoader::status)
+            .ok_or_else(|| Error::ResourceNotFound { id: id.clone() })
+    }
+
     /// Read a resource into memory, rejecting it before allocation when its
     /// declared size exceeds `limit_bytes`.
     ///
     /// # Errors
     ///
-    /// Returns a not-found error, a size-limit error, or an underlying lazy
-    /// resource read error.
+    /// Returns a not-found error, an unavailable-payload error, a size-limit
+    /// error, or an underlying lazy resource read error.
     pub fn read_limited(&self, id: &ResourceId, limit_bytes: u64) -> Result<Vec<u8>> {
         let loader = self
             .loaders
             .get(id)
             .ok_or_else(|| Error::ResourceNotFound { id: id.clone() })?;
+        let status = loader.status();
+        if status != ResourceStatus::Available {
+            return Err(Error::ResourceUnavailable {
+                id: id.clone(),
+                status,
+            });
+        }
         let declared = loader.size();
         if declared > limit_bytes {
             return Err(Error::ResourceTooLarge {
@@ -92,7 +120,10 @@ impl ResourceStore {
         let capacity = usize::try_from(declared.min(limit_bytes)).unwrap_or(usize::MAX);
         let mut bytes = Vec::with_capacity(capacity);
         let Some(reader) = loader.reader() else {
-            return Ok(bytes);
+            return Err(Error::ResourceUnavailable {
+                id: id.clone(),
+                status: ResourceStatus::Missing,
+            });
         };
         reader
             .take(limit_bytes.saturating_add(1))
@@ -109,5 +140,14 @@ impl ResourceStore {
             });
         }
         Ok(bytes)
+    }
+}
+
+pub(crate) fn resource_status(status: FileDataStatus) -> ResourceStatus {
+    match status {
+        FileDataStatus::Available => ResourceStatus::Available,
+        FileDataStatus::Missing => ResourceStatus::Missing,
+        FileDataStatus::Invalid => ResourceStatus::Invalid,
+        _ => ResourceStatus::Invalid,
     }
 }

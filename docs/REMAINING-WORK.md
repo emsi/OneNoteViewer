@@ -1,7 +1,7 @@
 # Remaining Work
 
 - **Status:** Active release-gap register
-- **Last reconciled:** 2026-07-26 UTC
+- **Last reconciled:** 2026-07-27 UTC
 
 This file records what the current implementation does **not** yet prove or
 complete. It is the dedicated bridge between the implemented baseline, the
@@ -47,19 +47,33 @@ sanitized attachment extraction; cancellable operations with progress; source
 fingerprint monitoring and transactional refresh; diagnostics surfaces; and
 versioned workspace state with corruption recovery tests.
 
-### 4. Parser and Corpus Breadth
+### 4. Manifest-Free Backup Folder Aggregation
 
-**Why open:** All 32 sections in one private desktop package parse only after
-three narrow patches to vendored unreleased parser code. This does not prove
+**Why open:** A directory with recursive `.one` files but no root `.onetoc2`
+is currently discovered as many standalone sources. Directory section groups,
+dated snapshot relationships, one aggregate source identity, and provenance
+are not reconstructed.
+
+**Completion:** Implement the reusable core inspector and aggregate loader in
+the [backup-folder loader plan](plans/backup-folder-loader.md), integrate one
+synthetic notebook with the viewer and index, migrate only proven
+directory-discovered workspace entries, and pass synthetic/licensed plus
+private aggregate corpus gates.
+
+### 5. Parser and Corpus Breadth
+
+**Why open:** All 32 sections in one private desktop package and all 83
+physical snapshots in one private backup folder parse only after five narrow
+patches in the pinned public parser fork. This does not prove
 OneNote 2016, Microsoft 365, Mac backup, FSSHTTP download, encrypted/corrupt,
-or feature-matrix breadth. The private package cannot be redistributed.
+or feature-matrix breadth. The private sources cannot be redistributed.
 
 **Completion:** Add legal synthetic and producer fixtures for every MVP matrix
 row, upstream the compatibility patches, move to a reviewed tagged parser (or
 document a maintained fork), and publish producer-specific results without a
 blanket “supports OneNote” claim.
 
-### 5. Hostile-Input and Resource Proof
+### 6. Hostile-Input and Resource Proof
 
 **Why open:** Projection counts, archive listing/entry counts, resource reads,
 image dimensions/allocations, scene nodes, results, snippets, and texture cache
@@ -73,7 +87,7 @@ checked total-byte/depth/coordinate budgets; extraction expansion/disk checks;
 whole-process cancellation tests; peak RSS/time assertions; and source/durable
 destination unchanged checks for every failure mode.
 
-### 6. Performance and Scale Evidence
+### 7. Performance and Scale Evidence
 
 **Why open:** The full private root opens and indexes 637 pages, and viewport
 culling plus lazy image decode are implemented, but no baseline hardware,
@@ -86,7 +100,7 @@ page switching, pan/zoom, and image-heavy pages. Record hardware and thresholds,
 add bounded scheduling/cancellation, and replace coarse cache eviction or
 layout work only where measurements justify it.
 
-### 7. Public API Publication
+### 8. Public API Publication
 
 **Why open:** The Rust component boundaries, standalone GTK example, and JSONL
 process client exist and are tested. The APIs are still pre-1.0, generated docs
@@ -98,7 +112,7 @@ rustdoc and protocol fixtures, define semantic-versioning/migration policy,
 add a non-Rust renderer binding if retained as a goal, and select a license
 that permits intended downstream reuse.
 
-### 8. Distribution and Desktop Integration
+### 9. Distribution and Desktop Integration
 
 **Why open:** Automated unsigned preview Flatpak, quick-run executable, and
 native archive build paths now exist, with a desktop file, icon, checksums, and

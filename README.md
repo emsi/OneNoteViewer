@@ -180,6 +180,6 @@ external-action work is tracked explicitly rather than implied complete.
 ## Licensing
 
 No project source license has been selected yet. That decision must be made
-before redistribution or external contributions. The vendored parser retains
-MPL-2.0; downloaded reference documents retain their original terms. See
-[reference provenance](docs/references/README.md).
+before redistribution or external contributions. The parser fork and retained
+source snapshot remain MPL-2.0; downloaded reference documents retain their
+original terms. See [reference provenance](docs/references/README.md).

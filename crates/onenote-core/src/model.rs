@@ -564,6 +564,27 @@ pub struct ResourceRef {
     pub media_type: String,
     /// Declared byte size.
     pub size: u64,
+    /// Whether the source payload can be read.
+    #[serde(default)]
+    pub status: ResourceStatus,
+}
+
+/// Availability of binary data referenced by a page object.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResourceStatus {
+    /// The source contains a readable payload.
+    Available,
+    /// The source object does not reference payload data.
+    Missing,
+    /// The source explicitly marks the payload as invalid.
+    Invalid,
+}
+
+impl Default for ResourceStatus {
+    fn default() -> Self {
+        Self::Available
+    }
 }
 
 /// A projected ink drawing.
@@ -613,7 +634,17 @@ fn append_text(output: &mut String, text: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{TextBlock, TextRun, TextStyle};
+    use super::{ResourceRef, ResourceStatus, TextBlock, TextRun, TextStyle};
+
+    #[test]
+    fn legacy_resource_json_defaults_to_available() {
+        let resource: ResourceRef = serde_json::from_str(
+            r#"{"id":"resource","name":"image.png","media_type":"image/png","size":42}"#,
+        )
+        .expect("legacy resource");
+
+        assert_eq!(resource.status, ResourceStatus::Available);
+    }
 
     #[test]
     fn visible_text_uses_utf16_run_offsets() {

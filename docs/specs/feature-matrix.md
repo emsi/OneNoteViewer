@@ -36,6 +36,7 @@ claim.
 | Ordered sections | Normative TOC | Preserve order | MVP |
 | Nested section groups | Normative plus filesystem | Recursive navigation | MVP |
 | Standalone section | Normative | Synthetic one-section notebook | MVP |
+| Manifest-free backup folder | Observed backup convention plus product requirement | One synthetic notebook; directories as section groups; deterministic section-snapshot selection with provenance | MVP |
 | Page order | Normative | Preserve series order | MVP |
 | Subpages/page levels | Normative | Hierarchical page list | MVP |
 | Cached/untitled page title | Normative | Correct title fallback | MVP |

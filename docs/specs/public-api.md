@@ -35,7 +35,12 @@ provide HTML, Markdown, or PDF conversion.
 `onenote-core` is the shared foundation. `OneNoteLoader` exposes read-only
 operations for a `.onetoc2` or standalone `.one`, returning immutable domain
 objects plus diagnostics and a lazy `ResourceStore`. Directory root discovery
-currently belongs to the viewer and should move behind a reusable core API.
+currently belongs to the viewer and should move behind a reusable core API. In
+particular, manifest-free backup folders require a core-owned inspection and
+aggregate-loading API that returns one source, a reconstructed section-group
+tree, deterministic snapshot selection, and provenance. That API is planned,
+not implemented; its contract and delivery gates are in the
+[backup-folder loader plan](../plans/backup-folder-loader.md).
 `OnePkgExtractor` is a separate optional operation and is never required to
 consume an already extracted source.
 

@@ -5,7 +5,7 @@ use crate::model::{
     SectionId, SourceFingerprint, SourceId, Table, TableCell, TextAlignment, TextBlock, TextRun,
     TextStyle,
 };
-use crate::resource::ResourceLoader;
+use crate::resource::{resource_status, ResourceLoader};
 use crate::{Error, ResourceStore, Result, PIXELS_PER_HALF_INCH};
 use onenote_parser::contents::{
     Content, EmbeddedFile, Image as ParserImage, Ink as ParserInk, List, Outline as ParserOutline,
@@ -501,6 +501,7 @@ impl Projector {
             name,
             media_type: image_media_type(extension).to_owned(),
             size: image.size().unwrap_or(0),
+            status: resource_status(image.data_status()),
         };
         self.resources
             .insert(id, ResourceLoader::Image(image.clone()));
@@ -560,6 +561,7 @@ impl Projector {
             name: file.filename().to_owned(),
             media_type: media_type.to_owned(),
             size: file.size(),
+            status: resource_status(file.data_status()),
         };
         self.resources
             .insert(id, ResourceLoader::Attachment(file.clone()));

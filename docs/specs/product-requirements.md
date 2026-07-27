@@ -110,6 +110,26 @@ The user selects a notebook directory, `.onetoc2`, or standalone `.one` file.
 The viewer fingerprints and parses it in place, read-only. External changes are
 detected and incorporated through a transactional refresh.
 
+### Manifest-Free Backup Folder
+
+A selected directory containing recursive `.one` section files but no usable
+root `.onetoc2` is treated as one backup source, not as many single-section
+notebooks. The viewer reconstructs its relative directories as section groups
+and selects one snapshot for each logical section according to an explicit,
+deterministic policy. The default selects the newest snapshot candidate per
+section and reports if that candidate cannot be parsed.
+
+Because a manifest-free backup does not carry authoritative notebook ordering
+and may contain section snapshots from different dates, the reconstructed
+hierarchy, synthetic ordering, selection evidence, conflicts, and omissions
+must be available through diagnostics and provenance. Older snapshots remain
+discoverable without being parsed or indexed eagerly. Opening and refresh are
+read-only, bounded, cancellable, and transactional.
+
+This behavior is owned by the reusable core API and is not yet implemented.
+Its design and delivery gates are defined by the
+[backup-folder loader plan](../plans/backup-folder-loader.md).
+
 ### OneNote Package
 
 `.onepkg` is an acquisition container, not a runtime notebook format. The
@@ -157,7 +177,9 @@ The MVP cannot be called a native OneNote viewer until:
 9. a standalone client indexes at least two notebook sources and resolves a
    query result to source/page/object identity through the public query API;
 10. public APIs return structured errors, honor cancellation and limits, and
-    remain free of application-global state.
+    remain free of application-global state;
+11. a manifest-free backup folder opens as one source with reconstructed
+    section groups, deterministic snapshot selection, and explicit provenance.
 
 ## Existing Linux Tools Are Not Substitutes
 

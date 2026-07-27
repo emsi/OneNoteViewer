@@ -1,6 +1,6 @@
 use onenote_core::{
     ElementContent, Error, NotebookEntry, ObjectKind, OneNoteLoader, OnePkgExtractor,
-    PageObjectRole, ResourceRef,
+    PageObjectRole, ResourceRef, ResourceStatus,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -84,6 +84,68 @@ fn extracted_private_notebook_projects_all_native_sections() {
 }
 
 #[test]
+fn every_private_backup_section_snapshot_opens_individually() {
+    let Some(corpus) = backup_corpus_path() else {
+        return;
+    };
+    let sections: Vec<_> = native_files(&corpus)
+        .into_iter()
+        .filter(|path| has_extension(path, "one"))
+        .collect();
+    assert!(
+        !sections.is_empty(),
+        "the private backup corpus must contain .one snapshots"
+    );
+
+    let mut failures = Vec::new();
+    let mut unavailable_resources = 0;
+    for path in &sections {
+        match OneNoteLoader::default().load(path) {
+            Ok(loaded) => {
+                for resource in resource_refs(&loaded.notebook.entries) {
+                    let status = loaded
+                        .resources
+                        .status(&resource.id)
+                        .expect("projected resource must have a lazy loader");
+                    assert_eq!(status, resource.status);
+                    if status != ResourceStatus::Available {
+                        unavailable_resources += 1;
+                        assert!(matches!(
+                            loaded.resources.read_limited(&resource.id, u64::MAX),
+                            Err(Error::ResourceUnavailable {
+                                status: read_status,
+                                ..
+                            }) if read_status == status
+                        ));
+                    }
+                }
+            }
+            Err(error) => {
+                let relative = path.strip_prefix(&corpus).unwrap_or(path);
+                let case_id = blake3::hash(relative.to_string_lossy().as_bytes())
+                    .to_hex()
+                    .to_string();
+                let redacted = error
+                    .to_string()
+                    .replace(path.to_string_lossy().as_ref(), "[private-source]");
+                failures.push((case_id[..12].to_owned(), redacted));
+            }
+        }
+    }
+
+    assert!(
+        failures.is_empty(),
+        "{} of {} private backup snapshots failed: {failures:?}",
+        failures.len(),
+        sections.len()
+    );
+    assert!(
+        unavailable_resources > 0,
+        "the backup compatibility corpus must exercise unavailable payloads"
+    );
+}
+
+#[test]
 fn supplied_package_extracts_on_disk_to_a_complete_native_tree() {
     let Some(package) = package_path() else {
         return;
@@ -121,6 +183,12 @@ fn corpus_path() -> Option<PathBuf> {
 fn package_path() -> Option<PathBuf> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.onepkg");
     path.is_file().then_some(path)
+}
+
+fn backup_corpus_path() -> Option<PathBuf> {
+    std::env::var_os("ONENOTE_BACKUP_TEST_CORPUS")
+        .map(PathBuf::from)
+        .filter(|path| path.is_dir())
 }
 
 fn native_files(root: &Path) -> Vec<PathBuf> {

@@ -2,7 +2,7 @@
 
 - **Status:** Functional implementation baseline; not release-ready
 - **Current phase:** Milestone 2 readable-viewer completion and evidence
-- **Last reconciled:** 2026-07-26 UTC
+- **Last reconciled:** 2026-07-27 UTC
 
 ## Role of This Document
 
@@ -66,7 +66,10 @@ The normative behavioral detail is in
 `onenote-core` provides read-only source discovery, parser isolation,
 immutable domain objects, geometry, diagnostics, lazy payload access, and
 stable source-scoped identities. Upstream parser and revision-store internals
-do not cross its public boundary.
+do not cross its public boundary. Manifest-free OneNote backup directories
+must be reconstructed as one synthetic notebook through the reusable
+[backup-folder loader](plans/backup-folder-loader.md), not interpreted by the
+viewer as unrelated standalone sections.
 
 ### Reusable Rendering
 
@@ -139,11 +142,20 @@ The detailed milestone sequence and exit gates are in the
   navigation, a native freeform canvas, and package onboarding. Page title and
   creation time appear once in viewer chrome while the reusable renderer can
   still render the complete native title area for other hosts.
+- A manifest-free backup directory is not yet aggregated: the current
+  discovery fallback loads each recursive `.one` file as a standalone source.
+  The reusable core replacement, snapshot selection, hierarchy reconstruction,
+  and workspace migration are specified in the
+  [backup-folder loader plan](plans/backup-folder-loader.md).
 - The supplied private `.onepkg` has passed unchanged-source extraction to 32
   `.one` and five `.onetoc2` files. All 32 sections parse, every page builds a
   finite scene, 637 pages index in the root notebook, and the complete viewer
   opens and indexes it under Xvfb. A separate two-source run proved simultaneous
   workspace and index behavior.
+- A separate private manifest-free backup contains 83 physical snapshots for
+  42 logical section paths. All 83 now parse independently after the documented
+  compatibility patches. This proves per-file recovery only, not aggregate
+  backup loading, unique-page counts, or complete rendering fidelity.
 - Ten primary Microsoft reference PDFs are pinned and reproducibly verified.
 - Workspace tests, private-corpus tests, strict Clippy, formatting, and index
   integrity checks pass.
@@ -153,18 +165,21 @@ The detailed milestone sequence and exit gates are in the
 
 ### Next Execution Order
 
-1. Complete viewer workflows: explicit link/attachment handling, package and
+1. Implement the reusable manifest-free backup-folder loader and integrate its
+   single synthetic notebook, reconstructed section groups, snapshot policy,
+   workspace migration, and aggregate index generation.
+2. Complete viewer workflows: explicit link/attachment handling, package and
    long-operation cancellation/progress, diagnostics, source refresh, and
    fuller workspace restoration.
-2. Establish visual oracles and measured tolerances for rich text, tables,
+3. Establish visual oracles and measured tolerances for rich text, tables,
    images/printouts, ink, negative coordinates, overlap, and large pages.
-3. Map scene semantics into GTK accessibility, add keyboard navigation, and
+4. Map scene semantics into GTK accessibility, add keyboard navigation, and
    pass Orca tests under GNOME/KDE and Wayland/X11.
-4. Expand licensed producer/feature and malformed/fuzz corpora; close parser,
+5. Expand licensed producer/feature and malformed/fuzz corpora; close parser,
    allocation, path, and process-lifecycle risks with repeatable evidence.
-5. Benchmark and optimize cold parse/index, warm search, pan/zoom, image cache,
+6. Benchmark and optimize cold parse/index, warm search, pan/zoom, image cache,
    and large workspace memory.
-6. upstream or retire the three local parser compatibility patches, choose a
+7. Upstream or retire the five local parser compatibility patches, choose a
    project license, publish API documentation, and complete Flatpak packaging.
 
 ## Definition of Success

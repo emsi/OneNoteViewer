@@ -35,6 +35,7 @@ normative.
 ## Delivery and Risk
 
 - [Roadmap and milestone gates](plans/roadmap.md)
+- [Reusable backup-folder loader plan](plans/backup-folder-loader.md)
 - [Potential limitations](limitations.md)
 - [Current remaining work](REMAINING-WORK.md)
 - [Release build and artifact guide](RELEASES.md)

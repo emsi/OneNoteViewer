@@ -10,7 +10,8 @@
 The first implementations of all three spikes pass their functional and
 private-corpus tests, so Rust/GTK4/SQLite remains the selected stack. The GTK
 renderer runs independently and in the complete viewer under Xvfb; the index
-is transactional and the parser adapter isolates the vendored dependency.
+is transactional and the parser adapter isolates the revision-pinned
+dependency.
 
 This does not close the five GTK fallback gates below. Frame pacing,
 mixed-script fixtures, GTK accessible canvas children, stable-memory
@@ -148,9 +149,9 @@ internals.
 ## Dependency Policy
 
 - Keep the Rust 1.85.1 toolchain pinned through `rust-toolchain.toml`.
-- Keep the vendored parser tied to its exact recorded revision during
-  pre-release work and move to a crates.io
-  release before beta.
+- Keep the public parser fork pinned to an immutable revision during
+  pre-release work and move to an upstream tagged or crates.io release before
+  beta.
 - Prefer system/Flatpak GTK, Pango, and GIO libraries.
 - Keep the 7-Zip dependency and sandbox behavior explicit as specified by ADR
   0002; never substitute the parser's in-memory package API.

@@ -233,6 +233,17 @@ impl PageCanvas {
             ScenePrimitive::Image(image) => {
                 if let Some(texture) = self.texture(&image.resource.id) {
                     snapshot.append_texture(&texture, &graphene_rect(node.bounds));
+                } else if self.imp().failed.borrow().contains(&image.resource.id) {
+                    snapshot.append_color(
+                        &gdk::RGBA::new(1.0, 0.92, 0.92, 1.0),
+                        &graphene_rect(node.bounds),
+                    );
+                    self.snapshot_label(
+                        snapshot,
+                        node.bounds,
+                        "Image unavailable",
+                        gdk::RGBA::new(0.55, 0.08, 0.08, 1.0),
+                    );
                 } else {
                     snapshot.append_color(
                         &gdk::RGBA::new(0.94, 0.94, 0.94, 1.0),
@@ -319,11 +330,13 @@ impl PageCanvas {
         imp.pending.borrow_mut().remove(&id);
         let Some(decoded) = decoded else {
             imp.failed.borrow_mut().insert(id);
+            self.queue_draw();
             return;
         };
         let (id, texture, bytes) = image_cache::texture(decoded);
         if bytes > MAX_TEXTURE_CACHE_BYTES {
             imp.failed.borrow_mut().insert(id);
+            self.queue_draw();
             return;
         }
         if imp.texture_bytes.get().saturating_add(bytes) > MAX_TEXTURE_CACHE_BYTES {

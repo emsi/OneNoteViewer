@@ -36,6 +36,15 @@ pub enum Error {
         id: crate::ResourceId,
     },
 
+    /// A page object exists, but its binary payload is unavailable.
+    #[error("resource {id} is unavailable ({status:?})")]
+    ResourceUnavailable {
+        /// Stable resource identifier.
+        id: crate::ResourceId,
+        /// Availability state preserved from the source.
+        status: crate::ResourceStatus,
+    },
+
     /// A resource exceeded the caller's explicit memory limit.
     #[error("resource {id} is {declared_bytes} bytes, above the {limit_bytes}-byte limit")]
     ResourceTooLarge {

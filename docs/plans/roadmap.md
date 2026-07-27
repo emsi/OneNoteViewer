@@ -90,6 +90,10 @@ independent protocol fixtures pass. Recorded latency targets remain open.
 - [x] Open/close/reopen multiple notebook roots.
 - [x] Virtualized, collapsible notebook/section-group/section tree and page
   navigation without flattening section-group paths.
+- [ ] Load a manifest-free OneNote backup directory as one synthetic notebook
+  through the reusable core loader, preserving directories as section groups
+  and selecting dated section snapshots with explicit provenance. See the
+  [backup-folder loader plan](backup-folder-loader.md).
 - [ ] Complete `.onepkg` UI progress and cancellation; core missing-tool,
   cancellation,
   staging cleanup, and destination-conflict handling.
