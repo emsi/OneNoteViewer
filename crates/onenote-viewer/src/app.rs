@@ -9,13 +9,18 @@ use onenote_core::{LoadedNotebook, NotebookEntry, Page, PageId, Rect, Section, S
 use onenote_index::SearchHit;
 use onenote_render_gtk::PageView;
 use std::borrow::Cow;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
 const NO_SELECTION: u32 = gtk::INVALID_LIST_POSITION;
+const NOTEBOOK_NAVIGATION_WIDTH: i32 = 320;
+const PAGE_NAVIGATION_WIDTH: i32 = 280;
+const COLLAPSED_NAVIGATION_WIDTH: i32 = 42;
+const NAVIGATION_SEPARATOR_WIDTH: i32 = 1;
+const SEARCH_RESULTS_WIDTH: i32 = 520;
 
 pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
     gio::resources_register_include!("onenote-viewer.gresource")?;
@@ -98,9 +103,13 @@ struct Viewer {
     notebook_tree: NotebookTree,
     page_model: gtk::StringList,
     page_selection: gtk::SingleSelection,
+    page_list: gtk::ListView,
     result_model: gtk::StringList,
     result_selection: gtk::SingleSelection,
+    result_list: gtk::ListView,
     navigation_stack: gtk::Stack,
+    content_paned: gtk::Paned,
+    page_navigation_width: Rc<Cell<i32>>,
     page_view: PageView,
     canvas_stack: gtk::Stack,
     page_title: gtk::Label,
@@ -155,27 +164,36 @@ impl Viewer {
         header_title.append(&search_entry);
 
         let header = gtk::HeaderBar::new();
+        header.set_show_title_buttons(false);
         header.pack_start(&open_file);
         header.pack_start(&open_folder);
         header.pack_start(&import_package);
         header.set_title_widget(Some(&header_title));
-        header.pack_end(&close_source);
-        header.pack_end(&spinner);
 
-        let notebooks = collapsible_navigation_band("NOTEBOOKS", &notebook_tree.view, 320);
-        let pages = collapsible_navigation_band("PAGES", &page_list, 280);
-        let results = navigation_band("SEARCH RESULTS", &result_list, 520);
+        let notebooks = CollapsibleNavigationBand::new(
+            "NOTEBOOKS",
+            &notebook_tree.view,
+            NOTEBOOK_NAVIGATION_WIDTH,
+            Some(&close_source),
+        );
+        let pages =
+            CollapsibleNavigationBand::new("PAGES", &page_list, PAGE_NAVIGATION_WIDTH, None);
+        let results = navigation_band("SEARCH RESULTS", &result_list, SEARCH_RESULTS_WIDTH);
 
         let navigation_stack = gtk::Stack::builder()
             .transition_type(gtk::StackTransitionType::Crossfade)
+            .hhomogeneous(false)
             .build();
         let navigation = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        navigation.append(&notebooks);
+        navigation.append(&notebooks.root);
         navigation.append(&separator());
-        navigation.append(&pages);
+        navigation.append(&pages.root);
         navigation_stack.add_named(&navigation, Some("pages"));
         navigation_stack.add_named(&results, Some("results"));
         navigation_stack.set_visible_child_name("pages");
+        let initial_navigation_width =
+            NOTEBOOK_NAVIGATION_WIDTH + PAGE_NAVIGATION_WIDTH + NAVIGATION_SEPARATOR_WIDTH;
+        navigation_stack.set_width_request(initial_navigation_width);
 
         let page_title = gtk::Label::builder()
             .xalign(0.0)
@@ -247,6 +265,7 @@ impl Viewer {
         footer.set_margin_top(4);
         footer.set_margin_bottom(4);
         footer.append(&status);
+        footer.append(&spinner);
         footer.append(&zoom_out);
         footer.append(&zoom_label);
         footer.append(&zoom_in);
@@ -257,9 +276,28 @@ impl Viewer {
             .start_child(&navigation_stack)
             .end_child(&canvas_stack)
             .resize_start_child(false)
-            .shrink_start_child(false)
-            .position(600)
+            .shrink_start_child(true)
+            .position(initial_navigation_width)
             .build();
+        let notebook_width = Rc::new(Cell::new(NOTEBOOK_NAVIGATION_WIDTH));
+        let page_width = Rc::new(Cell::new(PAGE_NAVIGATION_WIDTH));
+        let page_navigation_width = Rc::new(Cell::new(initial_navigation_width));
+        connect_navigation_band_width(
+            &notebooks,
+            Rc::clone(&notebook_width),
+            Rc::clone(&page_width),
+            Rc::clone(&page_navigation_width),
+            &navigation_stack,
+            &content_paned,
+        );
+        connect_navigation_band_width(
+            &pages,
+            Rc::clone(&page_width),
+            Rc::clone(&notebook_width),
+            Rc::clone(&page_navigation_width),
+            &navigation_stack,
+            &content_paned,
+        );
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&content_paned);
@@ -281,9 +319,13 @@ impl Viewer {
             notebook_tree,
             page_model,
             page_selection,
+            page_list,
             result_model,
             result_selection,
+            result_list,
             navigation_stack,
+            content_paned,
+            page_navigation_width,
             page_view,
             canvas_stack,
             page_title,
@@ -311,38 +353,24 @@ impl Viewer {
     fn connect_navigation(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
         self.notebook_tree
-            .selection
-            .connect_selected_notify(move |selection| {
-                let Some(viewer) = weak.upgrade() else {
-                    return;
-                };
-                let position = selection.selected();
-                if position != NO_SELECTION {
+            .view
+            .connect_activate(move |_, position| {
+                if let Some(viewer) = weak.upgrade() {
                     viewer.activate_navigation(position);
                 }
             });
         let weak = Rc::downgrade(self);
-        self.page_selection
-            .connect_selected_notify(move |selection| {
-                let Some(viewer) = weak.upgrade() else {
-                    return;
-                };
-                let position = selection.selected();
-                if position != NO_SELECTION {
-                    viewer.activate_page(position as usize, None);
-                }
-            });
+        self.page_list.connect_activate(move |_, position| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.activate_page(position as usize, None);
+            }
+        });
         let weak = Rc::downgrade(self);
-        self.result_selection
-            .connect_selected_notify(move |selection| {
-                let Some(viewer) = weak.upgrade() else {
-                    return;
-                };
-                let position = selection.selected();
-                if position != NO_SELECTION {
-                    viewer.activate_result(position as usize);
-                }
-            });
+        self.result_list.connect_activate(move |_, position| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.activate_result(position as usize);
+            }
+        });
 
         let weak = Rc::downgrade(self);
         self.search_entry.connect_search_changed(move |entry| {
@@ -355,6 +383,7 @@ impl Viewer {
             let text = entry.text().trim().to_owned();
             if text.is_empty() {
                 viewer.navigation_stack.set_visible_child_name("pages");
+                viewer.set_navigation_width(viewer.page_navigation_width.get());
                 viewer.result_selection.set_selected(NO_SELECTION);
                 return;
             }
@@ -443,7 +472,6 @@ impl Viewer {
             glib::ControlFlow::Continue
         });
     }
-
     fn handle_event(self: &Rc<Self>, event: Event) {
         match event {
             Event::Discovered { requested, result } => match result {
@@ -539,6 +567,7 @@ impl Viewer {
         self.notebook_tree.select_notebook(select);
         if let Some(section_id) = first_section {
             self.notebook_tree.select_section(select, &section_id);
+            self.activate_section(select, &section_id);
         }
         self.persist_workspace();
         self.status
@@ -605,6 +634,7 @@ impl Viewer {
         }
         if self.page_model.n_items() > 0 {
             self.page_selection.set_selected(0);
+            self.activate_page(0, None);
         }
     }
 
@@ -676,6 +706,7 @@ impl Viewer {
         let count = hits.len();
         self.state.borrow_mut().search_hits = hits;
         self.navigation_stack.set_visible_child_name("results");
+        self.set_navigation_width(SEARCH_RESULTS_WIDTH);
         self.status.set_label(&format!(
             "{count} search result{}",
             if count == 1 { "" } else { "s" }
@@ -757,6 +788,7 @@ impl Viewer {
                 .map(|section| section.id.clone());
             if let Some(section_id) = first_section {
                 self.notebook_tree.select_section(new_position, &section_id);
+                self.activate_section(new_position, &section_id);
             }
         } else {
             self.status.set_label("No notebooks open");
@@ -902,6 +934,11 @@ impl Viewer {
             .set_label(&format!("{:.0}%", self.page_view.zoom() * 100.0));
     }
 
+    fn set_navigation_width(&self, width: i32) {
+        self.navigation_stack.set_width_request(width);
+        self.content_paned.set_position(width);
+    }
+
     fn set_busy(&self, message: &str) {
         let message = gtk_text(message);
         self.status.set_label(&message);
@@ -993,53 +1030,116 @@ fn bind_string(item: &glib::Object, multiline: bool) {
     }
 }
 
-fn collapsible_navigation_band(title: &str, list: &gtk::ListView, expanded_width: i32) -> gtk::Box {
-    let heading = gtk::Label::builder()
-        .label(title)
-        .xalign(0.0)
-        .hexpand(true)
-        .build();
-    heading.add_css_class("nav-heading");
-    let toggle = icon_button(
-        "onenote-panel-collapse-symbolic",
-        &format!("Collapse {}", title.to_lowercase()),
-    );
-    toggle.add_css_class("flat");
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    header.set_margin_start(12);
-    header.set_margin_end(6);
-    header.set_margin_top(6);
-    header.set_margin_bottom(4);
-    header.append(&heading);
-    header.append(&toggle);
+struct CollapsibleNavigationBand {
+    root: gtk::Box,
+    heading: gtk::Label,
+    body: gtk::ScrolledWindow,
+    toggle: gtk::Button,
+    header_action: Option<gtk::Button>,
+    expanded_width: i32,
+}
 
-    let scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .vscrollbar_policy(gtk::PolicyType::Automatic)
-        .child(list)
-        .vexpand(true)
-        .build();
-    let band = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    band.set_width_request(expanded_width);
-    band.add_css_class("navigation-band");
-    band.append(&header);
-    band.append(&scroll);
-
-    let band_for_toggle = band.clone();
-    toggle.connect_clicked(move |button| {
-        let collapse = scroll.is_visible();
-        scroll.set_visible(!collapse);
-        heading.set_visible(!collapse);
-        band_for_toggle.set_width_request(if collapse { 42 } else { expanded_width });
-        if collapse {
-            button.set_icon_name("onenote-panel-expand-symbolic");
-            button.set_tooltip_text(Some("Expand navigation"));
-        } else {
-            button.set_icon_name("onenote-panel-collapse-symbolic");
-            button.set_tooltip_text(Some("Collapse navigation"));
+impl CollapsibleNavigationBand {
+    fn new(
+        title: &str,
+        list: &gtk::ListView,
+        expanded_width: i32,
+        header_action: Option<&gtk::Button>,
+    ) -> Self {
+        let heading = gtk::Label::builder()
+            .label(title)
+            .xalign(0.0)
+            .hexpand(true)
+            .build();
+        heading.add_css_class("nav-heading");
+        let toggle = icon_button(
+            "onenote-panel-collapse-symbolic",
+            &format!("Collapse {}", title.to_lowercase()),
+        );
+        toggle.add_css_class("flat");
+        let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        header.set_margin_start(12);
+        header.set_margin_end(6);
+        header.set_margin_top(6);
+        header.set_margin_bottom(4);
+        header.append(&heading);
+        if let Some(action) = header_action {
+            header.append(action);
         }
+        header.append(&toggle);
+
+        let body = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .child(list)
+            .vexpand(true)
+            .build();
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.set_width_request(expanded_width);
+        root.add_css_class("navigation-band");
+        root.append(&header);
+        root.append(&body);
+        Self {
+            root,
+            heading,
+            body,
+            toggle,
+            header_action: header_action.cloned(),
+            expanded_width,
+        }
+    }
+
+    fn connect_width_changed<F>(&self, changed: F)
+    where
+        F: Fn(i32) + 'static,
+    {
+        let root = self.root.clone();
+        let heading = self.heading.clone();
+        let body = self.body.clone();
+        let header_action = self.header_action.clone();
+        let expanded_width = self.expanded_width;
+        self.toggle.connect_clicked(move |button| {
+            let collapse = body.is_visible();
+            body.set_visible(!collapse);
+            heading.set_visible(!collapse);
+            if let Some(action) = &header_action {
+                action.set_visible(!collapse);
+            }
+            let width = if collapse {
+                COLLAPSED_NAVIGATION_WIDTH
+            } else {
+                expanded_width
+            };
+            root.set_width_request(width);
+            if collapse {
+                button.set_icon_name("onenote-panel-expand-symbolic");
+                button.set_tooltip_text(Some("Expand navigation"));
+            } else {
+                button.set_icon_name("onenote-panel-collapse-symbolic");
+                button.set_tooltip_text(Some("Collapse navigation"));
+            }
+            changed(width);
+        });
+    }
+}
+
+fn connect_navigation_band_width(
+    band: &CollapsibleNavigationBand,
+    width: Rc<Cell<i32>>,
+    other_width: Rc<Cell<i32>>,
+    total_width: Rc<Cell<i32>>,
+    stack: &gtk::Stack,
+    paned: &gtk::Paned,
+) {
+    let stack = stack.clone();
+    let paned = paned.clone();
+    band.connect_width_changed(move |new_width| {
+        width.set(new_width);
+        let total = new_width + other_width.get() + NAVIGATION_SEPARATOR_WIDTH;
+        total_width.set(total);
+        stack.set_width_request(total);
+        paned.set_position(total);
     });
-    band
 }
 
 fn navigation_band(title: &str, list: &gtk::ListView, width: i32) -> gtk::Box {
@@ -1259,5 +1359,70 @@ mod tests {
             "2015-06-12  11:06"
         );
         assert_eq!(display_timestamp("unknown"), "unknown");
+    }
+
+    #[test]
+    fn collapsed_bands_reclaim_the_outer_pane_width() {
+        if gtk::init().is_err() {
+            return;
+        }
+        let (_, notebook_list) = list_view(&gtk::StringList::new(&[]), "notebook-list");
+        let (_, page_list) = list_view(&gtk::StringList::new(&[]), "page-list");
+        let close_source = gtk::Button::new();
+        let notebooks = CollapsibleNavigationBand::new(
+            "NOTEBOOKS",
+            &notebook_list,
+            NOTEBOOK_NAVIGATION_WIDTH,
+            Some(&close_source),
+        );
+        let pages =
+            CollapsibleNavigationBand::new("PAGES", &page_list, PAGE_NAVIGATION_WIDTH, None);
+        let navigation = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        navigation.append(&notebooks.root);
+        navigation.append(&separator());
+        navigation.append(&pages.root);
+        let stack = gtk::Stack::new();
+        stack.add_named(&navigation, Some("pages"));
+        let canvas = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let initial_width =
+            NOTEBOOK_NAVIGATION_WIDTH + PAGE_NAVIGATION_WIDTH + NAVIGATION_SEPARATOR_WIDTH;
+        let paned = gtk::Paned::builder()
+            .start_child(&stack)
+            .end_child(&canvas)
+            .position(initial_width)
+            .build();
+        let notebook_width = Rc::new(Cell::new(NOTEBOOK_NAVIGATION_WIDTH));
+        let page_width = Rc::new(Cell::new(PAGE_NAVIGATION_WIDTH));
+        let total_width = Rc::new(Cell::new(initial_width));
+        connect_navigation_band_width(
+            &notebooks,
+            Rc::clone(&notebook_width),
+            Rc::clone(&page_width),
+            Rc::clone(&total_width),
+            &stack,
+            &paned,
+        );
+        connect_navigation_band_width(
+            &pages,
+            Rc::clone(&page_width),
+            Rc::clone(&notebook_width),
+            Rc::clone(&total_width),
+            &stack,
+            &paned,
+        );
+
+        notebooks.toggle.emit_clicked();
+        assert!(!close_source.is_visible());
+        assert_eq!(
+            total_width.get(),
+            COLLAPSED_NAVIGATION_WIDTH + PAGE_NAVIGATION_WIDTH + NAVIGATION_SEPARATOR_WIDTH
+        );
+        pages.toggle.emit_clicked();
+        assert_eq!(
+            total_width.get(),
+            COLLAPSED_NAVIGATION_WIDTH * 2 + NAVIGATION_SEPARATOR_WIDTH
+        );
+        assert_eq!(stack.width_request(), total_width.get());
+        assert_eq!(paned.position(), total_width.get());
     }
 }
