@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
      viewBox="0 0 24 24" fill="none" stroke="#2e3436" stroke-width="2"
      stroke-linecap="round" stroke-linejoin="round">
-  <rect class="foreground-stroke" width="18" height="18" x="3" y="3" rx="2"/>
-  <path class="foreground-stroke" d="M9 3v18"/>
-  <path class="foreground-stroke" d="m14 9 3 3-3 3"/>
+  <rect class="transparent-fill foreground-stroke" width="18" height="18" x="3" y="3" rx="2"/>
+  <path class="transparent-fill foreground-stroke" d="M9 3v18"/>
+  <path class="transparent-fill foreground-stroke" d="m14 9 3 3-3 3"/>
 </svg>

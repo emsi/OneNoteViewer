@@ -126,12 +126,20 @@ pub(crate) fn check_icons() -> Result<()> {
         texture.download(&mut pixels, 24 * 4);
         let painted = pixels
             .chunks_exact(4)
-            .filter(|pixel| u32::from_ne_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]) >> 24 != 0)
+            .filter(|pixel| native_pixel_alpha(pixel) != 0)
             .count();
         if !(4..=432).contains(&painted) {
             anyhow::bail!(
                 "symbolic icon has implausible painted coverage: {name} ({painted}/576 pixels)"
             );
+        }
+        if let Some((x, y)) = transparent_probe(name) {
+            let offset = (y * 24 + x) * 4;
+            if native_pixel_alpha(&pixels[offset..offset + 4]) != 0 {
+                anyhow::bail!(
+                    "symbolic icon filled a required transparent interior: {name} ({x}, {y})"
+                );
+            }
         }
     }
     renderer.unrealize();
@@ -143,6 +151,24 @@ pub(crate) fn check_icons() -> Result<()> {
         gtk::micro_version()
     );
     Ok(())
+}
+
+fn native_pixel_alpha(pixel: &[u8]) -> u8 {
+    (u32::from_ne_bytes([pixel[0], pixel[1], pixel[2], pixel[3]]) >> 24) as u8
+}
+
+fn transparent_probe(name: &str) -> Option<(usize, usize)> {
+    match name {
+        "onenote-folder-symbolic" => Some((12, 12)),
+        "onenote-import-package-symbolic" => Some((12, 8)),
+        "onenote-notebook-symbolic" => Some((10, 12)),
+        "onenote-open-file-symbolic" => Some((10, 12)),
+        "onenote-open-folder-symbolic" => Some((12, 15)),
+        "onenote-panel-collapse-symbolic" | "onenote-panel-expand-symbolic" => Some((5, 5)),
+        "onenote-zoom-in-symbolic" | "onenote-zoom-out-symbolic" => Some((7, 7)),
+        "onenote-zoom-reset-symbolic" => Some((12, 12)),
+        _ => None,
+    }
 }
 
 fn register_resources() -> Result<()> {

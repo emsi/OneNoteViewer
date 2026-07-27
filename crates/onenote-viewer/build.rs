@@ -43,10 +43,13 @@ fn validate_symbolic_icons(directory: &Path) {
                 .iter()
                 .any(|primitive| line.starts_with(primitive))
             {
+                let foreground_fill = line.contains("foreground-fill");
+                let transparent_stroke =
+                    line.contains("foreground-stroke") && line.contains("transparent-fill");
                 assert!(
-                    line.contains("class=\"foreground-stroke\"")
-                        || line.contains("class=\"foreground-fill\""),
-                    "{} has a graphic primitive without a GTK symbolic color class",
+                    foreground_fill || transparent_stroke,
+                    "{} has a graphic primitive without a GTK symbolic fill, or a stroke \
+                     primitive without transparent-fill",
                     path.display()
                 );
             }
