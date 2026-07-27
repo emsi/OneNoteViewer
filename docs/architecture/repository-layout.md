@@ -37,6 +37,7 @@ those components rather than their owner.
 │   ├── references/
 │   └── specs/
 ├── scripts/
+│   ├── check-system-deps.sh
 │   ├── fetch-references.sh
 │   └── validate-docs.sh
 └── third_party/
@@ -118,8 +119,8 @@ creates render nodes. Public interfaces follow
   environment-specific path.
 - `third_party/onenote.rs/` is the reviewed MPL-2.0 parser snapshot plus three
   documented compatibility patches.
-- `scripts/` contains reproducible reference and documentation validation, not
-  a second build system.
+- `scripts/` contains native dependency preflight plus reproducible reference
+  and documentation validation, not a second build system.
 - `packaging/` remains a future directory and should appear only when it
   contains working artifacts.
 

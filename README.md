@@ -86,15 +86,35 @@ evidence required.
 
 ## Build and Run
 
-Ubuntu 24.04 development requires Rust 1.85.1, GTK 4.14 development files,
-Pango, Cairo, and SQLite development files. `7zz` or `7z` is optional for
-package import and is not needed to open an extracted notebook.
+Ubuntu 24.04 development requires Rust 1.85.1 and the GTK 4.14 development
+stack. Install the native build dependencies with:
+
+```bash
+sudo apt update
+sudo apt install build-essential pkg-config libgtk-4-dev
+```
+
+`libgtk-4-dev` pulls in the required Graphene, Pango, Cairo, GDK, and GSK
+development metadata. `7zz` or `7z` is optional for package import and is not
+needed to open an extracted notebook; on Ubuntu 24.04 it can be installed with
+`sudo apt install 7zip`.
+
+Check the host before compiling:
+
+```bash
+./scripts/check-system-deps.sh
+```
 
 ```bash
 cargo run -p onenote-viewer -- /path/to/notebook
 cargo run -p onenote-render-gtk --example standalone -- /path/to/section.one
 cargo test --workspace --all-targets
 ```
+
+If Cargo reports that `gtk4.pc` or `graphene-gobject-1.0.pc` is missing, the
+development packages are not installed on that host. An unset
+`PKG_CONFIG_PATH` is normal for distribution packages; do not set it manually
+unless GTK was deliberately installed under a nonstandard prefix.
 
 The first command accepts a `.one`, `.onetoc2`, or directory. Additional paths
 add sources to the same workspace. `.onepkg` files are imported through the
