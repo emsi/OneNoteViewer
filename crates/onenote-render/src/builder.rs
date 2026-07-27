@@ -5,7 +5,7 @@ use crate::scene::{
 use crate::{Error, Result};
 use onenote_core::{
     Attachment, Color, ElementContent, Image, Ink, ListMarker, ObjectKind, Outline, OutlineElement,
-    Page, PageObject, Rect, Table, TextBlock,
+    Page, PageObject, PageObjectRole, Rect, Table, TextBlock,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -44,6 +44,10 @@ pub struct SceneOptions {
     pub line_height: f32,
     /// Maximum generated nodes per page.
     pub max_nodes: usize,
+    /// Include native title/date objects in the generated scene.
+    pub include_page_title: bool,
+    /// Crop the scene bounds to the included content.
+    pub crop_to_content: bool,
 }
 
 impl Default for SceneOptions {
@@ -55,6 +59,8 @@ impl Default for SceneOptions {
             default_font_size: 11.0,
             line_height: 1.35,
             max_nodes: 1_000_000,
+            include_page_title: true,
+            crop_to_content: false,
         }
     }
 }
@@ -89,6 +95,9 @@ impl SceneBuilder {
         state.check_cancelled()?;
         for object in &page.objects {
             state.check_cancelled()?;
+            if !self.options.include_page_title && object.role == PageObjectRole::Title {
+                continue;
+            }
             state.object(object)?;
         }
         state.nodes.sort_by_key(|node| node.z_index);
@@ -694,6 +703,19 @@ fn finite(value: f32) -> f32 {
 }
 
 fn scene_bounds(page: &Page, nodes: &[SceneNode], options: SceneOptions) -> Rect {
+    if options.crop_to_content {
+        let content = nodes
+            .iter()
+            .map(|node| node.bounds)
+            .reduce(Rect::union)
+            .unwrap_or_default();
+        return Rect {
+            x: content.x,
+            y: content.y,
+            width: content.width.max(options.minimum_canvas_width),
+            height: content.height.max(options.minimum_canvas_height),
+        };
+    }
     let initial = Rect {
         x: 0.0,
         y: 0.0,
@@ -711,9 +733,9 @@ fn scene_bounds(page: &Page, nodes: &[SceneNode], options: SceneOptions) -> Rect
 
 #[cfg(test)]
 mod tests {
-    use super::SceneBuilder;
+    use super::{SceneBuilder, SceneOptions};
     use crate::{Error, ScenePrimitive};
-    use onenote_core::{ObjectId, ObjectKind, Page, PageId, PageObject, Rect};
+    use onenote_core::{ObjectId, ObjectKind, Page, PageId, PageObject, PageObjectRole, Rect};
     use std::sync::atomic::AtomicBool;
 
     #[test]
@@ -730,6 +752,7 @@ mod tests {
             objects: vec![
                 PageObject {
                     id: ObjectId::new("first"),
+                    role: PageObjectRole::Body,
                     bounds: Rect {
                         x: -40.0,
                         y: 20.0,
@@ -741,6 +764,7 @@ mod tests {
                 },
                 PageObject {
                     id: ObjectId::new("second"),
+                    role: PageObjectRole::Body,
                     bounds: Rect {
                         x: 20.0,
                         y: 40.0,
@@ -782,6 +806,61 @@ mod tests {
     }
 
     #[test]
+    fn can_exclude_title_objects_and_crop_to_body() {
+        let page = Page {
+            id: PageId::new("page"),
+            native_id: "native".to_owned(),
+            title: "Title".to_owned(),
+            level: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            author: None,
+            height: Some(2_000.0),
+            objects: vec![
+                PageObject {
+                    id: ObjectId::new("title"),
+                    role: PageObjectRole::Title,
+                    bounds: Rect {
+                        x: 40.0,
+                        y: 30.0,
+                        width: 300.0,
+                        height: 80.0,
+                    },
+                    z_index: 0,
+                    kind: ObjectKind::Unknown,
+                },
+                PageObject {
+                    id: ObjectId::new("body"),
+                    role: PageObjectRole::Body,
+                    bounds: Rect {
+                        x: 120.0,
+                        y: 260.0,
+                        width: 400.0,
+                        height: 300.0,
+                    },
+                    z_index: 1,
+                    kind: ObjectKind::Unknown,
+                },
+            ],
+        };
+        let scene = SceneBuilder::with_options(SceneOptions {
+            include_page_title: false,
+            crop_to_content: true,
+            ..SceneOptions::default()
+        })
+        .build(&page, &AtomicBool::new(false))
+        .expect("scene");
+
+        assert_eq!(scene.nodes.len(), 2);
+        assert!(scene
+            .nodes
+            .iter()
+            .all(|node| node.source_object_id == ObjectId::new("body")));
+        assert!((scene.bounds.x - 120.0).abs() < f32::EPSILON);
+        assert!((scene.bounds.y - 260.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn cancellation_prevents_construction() {
         let page = Page {
             id: PageId::new("page"),
@@ -803,6 +882,7 @@ mod tests {
         let mut page = page;
         page.objects.push(PageObject {
             id: ObjectId::new("object"),
+            role: PageObjectRole::Body,
             bounds: Rect::default(),
             z_index: 0,
             kind: ObjectKind::Unknown,

@@ -231,7 +231,8 @@ implemented or inherited from the parser.
 For `.onetoc2`, the root/default content object is
 `jcidPersistablePropertyContainerForTOC`. Project its ordered child entries,
 folder filenames, display names, colors, and file identities into notebook
-navigation.
+navigation. Preserve nested section-group entries as hierarchy; filesystem
+paths and slash-joined display labels are not substitutes for section groups.
 
 For `.one`, the root object space is `SectionObjectSpace`:
 
@@ -258,6 +259,11 @@ Project:
 - ordered direct page content;
 - optional version/conflict metadata;
 - author information where available.
+
+Keep title-area objects semantically distinct from ordinary body objects even
+when both are represented as positioned outlines. This permits a renderer host
+to reproduce the complete native page or present page title/time metadata once
+in native application chrome without flattening or guessing from coordinates.
 
 Do not merge conflict pages or historical versions into the current page.
 Expose them as separate optional views when implemented.

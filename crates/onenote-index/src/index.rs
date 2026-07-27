@@ -604,8 +604,8 @@ mod tests {
     use crate::{Error, SearchQuery};
     use onenote_core::{
         Notebook, NotebookEntry, ObjectId, ObjectKind, Outline, OutlineElement, Page, PageId,
-        PageObject, Rect, Section, SectionId, SourceFingerprint, SourceId, TextAlignment,
-        TextBlock, TextStyle,
+        PageObject, PageObjectRole, Rect, Section, SectionId, SourceFingerprint, SourceId,
+        TextAlignment, TextBlock, TextStyle,
     };
     use std::sync::atomic::AtomicBool;
 
@@ -685,6 +685,7 @@ mod tests {
                     height: None,
                     objects: vec![PageObject {
                         id: ObjectId::new(format!("{source}-object")),
+                        role: PageObjectRole::Body,
                         bounds: Rect {
                             x: 10.0,
                             y: 20.0,

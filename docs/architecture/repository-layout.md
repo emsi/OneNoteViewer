@@ -102,7 +102,9 @@ windows, choose files, navigate notebooks, or persist a workspace.
 Owns GTK application state, windows, navigation, virtualized lists, workspace
 persistence, desktop integration, and user-visible warnings. It composes all
 four library crates. It does not parse binary OneNote structures, construct
-private page scenes, or query SQLite directly.
+private page scenes, or query SQLite directly. Notebook, nested section-group,
+and section rows form one typed tree; they are not reconstructed from flattened
+display labels.
 
 ## Dependency Direction
 

@@ -1,5 +1,6 @@
 use onenote_core::{
-    ElementContent, Error, NotebookEntry, ObjectKind, OneNoteLoader, OnePkgExtractor, ResourceRef,
+    ElementContent, Error, NotebookEntry, ObjectKind, OneNoteLoader, OnePkgExtractor,
+    PageObjectRole, ResourceRef,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -41,6 +42,20 @@ fn extracted_private_notebook_projects_all_native_sections() {
     assert!(
         pages.iter().any(|page| !page.objects.is_empty()),
         "projected pages must expose positioned objects"
+    );
+    assert!(
+        pages
+            .iter()
+            .flat_map(|page| &page.objects)
+            .any(|object| object.role == PageObjectRole::Title),
+        "native title-area objects must retain their semantic role"
+    );
+    assert!(
+        pages
+            .iter()
+            .flat_map(|page| &page.objects)
+            .any(|object| object.role == PageObjectRole::Body),
+        "native body objects must remain distinct from title-area objects"
     );
 
     let encoded = serde_json::to_vec(&loaded.notebook).expect("semantic model must serialize");

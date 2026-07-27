@@ -33,6 +33,8 @@ directory="$staging/OneNoteViewer-${version}-linux-${arch}"
 mkdir -p "$directory"
 install -m 0755 target/release/onenote-viewer "$directory/onenote-viewer"
 install -m 0644 packaging/native/README.txt "$directory/README.txt"
+install -m 0644 crates/onenote-viewer/resources/LUCIDE-LICENSE \
+    "$directory/LUCIDE-LICENSE"
 ldd target/release/onenote-viewer |
     sed -E 's/ \(0x[[:xdigit:]]+\)//g' >"$directory/RUNTIME-LIBRARIES.txt"
 

@@ -1,8 +1,9 @@
 use crate::model::{
     Attachment, Color, Diagnostic, DiagnosticSeverity, ElementContent, Image, Ink, InkPoint,
     InkStroke, ListMarker, Notebook, NotebookEntry, ObjectId, ObjectKind, Outline, OutlineElement,
-    Page, PageId, PageObject, Rect, ResourceId, ResourceRef, Section, SectionGroup, SectionId,
-    SourceFingerprint, SourceId, Table, TableCell, TextAlignment, TextBlock, TextRun, TextStyle,
+    Page, PageId, PageObject, PageObjectRole, Rect, ResourceId, ResourceRef, Section, SectionGroup,
+    SectionId, SourceFingerprint, SourceId, Table, TableCell, TextAlignment, TextBlock, TextRun,
+    TextStyle,
 };
 use crate::resource::ResourceLoader;
 use crate::{Error, ResourceStore, Result, PIXELS_PER_HALF_INCH};
@@ -260,13 +261,15 @@ impl Projector {
                     half_inches(title.offset_horizontal()),
                     half_inches(title.offset_vertical()),
                 );
-                objects.push(self.outline_object(
+                let mut object = self.outline_object(
                     outline,
                     &page_id,
                     &object_key,
                     objects.len(),
                     Some(fallback),
-                )?);
+                )?;
+                object.role = PageObjectRole::Title;
+                objects.push(object);
             }
         }
 
@@ -339,6 +342,7 @@ impl Projector {
             .max(1.0);
         Ok(PageObject {
             id: ObjectId::new(self.id("object", &format!("{page_id}/{key}"))),
+            role: PageObjectRole::Body,
             bounds: Rect {
                 x,
                 y,
@@ -470,6 +474,7 @@ impl Projector {
         let projected = self.image(image, key)?;
         Ok(PageObject {
             id: ObjectId::new(self.id("object", &format!("{page_id}/{key}"))),
+            role: PageObjectRole::Body,
             bounds: Rect {
                 x: image.offset_horizontal().map_or(0.0, half_inches),
                 y: image.offset_vertical().map_or(0.0, half_inches),
@@ -527,6 +532,7 @@ impl Projector {
         let projected = self.attachment(file, key)?;
         Ok(PageObject {
             id: ObjectId::new(self.id("object", &format!("{page_id}/{key}"))),
+            role: PageObjectRole::Body,
             bounds: Rect {
                 x: file.offset_horizontal().map_or(0.0, half_inches),
                 y: file.offset_vertical().map_or(0.0, half_inches),
@@ -592,6 +598,7 @@ impl Projector {
         );
         Ok(PageObject {
             id: ObjectId::new(self.id("object", &format!("{page_id}/{key}"))),
+            role: PageObjectRole::Body,
             bounds,
             z_index: u32::try_from(z_index).unwrap_or(u32::MAX),
             kind: ObjectKind::Ink(self.ink(ink)?),
@@ -627,6 +634,7 @@ impl Projector {
         self.bump_object()?;
         Ok(PageObject {
             id: ObjectId::new(self.id("object", &format!("{page_id}/{key}"))),
+            role: PageObjectRole::Body,
             bounds: Rect {
                 width: 160.0,
                 height: 48.0,

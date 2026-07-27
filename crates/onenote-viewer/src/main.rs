@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod app;
+mod navigation;
 mod worker;
 mod workspace;
 

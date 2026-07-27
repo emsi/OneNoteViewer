@@ -79,6 +79,11 @@ persistent multi-notebook GTK viewer. The supplied private package passes
 extraction, all-section parse, all-page scene, indexing, search, standalone
 renderer, and full viewer Xvfb tests.
 
+The viewer navigation keeps notebooks, nested section groups, and sections in
+one collapsible tree, with a separately collapsible page list. Page title and
+creation time are shown once above the freeform body. Bundled symbolic action
+icons avoid a dependency on a particular host icon theme.
+
 The tested corpus is still one private desktop package. Accessibility, measured
 layout fidelity, hostile-input coverage, several user actions, refresh,
 packaging, and licensing remain release blockers. See

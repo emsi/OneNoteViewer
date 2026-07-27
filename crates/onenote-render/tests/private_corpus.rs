@@ -1,5 +1,5 @@
-use onenote_core::OneNoteLoader;
-use onenote_render::{SceneBuilder, ScenePrimitive};
+use onenote_core::{OneNoteLoader, PageObjectRole};
+use onenote_render::{SceneBuilder, SceneOptions, ScenePrimitive};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
@@ -43,6 +43,38 @@ fn every_private_corpus_page_builds_a_finite_scene() {
     assert!(node_count > pages.len());
     assert!(text_count > 0);
     assert!(image_count + attachment_count + ink_count > 0);
+}
+
+#[test]
+fn viewer_scene_option_omits_only_native_title_objects() {
+    let Some(root) = notebook_root() else {
+        return;
+    };
+    let loaded = OneNoteLoader::default()
+        .load(root)
+        .expect("private notebook must parse");
+    let builder = SceneBuilder::with_options(SceneOptions {
+        include_page_title: false,
+        crop_to_content: true,
+        ..SceneOptions::default()
+    });
+    let cancel = AtomicBool::new(false);
+    let mut retained_nodes = 0_usize;
+
+    for page in loaded.notebook.pages() {
+        let scene = builder.build(page, &cancel).expect("viewer page scene");
+        assert!(scene.nodes.iter().all(|node| {
+            !page.objects.iter().any(|object| {
+                object.role == PageObjectRole::Title && object.id == node.source_object_id
+            })
+        }));
+        retained_nodes += scene.nodes.len();
+    }
+
+    assert!(
+        retained_nodes > 0,
+        "viewer scenes must retain body content from the private corpus"
+    );
 }
 
 fn finite_rect(rect: onenote_core::Rect) -> bool {

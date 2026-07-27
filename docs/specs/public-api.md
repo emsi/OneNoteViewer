@@ -44,7 +44,7 @@ The public model includes:
 - source identity and fingerprint;
 - notebook and section-group hierarchy;
 - ordered sections, pages, and subpages;
-- semantic page objects and source geometry;
+- semantic page objects, including title/body roles, and source geometry;
 - lazy handles for bounded image and attachment payload access;
 - unknown-object placeholders and stable diagnostic codes;
 - stable locators that namespace OneNote GUIDs by source identity.
@@ -63,10 +63,13 @@ layout inputs, stacking order, hit regions, accessibility semantics, resource
 handles, and source locators.
 
 Scene construction is deterministic for the same model and render options. It
-supports cancellation and
-returns diagnostics for unsupported or approximated content. It performs no
-file selection, link launching, attachment execution, or application
-navigation.
+supports cancellation and returns diagnostics for unsupported or approximated
+content. `SceneOptions` lets an embedding host retain the complete native page
+or omit native title-area objects when the host presents `Page.title` and
+timestamps in its own chrome; content cropping is an independent option. The
+OneNote Viewer shell uses both options, while the reusable renderer defaults
+to the complete native page. Scene construction performs no file selection,
+link launching, attachment execution, or application navigation.
 
 The scene API is the portability boundary for a future non-GTK backend. It
 must not contain `gtk`, `gdk`, `gio`, or viewer application types.

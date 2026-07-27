@@ -1,6 +1,6 @@
 use onenote_core::{LoadedNotebook, OneNoteLoader, OnePkgExtractor, SourceId};
 use onenote_index::{SearchHit, SearchIndex, SearchQuery};
-use onenote_render::{PageScene, SceneBuilder};
+use onenote_render::{PageScene, SceneBuilder, SceneOptions};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
@@ -107,10 +107,14 @@ pub(crate) fn search(
 
 pub(crate) fn build_scene(generation: u64, page: onenote_core::Page, events: mpsc::Sender<Event>) {
     std::thread::spawn(move || {
-        let result = SceneBuilder::default()
-            .build(&page, &AtomicBool::new(false))
-            .map(Arc::new)
-            .map_err(|error| error.to_string());
+        let result = SceneBuilder::with_options(SceneOptions {
+            include_page_title: false,
+            crop_to_content: true,
+            ..SceneOptions::default()
+        })
+        .build(&page, &AtomicBool::new(false))
+        .map(Arc::new)
+        .map_err(|error| error.to_string());
         let _ignored = events.send(Event::Scene { generation, result });
     });
 }

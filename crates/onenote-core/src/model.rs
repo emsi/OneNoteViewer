@@ -226,12 +226,26 @@ impl Page {
 pub struct PageObject {
     /// Stable identity within the page.
     pub id: ObjectId,
+    /// Semantic role within the source page.
+    #[serde(default)]
+    pub role: PageObjectRole,
     /// Position and extent in logical display pixels.
     pub bounds: Rect,
     /// Source stacking order. Higher values are later in source order.
     pub z_index: u32,
     /// Projected object content.
     pub kind: ObjectKind,
+}
+
+/// Semantic role of a positioned page object.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PageObjectRole {
+    /// Content belonging to the native page title area.
+    Title,
+    /// Freeform page body content.
+    #[default]
+    Body,
 }
 
 impl PageObject {

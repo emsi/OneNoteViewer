@@ -88,12 +88,15 @@ independent protocol fixtures pass. Recorded latency targets remain open.
 **Status: in progress**
 
 - [x] Open/close/reopen multiple notebook roots.
-- [x] Virtualized notebook/section-group/section/page navigation.
+- [x] Virtualized, collapsible notebook/section-group/section tree and page
+  navigation without flattening section-group paths.
 - [ ] Complete `.onepkg` UI progress and cancellation; core missing-tool,
   cancellation,
   staging cleanup, and destination-conflict handling.
 - [x] Active-page freeform canvas with rich text, lists, tables, lazy images,
   attachments, ink, placeholders, pan, and zoom.
+- [x] Viewer title/date chrome without duplicate native title-area rendering;
+  reusable scene construction retains a full-page option.
 - [ ] Complete tags, basic math, confirmed links, and safe attachment extraction.
 - [x] Global search with result navigation to matching object geometry.
 - [x] Persistent all-open-notebooks workspace and default global search scope.

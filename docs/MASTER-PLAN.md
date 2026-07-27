@@ -134,8 +134,11 @@ The detailed milestone sequence and exit gates are in the
   structured result locators, snippets, filtering, integrity checks, and a
   versioned JSON Lines query adapter with an independent process test.
 - `onenote-viewer` provides persistent multi-notebook discovery and
-  navigation, background parsing/indexing/scene construction, global search
-  result navigation, a native freeform canvas, and package onboarding.
+  a collapsible notebook/section-group/section tree plus page navigation,
+  background parsing/indexing/scene construction, global search result
+  navigation, a native freeform canvas, and package onboarding. Page title and
+  creation time appear once in viewer chrome while the reusable renderer can
+  still render the complete native title area for other hosts.
 - The supplied private `.onepkg` has passed unchanged-source extraction to 32
   `.one` and five `.onetoc2` files. All 32 sections parse, every page builds a
   finite scene, 637 pages index in the root notebook, and the complete viewer

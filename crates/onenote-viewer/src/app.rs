@@ -1,3 +1,4 @@
+use crate::navigation::{NavigationTarget, NotebookTree};
 use crate::worker::{self, Command, Event};
 use crate::workspace::{self, WorkspaceConfig};
 use anyhow::Result;
@@ -17,6 +18,7 @@ use std::time::Duration;
 const NO_SELECTION: u32 = gtk::INVALID_LIST_POSITION;
 
 pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
+    gio::resources_register_include!("onenote-viewer.gresource")?;
     let (workspace_path, index_path) = workspace::paths()?;
     workspace::ensure_index_parent(&index_path)?;
     let persisted = workspace::load(&workspace_path).unwrap_or_default();
@@ -37,7 +39,7 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
             viewer.window.present();
             return;
         }
-        install_css();
+        install_resources();
         let instance = Viewer::new(application, workspace_path.clone(), index_path.clone());
         for source in &initial_sources {
             instance.discover(source.clone());
@@ -74,12 +76,6 @@ struct Source {
 }
 
 #[derive(Clone)]
-struct SectionRow {
-    source: usize,
-    section_id: SectionId,
-}
-
-#[derive(Clone)]
 struct PageRow {
     source: usize,
     section_id: SectionId,
@@ -89,7 +85,6 @@ struct PageRow {
 #[derive(Default)]
 struct State {
     sources: Vec<Source>,
-    sections: Vec<SectionRow>,
     pages: Vec<PageRow>,
     search_hits: Vec<SearchHit>,
     active_source: Option<usize>,
@@ -100,10 +95,7 @@ struct State {
 
 struct Viewer {
     window: gtk::ApplicationWindow,
-    notebook_model: gtk::StringList,
-    notebook_selection: gtk::SingleSelection,
-    section_model: gtk::StringList,
-    section_selection: gtk::SingleSelection,
+    notebook_tree: NotebookTree,
     page_model: gtk::StringList,
     page_selection: gtk::SingleSelection,
     result_model: gtk::StringList,
@@ -112,6 +104,7 @@ struct Viewer {
     page_view: PageView,
     canvas_stack: gtk::Stack,
     page_title: gtk::Label,
+    page_date: gtk::Label,
     page_context: gtk::Label,
     search_entry: gtk::SearchEntry,
     status: gtk::Label,
@@ -135,10 +128,7 @@ impl Viewer {
         workspace_path: PathBuf,
         index_path: PathBuf,
     ) -> Rc<Self> {
-        let notebook_model = gtk::StringList::new(&[]);
-        let (notebook_selection, notebook_list) = list_view(&notebook_model, "notebook-list");
-        let section_model = gtk::StringList::new(&[]);
-        let (section_selection, section_list) = list_view(&section_model, "section-list");
+        let notebook_tree = NotebookTree::new();
         let page_model = gtk::StringList::new(&[]);
         let (page_selection, page_list) = list_view(&page_model, "page-list");
         let result_model = gtk::StringList::new(&[]);
@@ -150,10 +140,11 @@ impl Viewer {
             .width_request(320)
             .build();
 
-        let open_file = icon_button("document-open-symbolic", "Open OneNote file");
-        let open_folder = icon_button("folder-open-symbolic", "Open notebook folder");
-        let import_package = icon_button("package-x-generic-symbolic", "Import OneNote package");
-        let close_source = icon_button("window-close-symbolic", "Close selected notebook");
+        let open_file = icon_button("onenote-open-file-symbolic", "Open OneNote file");
+        let open_folder = icon_button("onenote-open-folder-symbolic", "Open notebook folder");
+        let import_package =
+            icon_button("onenote-import-package-symbolic", "Import OneNote package");
+        let close_source = icon_button("onenote-close-symbolic", "Close selected notebook");
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Background activity"));
 
@@ -171,16 +162,15 @@ impl Viewer {
         header.pack_end(&close_source);
         header.pack_end(&spinner);
 
-        let notebooks = navigation_band("NOTEBOOKS", &notebook_list, 220);
-        let sections = navigation_band("SECTIONS", &section_list, 240);
-        let pages = navigation_band("PAGES", &page_list, 280);
+        let notebooks = collapsible_navigation_band("NOTEBOOKS", &notebook_tree.view, 320);
+        let pages = collapsible_navigation_band("PAGES", &page_list, 280);
         let results = navigation_band("SEARCH RESULTS", &result_list, 520);
 
         let navigation_stack = gtk::Stack::builder()
             .transition_type(gtk::StackTransitionType::Crossfade)
             .build();
         let navigation = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        navigation.append(&sections);
+        navigation.append(&notebooks);
         navigation.append(&separator());
         navigation.append(&pages);
         navigation_stack.add_named(&navigation, Some("pages"));
@@ -192,6 +182,11 @@ impl Viewer {
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
         page_title.add_css_class("page-title");
+        let page_date = gtk::Label::builder()
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        page_date.add_css_class("page-date");
         let page_context = gtk::Label::builder()
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -203,12 +198,13 @@ impl Viewer {
         title_box.set_margin_top(10);
         title_box.set_margin_bottom(10);
         title_box.append(&page_title);
+        title_box.append(&page_date);
         title_box.append(&page_context);
 
         let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
         empty.set_halign(gtk::Align::Center);
         empty.set_valign(gtk::Align::Center);
-        let empty_icon = gtk::Image::from_icon_name("document-open-symbolic");
+        let empty_icon = gtk::Image::from_icon_name("onenote-open-file-symbolic");
         empty_icon.set_pixel_size(48);
         empty_icon.add_css_class("empty-icon");
         let empty_title = gtk::Label::new(Some("Open a notebook to begin"));
@@ -233,9 +229,9 @@ impl Viewer {
         canvas_stack.add_named(&document, Some("document"));
         canvas_stack.set_visible_child_name("empty");
 
-        let zoom_out = icon_button("zoom-out-symbolic", "Zoom out");
-        let zoom_in = icon_button("zoom-in-symbolic", "Zoom in");
-        let zoom_reset = icon_button("zoom-original-symbolic", "Reset zoom");
+        let zoom_out = icon_button("onenote-zoom-out-symbolic", "Zoom out");
+        let zoom_in = icon_button("onenote-zoom-in-symbolic", "Zoom in");
+        let zoom_reset = icon_button("onenote-zoom-reset-symbolic", "Reset zoom");
         let zoom_label = gtk::Label::new(Some("100%"));
         zoom_label.set_width_chars(5);
         let status = gtk::Label::builder()
@@ -256,25 +252,17 @@ impl Viewer {
         footer.append(&zoom_in);
         footer.append(&zoom_reset);
 
-        let main_paned = gtk::Paned::builder()
-            .orientation(gtk::Orientation::Horizontal)
-            .start_child(&notebooks)
-            .resize_start_child(false)
-            .shrink_start_child(false)
-            .position(220)
-            .build();
         let content_paned = gtk::Paned::builder()
             .orientation(gtk::Orientation::Horizontal)
             .start_child(&navigation_stack)
             .end_child(&canvas_stack)
             .resize_start_child(false)
             .shrink_start_child(false)
-            .position(520)
+            .position(600)
             .build();
-        main_paned.set_end_child(Some(&content_paned));
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.append(&main_paned);
+        root.append(&content_paned);
         root.append(&separator_horizontal());
         root.append(&footer);
         let window = gtk::ApplicationWindow::builder()
@@ -290,10 +278,7 @@ impl Viewer {
         let commands = worker::start_index_worker(index_path.clone(), event_sender.clone());
         let viewer = Rc::new(Self {
             window,
-            notebook_model,
-            notebook_selection,
-            section_model,
-            section_selection,
+            notebook_tree,
             page_model,
             page_selection,
             result_model,
@@ -302,6 +287,7 @@ impl Viewer {
             page_view,
             canvas_stack,
             page_title,
+            page_date,
             page_context,
             search_entry,
             status,
@@ -324,25 +310,15 @@ impl Viewer {
 
     fn connect_navigation(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
-        self.notebook_selection
+        self.notebook_tree
+            .selection
             .connect_selected_notify(move |selection| {
                 let Some(viewer) = weak.upgrade() else {
                     return;
                 };
                 let position = selection.selected();
                 if position != NO_SELECTION {
-                    viewer.activate_source(position as usize);
-                }
-            });
-        let weak = Rc::downgrade(self);
-        self.section_selection
-            .connect_selected_notify(move |selection| {
-                let Some(viewer) = weak.upgrade() else {
-                    return;
-                };
-                let position = selection.selected();
-                if position != NO_SELECTION {
-                    viewer.activate_section(position as usize);
+                    viewer.activate_navigation(position);
                 }
             });
         let weak = Rc::downgrade(self);
@@ -536,98 +512,98 @@ impl Viewer {
     }
 
     fn add_source(&self, path: PathBuf, loaded: Arc<LoadedNotebook>) {
-        let source_id = &loaded.notebook.source_id;
+        let source_id = loaded.notebook.source_id.clone();
         let mut state = self.state.borrow_mut();
         if let Some(existing) = state
             .sources
             .iter_mut()
-            .find(|source| source.loaded.notebook.source_id == *source_id)
+            .find(|source| source.loaded.notebook.source_id == source_id)
         {
             existing.path = path;
             existing.loaded = loaded;
         } else {
             state.sources.push(Source { path, loaded });
         }
-        let select = state.sources.len().saturating_sub(1);
+        let select = state
+            .sources
+            .iter()
+            .position(|source| source.loaded.notebook.source_id == source_id)
+            .unwrap_or_else(|| state.sources.len().saturating_sub(1));
+        let first_section = state
+            .sources
+            .get(select)
+            .and_then(|source| first_section(&source.loaded.notebook.entries))
+            .map(|section| section.id.clone());
         drop(state);
         self.refresh_notebooks();
-        self.notebook_selection
-            .set_selected(u32::try_from(select).unwrap_or(NO_SELECTION));
+        self.notebook_tree.select_notebook(select);
+        if let Some(section_id) = first_section {
+            self.notebook_tree.select_section(select, &section_id);
+        }
         self.persist_workspace();
         self.status
             .set_label("Notebook opened; building search index");
     }
 
     fn refresh_notebooks(&self) {
-        clear_model(&self.notebook_model);
         let state = self.state.borrow();
-        for source in &state.sources {
-            append_model(&self.notebook_model, &source.loaded.notebook.name);
-        }
+        self.notebook_tree.rebuild(
+            state
+                .sources
+                .iter()
+                .enumerate()
+                .map(|(index, source)| (index, &source.loaded.notebook)),
+        );
         if state.sources.is_empty() {
             self.canvas_stack.set_visible_child_name("empty");
-            clear_model(&self.section_model);
             clear_model(&self.page_model);
         }
     }
 
-    fn activate_source(&self, position: usize) {
-        let labels = {
-            let state = self.state.borrow();
-            let Some(source) = state.sources.get(position) else {
-                return;
-            };
-            flatten_sections(&source.loaded.notebook.entries)
-                .into_iter()
-                .map(|(label, section)| {
-                    (
-                        label,
-                        SectionRow {
-                            source: position,
-                            section_id: section.id.clone(),
-                        },
-                    )
-                })
-                .collect::<Vec<_>>()
+    fn activate_navigation(&self, position: u32) {
+        let Some(target) = self.notebook_tree.target_at(position) else {
+            return;
         };
-        let mut state = self.state.borrow_mut();
-        state.active_source = Some(position);
-        state.sections = labels.iter().map(|(_, row)| row.clone()).collect();
-        state.pages.clear();
-        drop(state);
-        clear_model(&self.section_model);
-        clear_model(&self.page_model);
-        for (label, _) in labels {
-            append_model(&self.section_model, &label);
-        }
-        if self.section_model.n_items() > 0 {
-            self.section_selection.set_selected(0);
+        match target {
+            NavigationTarget::Notebook { source } => {
+                self.state.borrow_mut().active_source = Some(source);
+                let section_id = self
+                    .state
+                    .borrow()
+                    .sources
+                    .get(source)
+                    .and_then(|source| first_section(&source.loaded.notebook.entries))
+                    .map(|section| section.id.clone());
+                if let Some(section_id) = section_id {
+                    self.notebook_tree.select_section(source, &section_id);
+                }
+            }
+            NavigationTarget::Group { source } => {
+                self.state.borrow_mut().active_source = Some(source);
+            }
+            NavigationTarget::Section { source, section_id } => {
+                self.activate_section(source, &section_id);
+            }
         }
     }
 
-    fn activate_section(&self, position: usize) {
-        let row = {
-            let state = self.state.borrow();
-            state.sections.get(position).cloned()
-        };
-        let Some(row) = row else {
-            return;
-        };
+    fn activate_section(&self, source_index: usize, section_id: &SectionId) {
         let pages = {
             let state = self.state.borrow();
             state
                 .sources
-                .get(row.source)
-                .and_then(|source| find_section(&source.loaded.notebook.entries, &row.section_id))
+                .get(source_index)
+                .and_then(|source| find_section(&source.loaded.notebook.entries, section_id))
                 .map(|section| section.pages.clone())
                 .unwrap_or_default()
         };
         let mut state = self.state.borrow_mut();
+        state.active_source = Some(source_index);
         state.pages = pages
             .iter()
             .map(|page| PageRow {
-                source: row.source,
-                section_id: row.section_id.clone(),
+                source: source_index,
+                section_id: section_id.clone(),
                 page_id: page.id.clone(),
             })
             .collect();
@@ -665,6 +641,8 @@ impl Viewer {
         let display_title = display_title(&page);
         let title = gtk_text(&display_title);
         self.page_title.set_label(&title);
+        let date = display_timestamp(&page.created_at);
+        self.page_date.set_label(&date);
         let display_context = format!("{notebook_name}  /  {section_name}");
         let context = gtk_text(&display_context);
         self.page_context.set_label(&context);
@@ -739,21 +717,14 @@ impl Viewer {
             );
             return;
         };
-        self.notebook_selection
-            .set_selected(u32::try_from(source_position).unwrap_or(NO_SELECTION));
-        self.activate_source(source_position);
-        let section_position = self
-            .state
-            .borrow()
-            .sections
-            .iter()
-            .position(|row| row.section_id == hit.section_id);
-        let Some(section_position) = section_position else {
+        if self
+            .notebook_tree
+            .select_section(source_position, &hit.section_id)
+            .is_none()
+        {
             return;
-        };
-        self.section_selection
-            .set_selected(u32::try_from(section_position).unwrap_or(NO_SELECTION));
-        self.activate_section(section_position);
+        }
+        self.activate_section(source_position, &hit.section_id);
         let page_position = self
             .state
             .borrow()
@@ -769,30 +740,37 @@ impl Viewer {
     }
 
     fn close_active_source(&self) {
-        let selected = self.notebook_selection.selected();
-        if selected == NO_SELECTION {
-            return;
-        }
-        let position = selected as usize;
         let removed = {
             let mut state = self.state.borrow_mut();
+            let Some(position) = state.active_source else {
+                return;
+            };
             if position >= state.sources.len() {
                 return;
             }
             state.active_source = None;
-            state.sections.clear();
             state.pages.clear();
-            state.sources.remove(position)
+            (position, state.sources.remove(position))
         };
         let _ignored = self
             .commands
-            .send(Command::Remove(removed.loaded.notebook.source_id.clone()));
+            .send(Command::Remove(removed.1.loaded.notebook.source_id.clone()));
         self.refresh_notebooks();
         self.persist_workspace();
-        if self.notebook_model.n_items() > 0 {
-            let new_position = position.min(self.notebook_model.n_items() as usize - 1);
-            self.notebook_selection
-                .set_selected(u32::try_from(new_position).unwrap_or(0));
+        let remaining = self.state.borrow().sources.len();
+        if remaining > 0 {
+            let new_position = removed.0.min(remaining - 1);
+            self.notebook_tree.select_notebook(new_position);
+            let first_section = self
+                .state
+                .borrow()
+                .sources
+                .get(new_position)
+                .and_then(|source| first_section(&source.loaded.notebook.entries))
+                .map(|section| section.id.clone());
+            if let Some(section_id) = first_section {
+                self.notebook_tree.select_section(new_position, &section_id);
+            }
         } else {
             self.status.set_label("No notebooks open");
         }
@@ -1028,6 +1006,55 @@ fn bind_string(item: &glib::Object, multiline: bool) {
     }
 }
 
+fn collapsible_navigation_band(title: &str, list: &gtk::ListView, expanded_width: i32) -> gtk::Box {
+    let heading = gtk::Label::builder()
+        .label(title)
+        .xalign(0.0)
+        .hexpand(true)
+        .build();
+    heading.add_css_class("nav-heading");
+    let toggle = icon_button(
+        "onenote-panel-collapse-symbolic",
+        &format!("Collapse {}", title.to_lowercase()),
+    );
+    toggle.add_css_class("flat");
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    header.set_margin_start(12);
+    header.set_margin_end(6);
+    header.set_margin_top(6);
+    header.set_margin_bottom(4);
+    header.append(&heading);
+    header.append(&toggle);
+
+    let scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .child(list)
+        .vexpand(true)
+        .build();
+    let band = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    band.set_width_request(expanded_width);
+    band.add_css_class("navigation-band");
+    band.append(&header);
+    band.append(&scroll);
+
+    let band_for_toggle = band.clone();
+    toggle.connect_clicked(move |button| {
+        let collapse = scroll.is_visible();
+        scroll.set_visible(!collapse);
+        heading.set_visible(!collapse);
+        band_for_toggle.set_width_request(if collapse { 42 } else { expanded_width });
+        if collapse {
+            button.set_icon_name("onenote-panel-expand-symbolic");
+            button.set_tooltip_text(Some("Expand navigation"));
+        } else {
+            button.set_icon_name("onenote-panel-collapse-symbolic");
+            button.set_tooltip_text(Some("Collapse navigation"));
+        }
+    });
+    band
+}
+
 fn navigation_band(title: &str, list: &gtk::ListView, width: i32) -> gtk::Box {
     let heading = gtk::Label::builder().label(title).xalign(0.0).build();
     heading.add_css_class("nav-heading");
@@ -1091,33 +1118,24 @@ fn display_title(page: &Page) -> String {
     }
 }
 
-fn flatten_sections(entries: &[NotebookEntry]) -> Vec<(String, &Section)> {
-    fn append<'a>(
-        entries: &'a [NotebookEntry],
-        groups: &mut Vec<&'a str>,
-        output: &mut Vec<(String, &'a Section)>,
-    ) {
-        for entry in entries {
-            match entry {
-                NotebookEntry::Section(section) => {
-                    let label = if groups.is_empty() {
-                        section.name.clone()
-                    } else {
-                        format!("{}  /  {}", groups.join(" / "), section.name)
-                    };
-                    output.push((label, section));
-                }
-                NotebookEntry::Group(group) => {
-                    groups.push(&group.name);
-                    append(&group.entries, groups, output);
-                    groups.pop();
-                }
-            }
-        }
-    }
-    let mut output = Vec::new();
-    append(entries, &mut Vec::new(), &mut output);
-    output
+fn display_timestamp(value: &str) -> String {
+    let mut parts = value.split_whitespace();
+    let Some(date) = parts.next() else {
+        return String::new();
+    };
+    let Some(time) = parts.next() else {
+        return date.to_owned();
+    };
+    let time = time.split('.').next().unwrap_or(time);
+    let time = time.get(..5).unwrap_or(time);
+    format!("{date}  {time}")
+}
+
+fn first_section(entries: &[NotebookEntry]) -> Option<&Section> {
+    entries.iter().find_map(|entry| match entry {
+        NotebookEntry::Section(section) => Some(section),
+        NotebookEntry::Group(group) => first_section(&group.entries),
+    })
 }
 
 fn find_section<'a>(entries: &'a [NotebookEntry], id: &SectionId) -> Option<&'a Section> {
@@ -1135,7 +1153,9 @@ fn find_section<'a>(entries: &'a [NotebookEntry], id: &SectionId) -> Option<&'a 
     None
 }
 
-fn install_css() {
+fn install_resources() {
+    let display = gdk_display();
+    gtk::IconTheme::for_display(&display).add_resource_path("/io/github/emsi/OneNoteViewer/icons");
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         "
@@ -1148,18 +1168,19 @@ fn install_css() {
         listview { background: transparent; }
         listview row { border-radius: 4px; margin: 1px 6px; }
         listview row:selected { background: #e8def3; color: #2d183d; }
-        .notebook-list row:selected { border-left: 3px solid #6b3a96; }
-        .section-list row:selected { border-left: 3px solid #16836f; }
+        .notebook-row { font-weight: 600; }
+        .group-row { font-weight: 500; }
+        .notebook-tree row:selected { border-left: 3px solid #6b3a96; }
         .page-list row:selected { border-left: 3px solid #b35a24; }
         .result-row { line-height: 1.25; }
         .page-title { font-size: 20px; font-weight: 650; }
-        .page-context, .status { font-size: 12px; color: #666970; }
+        .page-date, .page-context, .status { font-size: 12px; color: #666970; }
         .empty-title { font-size: 20px; font-weight: 600; }
         .empty-icon { color: #777a80; }
         ",
     );
     gtk::style_context_add_provider_for_display(
-        &gdk_display(),
+        &display,
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
@@ -1174,7 +1195,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn section_flattening_preserves_group_path() {
+    fn first_section_follows_group_order() {
         let section = Section {
             id: SectionId::new("section"),
             name: "Details".to_owned(),
@@ -1188,14 +1209,23 @@ mod tests {
             entries: vec![NotebookEntry::Section(section)],
         })];
 
-        let flattened = flatten_sections(&entries);
+        let first = first_section(&entries).expect("nested section");
 
-        assert_eq!(flattened[0].0, "Project  /  Details");
+        assert_eq!(first.name, "Details");
     }
 
     #[test]
     fn gtk_text_replaces_interior_nuls() {
         assert_eq!(gtk_text("One\0Note"), "One�Note");
         assert_eq!(gtk_text("OneNote"), "OneNote");
+    }
+
+    #[test]
+    fn page_timestamp_keeps_source_date_and_minute() {
+        assert_eq!(
+            display_timestamp("2015-06-12 11:06:27.0 +00"),
+            "2015-06-12  11:06"
+        );
+        assert_eq!(display_timestamp("unknown"), "unknown");
     }
 }

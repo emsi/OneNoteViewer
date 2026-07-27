@@ -17,6 +17,9 @@ onenote-render-gtk.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
+[build-dependencies]
+glib-build-tools.workspace = true
+
 [dev-dependencies]
 tempfile.workspace = true
 

@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/emsi/OneNoteViewer">
+    <file>LUCIDE-LICENSE</file>
+  </gresource>
+  <gresource prefix="/io/github/emsi/OneNoteViewer/icons/scalable/actions">
+    <file alias="onenote-close-symbolic.svg">icons/scalable/actions/onenote-close-symbolic.svg</file>
+    <file alias="onenote-folder-symbolic.svg">icons/scalable/actions/onenote-folder-symbolic.svg</file>
+    <file alias="onenote-import-package-symbolic.svg">icons/scalable/actions/onenote-import-package-symbolic.svg</file>
+    <file alias="onenote-notebook-symbolic.svg">icons/scalable/actions/onenote-notebook-symbolic.svg</file>
+    <file alias="onenote-open-file-symbolic.svg">icons/scalable/actions/onenote-open-file-symbolic.svg</file>
+    <file alias="onenote-open-folder-symbolic.svg">icons/scalable/actions/onenote-open-folder-symbolic.svg</file>
+    <file alias="onenote-panel-collapse-symbolic.svg">icons/scalable/actions/onenote-panel-collapse-symbolic.svg</file>
+    <file alias="onenote-panel-expand-symbolic.svg">icons/scalable/actions/onenote-panel-expand-symbolic.svg</file>
+    <file alias="onenote-zoom-in-symbolic.svg">icons/scalable/actions/onenote-zoom-in-symbolic.svg</file>
+    <file alias="onenote-zoom-out-symbolic.svg">icons/scalable/actions/onenote-zoom-out-symbolic.svg</file>
+    <file alias="onenote-zoom-reset-symbolic.svg">icons/scalable/actions/onenote-zoom-reset-symbolic.svg</file>
+  </gresource>
+</gresources>
