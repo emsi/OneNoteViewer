@@ -351,6 +351,11 @@ Lists retain format strings, bullet/number font, restart value, indentation,
 spacing, style, and child level. Nested outline structure and list structure
 are related but not interchangeable.
 
+The domain model retains malformed or unknown list-format characters for
+diagnostics. UI adapters replace interior NUL characters with U+FFFD before
+passing strings to C-based text APIs; this display normalization must not
+rewrite the retained source value.
+
 Note tags can appear on rich text, table/cell content, images, attachments, and
 other objects according to their property sets. Preserve:
 

@@ -19,7 +19,7 @@ fn main() -> Result<()> {
         .pages()
         .max_by_key(|page| page.objects.len())
         .context("the source does not contain a page")?;
-    let title = format!("{} - {}", page.title, loaded.notebook.name);
+    let title = format!("{} - {}", page.title, loaded.notebook.name).replace('\0', "\u{fffd}");
     let scene = Arc::new(
         SceneBuilder::default()
             .build(page, &AtomicBool::new(false))

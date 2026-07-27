@@ -274,7 +274,8 @@ impl PageCanvas {
         color: gdk::RGBA,
     ) {
         let layout = gtk::pango::Layout::new(&self.pango_context());
-        layout.set_text(label);
+        let label = text::glib_text(label);
+        layout.set_text(&label);
         layout.set_width(to_pango_units((bounds.width - 16.0).max(1.0)));
         layout.set_ellipsize(gtk::pango::EllipsizeMode::End);
         snapshot.save();

@@ -7,6 +7,7 @@ use gtk::prelude::*;
 use onenote_core::{LoadedNotebook, NotebookEntry, Page, PageId, Rect, Section, SectionId};
 use onenote_index::SearchHit;
 use onenote_render_gtk::PageView;
+use std::borrow::Cow;
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -561,7 +562,7 @@ impl Viewer {
         clear_model(&self.notebook_model);
         let state = self.state.borrow();
         for source in &state.sources {
-            self.notebook_model.append(&source.loaded.notebook.name);
+            append_model(&self.notebook_model, &source.loaded.notebook.name);
         }
         if state.sources.is_empty() {
             self.canvas_stack.set_visible_child_name("empty");
@@ -597,7 +598,7 @@ impl Viewer {
         clear_model(&self.section_model);
         clear_model(&self.page_model);
         for (label, _) in labels {
-            self.section_model.append(&label);
+            append_model(&self.section_model, &label);
         }
         if self.section_model.n_items() > 0 {
             self.section_selection.set_selected(0);
@@ -634,8 +635,10 @@ impl Viewer {
         clear_model(&self.page_model);
         for page in pages {
             let indent = "  ".repeat(usize::try_from(page.level.max(0)).unwrap_or(0).min(8));
-            self.page_model
-                .append(&format!("{indent}{}", display_title(&page)));
+            append_model(
+                &self.page_model,
+                &format!("{indent}{}", display_title(&page)),
+            );
         }
         if self.page_model.n_items() > 0 {
             self.page_selection.set_selected(0);
@@ -659,9 +662,12 @@ impl Viewer {
         let Some((page, loaded, notebook_name, section_name)) = value else {
             return;
         };
-        self.page_title.set_label(&display_title(&page));
-        self.page_context
-            .set_label(&format!("{notebook_name}  /  {section_name}"));
+        let display_title = display_title(&page);
+        let title = gtk_text(&display_title);
+        self.page_title.set_label(&title);
+        let display_context = format!("{notebook_name}  /  {section_name}");
+        let context = gtk_text(&display_context);
+        self.page_context.set_label(&context);
         self.page_view
             .set_resources(Some(Arc::new(loaded.resources.clone())));
         self.page_view.set_scene(None);
@@ -694,10 +700,13 @@ impl Viewer {
         clear_model(&self.result_model);
         for hit in &hits {
             let snippet = hit.snippet.text.replace('\n', " ");
-            self.result_model.append(&format!(
-                "{}\n{}  /  {}    {}",
-                hit.page_title, hit.notebook_name, hit.section_name, snippet
-            ));
+            append_model(
+                &self.result_model,
+                &format!(
+                    "{}\n{}  /  {}    {}",
+                    hit.page_title, hit.notebook_name, hit.section_name, snippet
+                ),
+            );
         }
         let count = hits.len();
         self.state.borrow_mut().search_hits = hits;
@@ -929,17 +938,20 @@ impl Viewer {
     }
 
     fn set_busy(&self, message: &str) {
-        self.status.set_label(message);
+        let message = gtk_text(message);
+        self.status.set_label(&message);
         self.spinner.start();
     }
 
     fn show_error(&self, title: &str, detail: &str) {
         self.spinner.stop();
-        self.status.set_label(title);
+        let title = gtk_text(title);
+        let detail = gtk_text(detail);
+        self.status.set_label(&title);
         gtk::AlertDialog::builder()
             .modal(true)
-            .message(title)
-            .detail(detail)
+            .message(title.as_ref())
+            .detail(detail.as_ref())
             .build()
             .show(Some(&self.window));
     }
@@ -1058,6 +1070,19 @@ fn clear_model(model: &gtk::StringList) {
     }
 }
 
+fn append_model(model: &gtk::StringList, value: &str) {
+    let value = gtk_text(value);
+    model.append(&value);
+}
+
+fn gtk_text(value: &str) -> Cow<'_, str> {
+    if value.contains('\0') {
+        Cow::Owned(value.replace('\0', "\u{fffd}"))
+    } else {
+        Cow::Borrowed(value)
+    }
+}
+
 fn display_title(page: &Page) -> String {
     if page.title.trim().is_empty() {
         "Untitled page".to_owned()
@@ -1166,5 +1191,11 @@ mod tests {
         let flattened = flatten_sections(&entries);
 
         assert_eq!(flattened[0].0, "Project  /  Details");
+    }
+
+    #[test]
+    fn gtk_text_replaces_interior_nuls() {
+        assert_eq!(gtk_text("One\0Note"), "One�Note");
+        assert_eq!(gtk_text("OneNote"), "OneNote");
     }
 }
