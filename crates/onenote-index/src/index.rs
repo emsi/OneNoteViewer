@@ -655,6 +655,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn duplicate_page_ids_are_indexed_once() {
+        let mut index = SearchIndex::open_in_memory().expect("index");
+        let mut notebook = notebook("source", "fingerprint", "Notebook");
+        let mut duplicate = match &notebook.entries[0] {
+            NotebookEntry::Section(section) => section.pages[0].clone(),
+            NotebookEntry::Group(_) => unreachable!("test fixture starts with a section"),
+        };
+        duplicate.title = "Newer duplicate page".to_owned();
+        duplicate.updated_at = "2027-01-01 00:00:00.0 +00:00:00".to_owned();
+        notebook.entries.push(NotebookEntry::Section(Section {
+            id: SectionId::new("duplicate-section"),
+            name: "Duplicate section snapshot".to_owned(),
+            color: None,
+            pages: vec![duplicate],
+            diagnostics: Vec::new(),
+        }));
+
+        index
+            .replace_source(&notebook, &AtomicBool::new(false), |_| {})
+            .expect("duplicate page should not abort indexing");
+
+        assert_eq!(index.sources().expect("sources")[0].page_count, 1);
+        assert_eq!(
+            index
+                .search(&SearchQuery::simple("searchable"), &AtomicBool::new(false))
+                .expect("search")
+                .len(),
+            1
+        );
+        let newer = index
+            .search(
+                &SearchQuery::simple("\"newer duplicate\""),
+                &AtomicBool::new(false),
+            )
+            .expect("newer duplicate search");
+        assert_eq!(newer.len(), 1);
+        assert_eq!(newer[0].section_id.as_str(), "duplicate-section");
+    }
+
     fn notebook(source: &str, fingerprint: &str, notebook_name: &str) -> Notebook {
         let text = TextBlock {
             text: "A searchable phrase in freeform content".to_owned(),

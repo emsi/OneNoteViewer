@@ -2,6 +2,7 @@ use onenote_core::{
     ElementContent, Image, Ink, Notebook, NotebookEntry, ObjectKind, Outline, OutlineElement, Page,
     PageObject, Section, Table,
 };
+use std::collections::HashMap;
 
 pub(crate) struct PageDocument<'a> {
     pub(crate) notebook_name: &'a str,
@@ -26,6 +27,7 @@ pub(crate) fn documents(notebook: &Notebook) -> Vec<PageDocument<'_>> {
         notebook: &'a Notebook,
         entries: &'a [NotebookEntry],
         groups: &mut Vec<&'a str>,
+        seen_pages: &mut HashMap<&'a str, usize>,
         output: &mut Vec<PageDocument<'a>>,
     ) {
         for entry in entries {
@@ -37,12 +39,22 @@ pub(crate) fn documents(notebook: &Notebook) -> Vec<PageDocument<'_>> {
                     path_parts.push(section.name.as_str());
                     let path = path_parts.join(" / ");
                     for page in &section.pages {
-                        output.push(project_page(&notebook.name, section, path.clone(), page));
+                        if let Some(index) = seen_pages.get(page.id.as_str()).copied() {
+                            if timestamp_sort_key(&page.updated_at)
+                                > timestamp_sort_key(&output[index].page.updated_at)
+                            {
+                                output[index] =
+                                    project_page(&notebook.name, section, path.clone(), page);
+                            }
+                        } else {
+                            seen_pages.insert(page.id.as_str(), output.len());
+                            output.push(project_page(&notebook.name, section, path.clone(), page));
+                        }
                     }
                 }
                 NotebookEntry::Group(group) => {
                     groups.push(&group.name);
-                    visit(notebook, &group.entries, groups, output);
+                    visit(notebook, &group.entries, groups, seen_pages, output);
                     groups.pop();
                 }
             }
@@ -50,8 +62,26 @@ pub(crate) fn documents(notebook: &Notebook) -> Vec<PageDocument<'_>> {
     }
 
     let mut output = Vec::new();
-    visit(notebook, &notebook.entries, &mut Vec::new(), &mut output);
+    visit(
+        notebook,
+        &notebook.entries,
+        &mut Vec::new(),
+        &mut HashMap::new(),
+        &mut output,
+    );
     output
+}
+
+fn timestamp_sort_key(value: &str) -> [u32; 7] {
+    let mut key = [0; 7];
+    for (slot, component) in key.iter_mut().zip(
+        value
+            .split(|character: char| !character.is_ascii_digit())
+            .filter(|component| !component.is_empty()),
+    ) {
+        *slot = component.parse().unwrap_or_default();
+    }
+    key
 }
 
 fn project_page<'a>(
@@ -165,5 +195,18 @@ fn push(output: &mut Vec<String>, text: &str) {
     let text = text.trim();
     if !text.is_empty() {
         output.push(text.to_owned());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::timestamp_sort_key;
+
+    #[test]
+    fn timestamp_sort_key_compares_unpadded_time_components() {
+        assert!(
+            timestamp_sort_key("2026-01-02 3:04:05.0 +00")
+                < timestamp_sort_key("2026-01-02 20:04:05.0 +00")
+        );
     }
 }
