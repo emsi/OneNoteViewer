@@ -352,7 +352,7 @@ impl Viewer {
             .build();
         menu.add_css_class("icon-button");
         menu.add_css_class("main-menu");
-        menu.set_size_request(36, 36);
+        menu.set_width_request(36);
         menu.set_margin_end(10);
         menu.set_tooltip_text(Some("Main menu"));
         header_title.append(&menu);
@@ -1925,8 +1925,6 @@ fn theme_css(theme: EffectiveTheme) -> String {
         .icon-button:hover {{ background: @control_hover; }}
         .main-menu {{
             min-width: 36px;
-            min-height: 36px;
-            padding: 6px;
         }}
         .brand, .brand:backdrop {{
             font-size: 16px;
