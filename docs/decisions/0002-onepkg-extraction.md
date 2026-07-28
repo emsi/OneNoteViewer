@@ -104,9 +104,11 @@ special files, checks canonical containment and native file counts, rejects an
 existing destination, and atomically publishes the durable tree. It never
 loads archive contents through the parser package API.
 
-The current viewer invokes that API off the GTK thread and opens the resulting
-directory through normal discovery. UI progress/cancellation and the resource
-checks listed immediately above are not implemented. The exact completion
+The current viewer invokes that API off the GTK thread, reports each durable
+pipeline phase in a persistent activity surface, supports cancellation through
+the core process-reaping path, and opens the resulting directory through
+normal discovery. The resource checks listed immediately above and
+byte-accurate extractor progress are not implemented. The exact completion
 work is tracked in [remaining work](../REMAINING-WORK.md).
 
 ## Consequences

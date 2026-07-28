@@ -133,13 +133,15 @@ The following are complete enough to build on, but remain pre-1.0:
 - source-native semantic projection with typed identities, hierarchy,
   geometry, diagnostics, lazy bounded resources, and source fingerprints;
 - validated on-disk `.onepkg` extraction with private staging and atomic
-  publication through an external `7zz`/`7z`;
+  publication through an external `7zz`/`7z`, with UI phase reporting and
+  cancellation;
 - UI-neutral retained scenes with placeholders, culling, hit regions, and
   semantics;
 - embeddable GTK `PageView` with Pango/GSK/Cairo rendering, pan/zoom, and
   bounded asynchronous raster decode;
 - transactional multi-source FTS5 indexing and structured Rust/JSONL queries;
 - native GTK multi-notebook shell with virtualized navigation, persistence,
+  configurable XDG Documents library discovery,
   background work, global search, and result-to-canvas navigation;
 - private-corpus extraction, parse, scene, index/search, standalone renderer,
   full-viewer, and two-source Xvfb evidence;

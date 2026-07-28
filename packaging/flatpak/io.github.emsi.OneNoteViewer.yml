@@ -8,6 +8,7 @@ command: onenote-viewer
 
 finish-args:
   - --device=dri
+  - --filesystem=xdg-documents/OneNoteViewer:create
   - --share=ipc
   - --socket=fallback-x11
   - --socket=wayland

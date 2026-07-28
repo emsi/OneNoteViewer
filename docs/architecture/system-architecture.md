@@ -39,12 +39,14 @@ Index/query API     UI-neutral page scene
 
 ## Input Lifecycle
 
-1. The user chooses a notebook directory, `.onetoc2`, or `.one` through the
-   desktop file chooser. Discovery canonicalizes the chosen root and records a
-   source identity based on canonical path, file identities, sizes, and
-   modification timestamps. A directory with a usable root `.onetoc2` follows
-   the manifest hierarchy. A manifest-free backup directory follows the
-   planned reusable
+1. At startup, the viewer scans the configurable default notebooks location
+   under XDG Documents and opens every notebook folder it finds. The user can
+   also choose an arbitrary notebook directory, `.onetoc2`, or `.one` through
+   the desktop file chooser without moving it. Discovery canonicalizes each
+   chosen root and records a source identity based on canonical path, file
+   identities, sizes, and modification timestamps. A directory with a usable
+   root `.onetoc2` follows the manifest hierarchy. A manifest-free backup
+   directory follows the planned reusable
    [backup-folder loader](../plans/backup-folder-loader.md), which reconstructs
    one synthetic notebook and retains snapshot-selection provenance.
 2. Selecting `.onepkg` starts the separate workflow in ADR 0002: an external
@@ -53,8 +55,9 @@ Index/query API     UI-neutral page scene
    step 1. Package entries never become an in-memory notebook representation.
 3. Discovery, parsing, and indexing run sequentially on one viewer-owned
    worker; scene construction and queries run in short independent jobs. GTK
-   objects remain on the main thread. Bounded scheduling and cancellation are
-   still required before release.
+   objects remain on the main thread. Package extraction has phase reporting
+   and process cancellation; bounded scheduling and cancellation for the
+   remaining long-running operations are still required before release.
 4. The adapter converts parser objects to an immutable domain model and emits
    structured warnings for skipped or degraded content.
 5. The indexer updates a transactionally isolated index generation after the

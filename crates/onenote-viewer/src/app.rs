@@ -1,17 +1,21 @@
 use crate::navigation::{NavigationTarget, NotebookTree};
+use crate::settings::{self, AppSettings};
 use crate::worker::{self, Command, Event};
 use crate::workspace::{self, WorkspaceConfig};
 use anyhow::Result;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use onenote_core::{LoadedNotebook, NotebookEntry, Page, PageId, Rect, Section, SectionId};
+use onenote_core::{
+    ExtractionPhase, LoadedNotebook, NotebookEntry, Page, PageId, Rect, Section, SectionId,
+};
 use onenote_index::SearchHit;
 use onenote_render_gtk::PageView;
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::time::Duration;
 
@@ -21,7 +25,7 @@ const PAGE_NAVIGATION_WIDTH: i32 = 280;
 const COLLAPSED_NAVIGATION_WIDTH: i32 = 42;
 const NAVIGATION_SEPARATOR_WIDTH: i32 = 1;
 const SEARCH_RESULTS_WIDTH: i32 = 520;
-const SYMBOLIC_ICON_NAMES: [&str; 13] = [
+const SYMBOLIC_ICON_NAMES: [&str; 14] = [
     "onenote-chevron-down-symbolic",
     "onenote-chevron-right-symbolic",
     "onenote-close-symbolic",
@@ -32,6 +36,7 @@ const SYMBOLIC_ICON_NAMES: [&str; 13] = [
     "onenote-open-folder-symbolic",
     "onenote-panel-collapse-symbolic",
     "onenote-panel-expand-symbolic",
+    "onenote-settings-symbolic",
     "onenote-zoom-in-symbolic",
     "onenote-zoom-out-symbolic",
     "onenote-zoom-reset-symbolic",
@@ -42,11 +47,17 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
     let (workspace_path, index_path) = workspace::paths()?;
     workspace::ensure_index_parent(&index_path)?;
     let persisted = workspace::load(&workspace_path).unwrap_or_default();
-    let initial_sources = if requested_sources.is_empty() {
+    let settings_path = settings::path();
+    let persisted_settings = settings::load(&settings_path).unwrap_or_default();
+    let notebooks_location = persisted_settings.notebooks_location.clone();
+    let initial_sources: Vec<_> = if requested_sources.is_empty() {
         persisted.sources
     } else {
         requested_sources
-    };
+    }
+    .into_iter()
+    .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
+    .collect();
 
     let application = gtk::Application::builder()
         .application_id("io.github.emsi.OneNoteViewer")
@@ -60,7 +71,14 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
             return;
         }
         install_resources();
-        let instance = Viewer::new(application, workspace_path.clone(), index_path.clone());
+        let instance = Viewer::new(
+            application,
+            workspace_path.clone(),
+            index_path.clone(),
+            settings_path.clone(),
+            persisted_settings.clone(),
+        );
+        instance.open_notebooks_location();
         for source in &initial_sources {
             instance.discover(source.clone());
         }
@@ -166,14 +184,14 @@ fn native_pixel_alpha(pixel: &[u8]) -> u8 {
 
 fn transparent_probe(name: &str) -> Option<(usize, usize)> {
     match name {
-        "onenote-folder-symbolic" => Some((12, 12)),
+        "onenote-folder-symbolic" | "onenote-settings-symbolic" | "onenote-zoom-reset-symbolic" => {
+            Some((12, 12))
+        }
         "onenote-import-package-symbolic" => Some((12, 8)),
-        "onenote-notebook-symbolic" => Some((10, 12)),
-        "onenote-open-file-symbolic" => Some((10, 12)),
+        "onenote-notebook-symbolic" | "onenote-open-file-symbolic" => Some((10, 12)),
         "onenote-open-folder-symbolic" => Some((12, 15)),
         "onenote-panel-collapse-symbolic" | "onenote-panel-expand-symbolic" => Some((5, 5)),
         "onenote-zoom-in-symbolic" | "onenote-zoom-out-symbolic" => Some((7, 7)),
-        "onenote-zoom-reset-symbolic" => Some((12, 12)),
         _ => None,
     }
 }
@@ -243,9 +261,18 @@ struct Viewer {
     status: gtk::Label,
     spinner: gtk::Spinner,
     zoom_label: gtk::Label,
+    import_activity: gtk::Revealer,
+    import_activity_title: gtk::Label,
+    import_activity_phase: gtk::Label,
+    import_progress: gtk::ProgressBar,
+    import_cancel_button: gtk::Button,
+    import_package_button: gtk::Button,
+    import_cancel: RefCell<Option<Arc<AtomicBool>>>,
     state: RefCell<State>,
     workspace_path: PathBuf,
     index_path: PathBuf,
+    settings_path: PathBuf,
+    settings: RefCell<AppSettings>,
     commands: mpsc::Sender<Command>,
     events: mpsc::Sender<Event>,
     receiver: RefCell<mpsc::Receiver<Event>>,
@@ -260,6 +287,8 @@ impl Viewer {
         application: &gtk::Application,
         workspace_path: PathBuf,
         index_path: PathBuf,
+        settings_path: PathBuf,
+        settings: AppSettings,
     ) -> Rc<Self> {
         let notebook_tree = NotebookTree::new();
         let page_model = gtk::StringList::new(&[]);
@@ -277,6 +306,7 @@ impl Viewer {
         let open_folder = icon_button("onenote-open-folder-symbolic", "Open notebook folder");
         let import_package =
             icon_button("onenote-import-package-symbolic", "Import OneNote package");
+        let open_settings = icon_button("onenote-settings-symbolic", "Settings");
         let close_source = icon_button("onenote-close-symbolic", "Close selected notebook");
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Background activity"));
@@ -292,6 +322,7 @@ impl Viewer {
         header.pack_start(&open_file);
         header.pack_start(&open_folder);
         header.pack_start(&import_package);
+        header.pack_end(&open_settings);
         header.set_title_widget(Some(&header_title));
 
         let notebooks = CollapsibleNavigationBand::new(
@@ -395,6 +426,41 @@ impl Viewer {
         footer.append(&zoom_in);
         footer.append(&zoom_reset);
 
+        let import_activity_title = gtk::Label::builder()
+            .xalign(0.0)
+            .hexpand(true)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        import_activity_title.add_css_class("activity-title");
+        let import_activity_phase = gtk::Label::builder()
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        import_activity_phase.add_css_class("activity-phase");
+        let activity_labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        activity_labels.set_hexpand(true);
+        activity_labels.append(&import_activity_title);
+        activity_labels.append(&import_activity_phase);
+        let import_progress = gtk::ProgressBar::builder()
+            .width_request(240)
+            .valign(gtk::Align::Center)
+            .build();
+        import_progress.set_pulse_step(0.025);
+        let import_cancel_button = gtk::Button::with_label("Cancel");
+        let activity_content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        activity_content.set_margin_start(16);
+        activity_content.set_margin_end(16);
+        activity_content.set_margin_top(10);
+        activity_content.set_margin_bottom(10);
+        activity_content.append(&activity_labels);
+        activity_content.append(&import_progress);
+        activity_content.append(&import_cancel_button);
+        activity_content.add_css_class("import-activity");
+        let import_activity = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideDown)
+            .child(&activity_content)
+            .build();
+
         let content_paned = gtk::Paned::builder()
             .orientation(gtk::Orientation::Horizontal)
             .start_child(&navigation_stack)
@@ -424,6 +490,7 @@ impl Viewer {
         );
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.append(&import_activity);
         root.append(&content_paned);
         root.append(&separator_horizontal());
         root.append(&footer);
@@ -459,16 +526,32 @@ impl Viewer {
             status,
             spinner,
             zoom_label,
+            import_activity,
+            import_activity_title,
+            import_activity_phase,
+            import_progress,
+            import_cancel_button,
+            import_package_button: import_package.clone(),
+            import_cancel: RefCell::default(),
             state: RefCell::default(),
             workspace_path,
             index_path,
+            settings_path,
+            settings: RefCell::new(settings),
             commands,
             events: event_sender,
             receiver: RefCell::new(event_receiver),
             search_timer: RefCell::default(),
         });
         viewer.connect_navigation();
-        viewer.connect_header(&open_file, &open_folder, &import_package, &close_source);
+        viewer.connect_header(
+            &open_file,
+            &open_folder,
+            &import_package,
+            &open_settings,
+            &close_source,
+        );
+        viewer.connect_import_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
         viewer.poll_events();
         viewer
@@ -529,6 +612,7 @@ impl Viewer {
         open_file: &gtk::Button,
         open_folder: &gtk::Button,
         import_package: &gtk::Button,
+        open_settings: &gtk::Button,
         close_source: &gtk::Button,
     ) {
         let weak = Rc::downgrade(self);
@@ -550,10 +634,33 @@ impl Viewer {
             }
         });
         let weak = Rc::downgrade(self);
+        open_settings.connect_clicked(move |_| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.show_settings();
+            }
+        });
+        let weak = Rc::downgrade(self);
         close_source.connect_clicked(move |_| {
             if let Some(viewer) = weak.upgrade() {
                 viewer.close_active_source();
             }
+        });
+    }
+
+    fn connect_import_activity(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        self.import_cancel_button.connect_clicked(move |button| {
+            let Some(viewer) = weak.upgrade() else {
+                return;
+            };
+            let Some(cancel) = viewer.import_cancel.borrow().as_ref().cloned() else {
+                return;
+            };
+            cancel.store(true, Ordering::Relaxed);
+            button.set_sensitive(false);
+            viewer
+                .import_activity_phase
+                .set_label("Cancelling and cleaning temporary files...");
         });
     }
 
@@ -593,6 +700,9 @@ impl Viewer {
             for event in events {
                 viewer.handle_event(event);
             }
+            if viewer.import_activity.reveals_child() && viewer.import_cancel.borrow().is_some() {
+                viewer.import_progress.pulse();
+            }
             glib::ControlFlow::Continue
         });
     }
@@ -606,6 +716,29 @@ impl Viewer {
                     self.set_busy(&format!("Opening {}", requested.display()));
                 }
                 Err(error) => self.show_error("Could not open source", &error),
+            },
+            Event::LibraryDiscovered { location, result } => match result {
+                Ok(paths) if paths.is_empty() => {
+                    self.spinner.stop();
+                    self.status.set_label(&format!(
+                        "Default notebooks location is empty: {}",
+                        location.display()
+                    ));
+                }
+                Ok(paths) => {
+                    let count = paths.len();
+                    for path in paths {
+                        let _ignored = self.commands.send(Command::Load(path));
+                    }
+                    self.set_busy(&format!(
+                        "Opening {count} notebook{} from the default location",
+                        if count == 1 { "" } else { "s" }
+                    ));
+                }
+                Err(error) => self.show_error(
+                    "Could not scan default notebooks location",
+                    &format!("{}\n\n{error}", location.display()),
+                ),
             },
             Event::Loaded { path, result } => match result {
                 Ok(loaded) => self.add_source(path, loaded),
@@ -651,16 +784,49 @@ impl Viewer {
             Event::Extracted { result } => match result {
                 Ok(destination) => {
                     self.status.set_label("Package imported; opening notebooks");
+                    self.import_cancel.borrow_mut().take();
+                    self.import_cancel_button.set_sensitive(false);
+                    self.import_progress.set_fraction(1.0);
+                    self.import_activity_phase
+                        .set_label("Imported successfully; opening notebooks...");
+                    self.hide_import_activity_after(Duration::from_millis(1_800));
                     self.discover(destination);
                 }
-                Err(error) => self.show_error("Package import failed", &error),
+                Err(error) => {
+                    self.finish_import_activity();
+                    if error == "OneNote package extraction was cancelled" {
+                        self.status.set_label("Package import cancelled");
+                    } else {
+                        self.show_error("Package import failed", &error);
+                    }
+                }
             },
+            Event::ExtractionProgress { phase } => {
+                self.import_activity_phase
+                    .set_label(extraction_phase_label(phase));
+            }
         }
     }
 
     fn discover(&self, path: PathBuf) {
         self.set_busy(&format!("Discovering {}", path.display()));
         let _ignored = self.commands.send(Command::Discover(path));
+    }
+
+    fn open_notebooks_location(&self) {
+        let location = self.settings.borrow().notebooks_location.clone();
+        if let Err(error) = settings::ensure_notebooks_location(&location) {
+            self.show_error(
+                "Could not prepare default notebooks location",
+                &error.to_string(),
+            );
+            return;
+        }
+        self.set_busy(&format!(
+            "Scanning default notebooks location {}",
+            location.display()
+        ));
+        let _ignored = self.commands.send(Command::DiscoverLibrary(location));
     }
 
     fn add_source(&self, path: PathBuf, loaded: Arc<LoadedNotebook>) {
@@ -920,6 +1086,7 @@ impl Viewer {
     }
 
     fn persist_workspace(&self) {
+        let notebooks_location = self.settings.borrow().notebooks_location.clone();
         let config = WorkspaceConfig {
             sources: self
                 .state
@@ -927,6 +1094,7 @@ impl Viewer {
                 .sources
                 .iter()
                 .map(|source| source.path.clone())
+                .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
                 .collect(),
         };
         if let Err(error) = workspace::save(&self.workspace_path, &config) {
@@ -993,9 +1161,22 @@ impl Viewer {
     }
 
     fn choose_package(self: &Rc<Self>) {
+        if self.import_cancel.borrow().is_some() {
+            self.status
+                .set_label("A OneNote package import is already running");
+            return;
+        }
+        let filter = gtk::FileFilter::new();
+        filter.set_name(Some("OneNote packages"));
+        filter.add_suffix("onepkg");
+        let filters = gio::ListStore::new::<gtk::FileFilter>();
+        filters.append(&filter);
         let dialog = gtk::FileDialog::builder()
             .title("Select OneNote package")
+            .accept_label("Select")
             .modal(true)
+            .filters(&filters)
+            .default_filter(&filter)
             .build();
         let weak = Rc::downgrade(self);
         dialog.open(
@@ -1008,7 +1189,7 @@ impl Viewer {
                 match result {
                     Ok(file) => {
                         if let Some(package) = file.path() {
-                            viewer.choose_package_destination(package);
+                            viewer.confirm_package_import(package);
                         }
                     }
                     Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
@@ -1018,38 +1199,109 @@ impl Viewer {
         );
     }
 
-    fn choose_package_destination(self: &Rc<Self>, package: PathBuf) {
-        let dialog = gtk::FileDialog::builder()
-            .title("Select package destination folder")
-            .modal(true)
-            .build();
-        let weak = Rc::downgrade(self);
-        dialog.select_folder(
-            Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |result| {
-                let Some(viewer) = weak.upgrade() else {
-                    return;
-                };
-                match result {
-                    Ok(file) => {
-                        let Some(parent) = file.path() else {
-                            return;
-                        };
-                        let name = package
-                            .file_stem()
-                            .and_then(|value| value.to_str())
-                            .unwrap_or("OneNote Notebook");
-                        let destination = parent.join(name);
-                        viewer.set_busy("Validating and extracting package on disk");
-                        worker::extract(package.clone(), destination, viewer.events.clone());
-                    }
-                    Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
-                    Err(error) => viewer
-                        .show_error("Could not select package destination", &error.to_string()),
+    fn confirm_package_import(self: &Rc<Self>, package: PathBuf) {
+        let default_parent = self.settings.borrow().notebooks_location.clone();
+        let weak_import = Rc::downgrade(self);
+        let weak_error = weak_import.clone();
+        crate::dialogs::present_package_import(
+            &self.window,
+            package,
+            default_parent,
+            move |package, destination| {
+                if let Some(viewer) = weak_import.upgrade() {
+                    viewer.start_package_import(package, destination);
+                }
+            },
+            move |title, detail| {
+                if let Some(viewer) = weak_error.upgrade() {
+                    viewer.show_error(title, detail);
                 }
             },
         );
+    }
+
+    fn show_settings(self: &Rc<Self>) {
+        let current = self.settings.borrow().notebooks_location.clone();
+        let default = settings::default_notebooks_location();
+        let weak_save = Rc::downgrade(self);
+        let weak_error = weak_save.clone();
+        crate::dialogs::present_settings(
+            &self.window,
+            current,
+            default,
+            move |location| {
+                weak_save
+                    .upgrade()
+                    .is_some_and(|viewer| viewer.set_notebooks_location(location))
+            },
+            move |title, detail| {
+                if let Some(viewer) = weak_error.upgrade() {
+                    viewer.show_error(title, detail);
+                }
+            },
+        );
+    }
+
+    fn set_notebooks_location(&self, location: &std::path::Path) -> bool {
+        if let Err(error) = settings::ensure_notebooks_location(location) {
+            self.show_error(
+                "Could not use default notebooks location",
+                &error.to_string(),
+            );
+            return false;
+        }
+        let updated = AppSettings {
+            notebooks_location: location.to_path_buf(),
+        };
+        if let Err(error) = settings::save(&self.settings_path, &updated) {
+            self.show_error("Could not save settings", &error.to_string());
+            return false;
+        }
+        *self.settings.borrow_mut() = updated;
+        self.persist_workspace();
+        self.open_notebooks_location();
+        true
+    }
+
+    fn start_package_import(&self, package: PathBuf, destination: PathBuf) {
+        if self.import_cancel.borrow().is_some() {
+            self.status
+                .set_label("A OneNote package import is already running");
+            return;
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        *self.import_cancel.borrow_mut() = Some(Arc::clone(&cancel));
+        self.import_package_button.set_sensitive(false);
+        self.import_cancel_button.set_sensitive(true);
+        self.import_progress.set_fraction(0.0);
+        self.import_activity_title.set_label(&format!(
+            "Importing {}",
+            package
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("OneNote package")
+        ));
+        self.import_activity_phase
+            .set_label("Preparing package import...");
+        self.import_activity.set_reveal_child(true);
+        self.set_busy("Importing OneNote package");
+        worker::extract(package, destination, cancel, self.events.clone());
+    }
+
+    fn finish_import_activity(&self) {
+        self.import_cancel.borrow_mut().take();
+        self.import_cancel_button.set_sensitive(false);
+        self.import_package_button.set_sensitive(true);
+        self.import_activity.set_reveal_child(false);
+    }
+
+    fn hide_import_activity_after(self: &Rc<Self>, delay: Duration) {
+        let weak = Rc::downgrade(self);
+        glib::timeout_add_local_once(delay, move || {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.finish_import_activity();
+            }
+        });
     }
 
     fn set_zoom(&self, zoom: f32) {
@@ -1139,6 +1391,16 @@ impl Viewer {
 
         dialog.set_child(Some(&content));
         dialog.present();
+    }
+}
+
+fn extraction_phase_label(phase: ExtractionPhase) -> &'static str {
+    match phase {
+        ExtractionPhase::Inspecting => "Inspecting package...",
+        ExtractionPhase::Testing => "Testing archive integrity...",
+        ExtractionPhase::Extracting => "Extracting notebook files on disk...",
+        ExtractionPhase::Verifying => "Verifying extracted notebook files...",
+        ExtractionPhase::Publishing => "Publishing notebook folder...",
     }
 }
 
@@ -1511,6 +1773,49 @@ fn install_resources() {
             color: #202124;
         }
         .empty-icon, .empty-icon:backdrop { color: #777a80; }
+        .import-activity, .import-activity:backdrop {
+            background: #f1eaf8;
+            color: #202124;
+            border-bottom: 1px solid #d6c8e4;
+        }
+        .activity-title, .activity-title:backdrop {
+            font-size: 14px;
+            font-weight: 650;
+            color: #2d183d;
+        }
+        .activity-phase, .activity-phase:backdrop {
+            font-size: 12px;
+            color: #5f5268;
+        }
+        .settings-dialog, .settings-dialog:backdrop {
+            background: #f7f7f8;
+            color: #202124;
+        }
+        .settings-dialog label, .settings-dialog label:backdrop,
+        .settings-dialog button, .settings-dialog button:backdrop {
+            color: #202124;
+        }
+        .dialog-title, .dialog-title:backdrop {
+            font-size: 18px;
+            font-weight: 700;
+            color: #202124;
+        }
+        .field-label, .field-label:backdrop {
+            font-size: 12px;
+            font-weight: 700;
+            color: #55585f;
+        }
+        .path-value, .path-value:backdrop {
+            background: #ffffff;
+            color: #202124;
+            border: 1px solid #d9dadd;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        .warning-label, .warning-label:backdrop {
+            color: #9b2c1f;
+            font-weight: 600;
+        }
         .error-dialog, .error-dialog:backdrop {
             background: #f7f7f8;
             color: #202124;

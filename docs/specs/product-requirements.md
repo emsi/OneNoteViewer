@@ -62,6 +62,13 @@ notebooks contain duplicate internal GUIDs. The navigation model supports
 notebook switching and nested section groups without losing the active page in
 other notebooks.
 
+The application has a configurable **default notebooks location**. Its initial
+value is the `OneNoteViewer` subdirectory of the user's XDG Documents
+directory. Every notebook folder found there is opened automatically at
+startup, including folders copied there outside the application. Sources
+opened from arbitrary other locations remain in place and persist separately;
+the application does not move them into the default location.
+
 The local index covers every open notebook by default. Search results identify
 the notebook, section, page, matching field, and canvas object when geometry is
 known. Activating a result selects the correct notebook and page and brings the
@@ -137,6 +144,11 @@ application performs a one-time, on-disk extraction into a durable directory
 of native `.onetoc2` and `.one` files, then opens that directory through the
 same path as any other notebook. Reopening and indexing use the extracted
 native files; the archive is not decompressed again.
+
+Package extraction proposes a new child directory under the default notebooks
+location and displays the exact final path before starting. The user can
+choose a different parent for an individual import without changing the
+default. Existing destination directories are never merged or overwritten.
 
 The package operation must never materialize the complete package or all
 expanded entries in memory. Detailed behavior is fixed by

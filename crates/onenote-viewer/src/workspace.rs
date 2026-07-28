@@ -53,6 +53,14 @@ pub(crate) fn ensure_index_parent(path: &Path) -> Result<()> {
 }
 
 pub(crate) fn discover(requested: &Path) -> Result<Vec<PathBuf>> {
+    discover_path(requested, false)
+}
+
+pub(crate) fn discover_library(requested: &Path) -> Result<Vec<PathBuf>> {
+    discover_path(requested, true)
+}
+
+fn discover_path(requested: &Path, allow_empty: bool) -> Result<Vec<PathBuf>> {
     let canonical = fs::canonicalize(requested)
         .with_context(|| format!("could not access {}", requested.display()))?;
     if canonical.is_file() {
@@ -108,10 +116,17 @@ pub(crate) fn discover(requested: &Path) -> Result<Vec<PathBuf>> {
     }
     sections.sort();
     sections.dedup();
-    if sections.is_empty() {
+    if sections.is_empty() && !allow_empty {
         bail!("{} contains no .onetoc2 or .one files", canonical.display());
     }
     Ok(sections)
+}
+
+pub(crate) fn source_is_in_location(source: &Path, location: &Path) -> bool {
+    match (fs::canonicalize(source), fs::canonicalize(location)) {
+        (Ok(source), Ok(location)) => source.starts_with(location),
+        _ => source.starts_with(location),
+    }
 }
 
 fn root_manifests(root: &Path, manifests: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -203,5 +218,51 @@ mod tests {
 
         assert_eq!(actual.sources, expected.sources);
         assert!(!path.with_extension("json.new").exists());
+    }
+
+    #[test]
+    fn empty_library_is_valid() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+
+        let discovered = discover_library(temporary.path()).expect("library discovery");
+
+        assert!(discovered.is_empty());
+    }
+
+    #[test]
+    fn library_discovers_sibling_notebooks_without_nested_group_manifests() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        for name in ["Personal", "Work"] {
+            let notebook = temporary.path().join(name);
+            let group = notebook.join("Group");
+            fs::create_dir_all(&group).expect("group");
+            fs::write(notebook.join("Open Notebook.onetoc2"), b"root").expect("root manifest");
+            fs::write(group.join("Open Notebook.onetoc2"), b"group").expect("group manifest");
+            fs::write(group.join("Section.one"), b"section").expect("section");
+        }
+
+        let discovered = discover_library(temporary.path()).expect("library discovery");
+
+        assert_eq!(
+            discovered,
+            vec![
+                temporary.path().join("Personal/Open Notebook.onetoc2"),
+                temporary.path().join("Work/Open Notebook.onetoc2"),
+            ]
+        );
+    }
+
+    #[test]
+    fn source_membership_uses_path_components() {
+        let root = Path::new("/home/user/Documents/OneNoteViewer");
+
+        assert!(source_is_in_location(
+            Path::new("/home/user/Documents/OneNoteViewer/Work/Open Notebook.onetoc2"),
+            root
+        ));
+        assert!(!source_is_in_location(
+            Path::new("/home/user/Documents/OneNoteViewer-old/Work.one"),
+            root
+        ));
     }
 }

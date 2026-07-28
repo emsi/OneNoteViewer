@@ -1,4 +1,4 @@
-use onenote_core::{LoadedNotebook, OneNoteLoader, OnePkgExtractor, SourceId};
+use onenote_core::{ExtractionPhase, LoadedNotebook, OneNoteLoader, OnePkgExtractor, SourceId};
 use onenote_index::{SearchHit, SearchIndex, SearchQuery};
 use onenote_render::{PageScene, SceneBuilder, SceneOptions};
 use std::path::PathBuf;
@@ -7,6 +7,7 @@ use std::sync::{mpsc, Arc};
 
 pub(crate) enum Command {
     Discover(PathBuf),
+    DiscoverLibrary(PathBuf),
     Load(PathBuf),
     Remove(SourceId),
     Shutdown,
@@ -15,6 +16,10 @@ pub(crate) enum Command {
 pub(crate) enum Event {
     Discovered {
         requested: PathBuf,
+        result: Result<Vec<PathBuf>, String>,
+    },
+    LibraryDiscovered {
+        location: PathBuf,
         result: Result<Vec<PathBuf>, String>,
     },
     Loaded {
@@ -36,6 +41,9 @@ pub(crate) enum Event {
     Extracted {
         result: Result<PathBuf, String>,
     },
+    ExtractionProgress {
+        phase: ExtractionPhase,
+    },
 }
 
 pub(crate) fn start_index_worker(
@@ -52,6 +60,16 @@ pub(crate) fn start_index_worker(
                         crate::workspace::discover(&requested).map_err(|error| error.to_string());
                     if events
                         .send(Event::Discovered { requested, result })
+                        .is_err()
+                    {
+                        return;
+                    }
+                }
+                Command::DiscoverLibrary(location) => {
+                    let result = crate::workspace::discover_library(&location)
+                        .map_err(|error| error.to_string());
+                    if events
+                        .send(Event::LibraryDiscovered { location, result })
                         .is_err()
                     {
                         return;
@@ -119,10 +137,20 @@ pub(crate) fn build_scene(generation: u64, page: onenote_core::Page, events: mps
     });
 }
 
-pub(crate) fn extract(package: PathBuf, destination: PathBuf, events: mpsc::Sender<Event>) {
+pub(crate) fn extract(
+    package: PathBuf,
+    destination: PathBuf,
+    cancel: Arc<AtomicBool>,
+    events: mpsc::Sender<Event>,
+) {
     std::thread::spawn(move || {
+        let progress_events = events.clone();
         let result = OnePkgExtractor::detect()
-            .and_then(|extractor| extractor.extract(&package, destination, &AtomicBool::new(false)))
+            .and_then(|extractor| {
+                extractor.extract_with_progress(&package, destination, &cancel, move |phase| {
+                    let _ignored = progress_events.send(Event::ExtractionProgress { phase });
+                })
+            })
             .map(|report| report.destination)
             .map_err(|error| error.to_string());
         let _ignored = events.send(Event::Extracted { result });

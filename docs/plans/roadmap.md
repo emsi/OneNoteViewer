@@ -94,9 +94,10 @@ independent protocol fixtures pass. Recorded latency targets remain open.
   through the reusable core loader, preserving directories as section groups
   and selecting dated section snapshots with explicit provenance. See the
   [backup-folder loader plan](backup-folder-loader.md).
-- [ ] Complete `.onepkg` UI progress and cancellation; core missing-tool,
-  cancellation,
-  staging cleanup, and destination-conflict handling.
+- [x] Add settings-backed default notebook location discovery plus `.onepkg`
+  destination confirmation, phase progress, and cancellation.
+- [ ] Complete `.onepkg` resource limits and preflight: expanded-size and
+  free-space checks, early missing-tool reporting, and destination naming.
 - [x] Active-page freeform canvas with rich text, lists, tables, lazy images,
   attachments, ink, placeholders, pan, and zoom.
 - [x] Viewer title/date chrome without duplicate native title-area rendering;

@@ -27,6 +27,8 @@ yet a broad format-compatibility or visual-fidelity claim.
 
 The initial product:
 
+- automatically opens notebook folders under the configurable
+  `$XDG_DOCUMENTS_DIR/OneNoteViewer` default notebooks location;
 - opens local notebook directories containing `.onetoc2` and `.one` files;
 - opens standalone `.one` sections;
 - accepts `.onepkg` export packages through a one-time, managed extraction to
@@ -153,8 +155,10 @@ commands, checksums, sandbox constraints, AppImage compatibility, and
 tag-based GitHub releases.
 
 The first command accepts a `.one`, `.onetoc2`, or directory. Additional paths
-add sources to the same workspace. `.onepkg` files are imported through the
-viewer so a durable destination can be selected.
+add sources to the same workspace. Notebook folders copied under the default
+notebooks location open automatically at the next launch. `.onepkg` files are
+imported through the viewer into that location by default, with the exact
+destination confirmed before extraction and a per-import location override.
 
 ## Repository Shape
 

@@ -2,7 +2,7 @@
 
 - **Status:** Functional implementation baseline; not release-ready
 - **Current phase:** Milestone 2 readable-viewer completion and evidence
-- **Last reconciled:** 2026-07-27 UTC
+- **Last reconciled:** 2026-07-28 UTC
 
 ## Role of This Document
 
@@ -39,8 +39,10 @@ application. Other software must be able to:
 2. **Freeform fidelity:** coordinates, extents, overlap, stacking, ink,
    printouts, images, tables, rich text, and object relationships are
    preserved or visibly diagnosed.
-3. **Multi-notebook workspace:** several notebooks remain open and one local
-   search spans all active sources.
+3. **Multi-notebook workspace:** the configurable default notebooks location
+   is scanned automatically, several notebooks remain open, arbitrary external
+   sources can be added without relocation, and one local search spans all
+   active sources.
 4. **Read-only and offline:** source notebook trees are never modified, and
    viewing/indexing requires no Microsoft account or network service.
 5. **Bounded package onboarding:** `.onepkg` is extracted once, on disk, by a
@@ -91,6 +93,10 @@ non-Rust software without exposing SQLite or creating a network service.
 notebook/section-group/section/page/canvas experience. It owns windows,
 workspace persistence, navigation UI, and desktop integration, but receives no
 private parser, renderer, or index access unavailable to other consumers.
+Its default notebooks location is the `OneNoteViewer` directory under the
+user's XDG Documents directory. Notebook folders copied or extracted there are
+discovered automatically at startup. The location is configurable, and
+explicitly opened sources elsewhere remain read-only in place.
 
 ### ONEPKG Onboarding
 
@@ -139,9 +145,11 @@ The detailed milestone sequence and exit gates are in the
 - `onenote-viewer` provides persistent multi-notebook discovery and
   a collapsible notebook/section-group/section tree plus page navigation,
   background parsing/indexing/scene construction, global search result
-  navigation, a native freeform canvas, and package onboarding. Page title and
-  creation time appear once in viewer chrome while the reusable renderer can
-  still render the complete native title area for other hosts.
+  navigation, a native freeform canvas, settings-backed default notebook
+  location discovery, and package onboarding with destination confirmation,
+  phase progress, and cancellation. Page title and creation time appear once
+  in viewer chrome while the reusable renderer can still render the complete
+  native title area for other hosts.
 - A manifest-free backup directory is not yet aggregated: the current
   discovery fallback loads each recursive `.one` file as a standalone source.
   The reusable core replacement, snapshot selection, hierarchy reconstruction,
