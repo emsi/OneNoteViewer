@@ -12,9 +12,11 @@ There is no second menu bar or decorative toolbar consuming document height.
 
 The header contains:
 
-- one main menu for file, import, settings, and application commands;
+- the bundled application icon at the left edge;
 - the OneNote Viewer identity;
-- global notebook search; and
+- global notebook search;
+- one main menu beside search for file, import, settings, and application
+  commands; and
 - native minimize, maximize, and close controls supplied by the desktop.
 
 Frequently repeated, context-specific controls may remain beside their
@@ -36,7 +38,14 @@ invalid to combine an application-defined foreground with a host-theme
 background.
 
 The freeform notebook page is document content rather than application chrome;
-its colors continue to come from OneNote page data and renderer fallbacks.
+its explicit colors continue to come from OneNote page data. Text stored with
+OneNote's automatic/default color uses a host-provided renderer fallback so it
+remains readable on the viewer's current page surface. Embedders can supply
+their own fallback without rewriting the scene or explicit source formatting.
+
+Standard window-control fallbacks and the application icon are bundled so the
+native, AppImage, and Flatpak headers do not depend on different host icon
+inventories.
 
 ## Selectable Diagnostics
 
@@ -57,6 +66,18 @@ window. Primary actions use the accent color; ordinary and disabled actions
 remain legible in both themes and when the window loses focus. Dialog content
 must not inherit an uncontrolled mix of host-theme control backgrounds and
 application text colors.
+
+## File And Folder Choosers
+
+File and folder access uses `GtkFileDialog` so sandboxed builds receive access
+through the desktop portal. Folder requests suggest the current valid
+destination, fall back to the configured default notebooks location when it is
+invalid, and finally fall back to Home only when neither directory exists.
+
+Desktop portal implementations are permitted to ignore the suggested initial
+folder. The initiating control must therefore show immediate pending feedback
+until the out-of-process chooser appears or returns; the application must not
+look unresponsive while a desktop backend starts.
 
 ## Regression That Established These Rules
 

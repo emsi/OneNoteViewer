@@ -25,7 +25,8 @@ const PAGE_NAVIGATION_WIDTH: i32 = 280;
 const COLLAPSED_NAVIGATION_WIDTH: i32 = 42;
 const NAVIGATION_SEPARATOR_WIDTH: i32 = 1;
 const SEARCH_RESULTS_WIDTH: i32 = 520;
-const SYMBOLIC_ICON_NAMES: [&str; 15] = [
+const APP_ICON_NAME: &str = "io.github.emsi.OneNoteViewer";
+const SYMBOLIC_ICON_NAMES: [&str; 19] = [
     "onenote-chevron-down-symbolic",
     "onenote-chevron-right-symbolic",
     "onenote-close-symbolic",
@@ -41,6 +42,10 @@ const SYMBOLIC_ICON_NAMES: [&str; 15] = [
     "onenote-zoom-in-symbolic",
     "onenote-zoom-out-symbolic",
     "onenote-zoom-reset-symbolic",
+    "window-close-symbolic",
+    "window-maximize-symbolic",
+    "window-minimize-symbolic",
+    "window-restore-symbolic",
 ];
 
 pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
@@ -110,6 +115,9 @@ pub(crate) fn check_icons() -> Result<()> {
 
     let display = gdk_display();
     let theme = gtk::IconTheme::for_display(&display);
+    if !theme.has_icon(APP_ICON_NAME) {
+        anyhow::bail!("application icon is not registered: {APP_ICON_NAME}");
+    }
     let renderer = gtk::gsk::CairoRenderer::new();
     renderer.realize_for_display(&display)?;
     let colors = [
@@ -300,6 +308,8 @@ impl Viewer {
         let result_model = gtk::StringList::new(&[]);
         let (result_selection, result_list) = result_list(&result_model);
         let page_view = PageView::new();
+        page_view
+            .set_default_text_color(&theme_default_text_color(effective_theme(settings.theme)));
         let search_entry = gtk::SearchEntry::builder()
             .placeholder_text("Search all notebooks")
             .hexpand(true)
@@ -342,10 +352,14 @@ impl Viewer {
             .build();
         menu.add_css_class("icon-button");
         menu.set_tooltip_text(Some("Main menu"));
+        header_title.append(&menu);
 
         let header = gtk::HeaderBar::new();
         header.set_show_title_buttons(true);
-        header.pack_start(&menu);
+        let app_icon = gtk::Image::from_icon_name(APP_ICON_NAME);
+        app_icon.set_pixel_size(24);
+        app_icon.add_css_class("app-icon");
+        header.pack_start(&app_icon);
         header.set_title_widget(Some(&header_title));
 
         let notebooks = CollapsibleNavigationBand::new(
@@ -520,6 +534,7 @@ impl Viewer {
         let window = gtk::ApplicationWindow::builder()
             .application(application)
             .title("OneNote Viewer")
+            .icon_name(APP_ICON_NAME)
             .default_width(1_500)
             .default_height(920)
             .titlebar(&header)
@@ -1325,8 +1340,10 @@ impl Viewer {
     }
 
     fn apply_theme(&self, preference: ThemePreference) {
-        self.style_provider
-            .load_from_string(&theme_css(effective_theme(preference)));
+        let theme = effective_theme(preference);
+        self.style_provider.load_from_string(&theme_css(theme));
+        self.page_view
+            .set_default_text_color(&theme_default_text_color(theme));
     }
 
     fn start_package_import(&self, package: PathBuf, destination: PathBuf) {
@@ -1787,6 +1804,15 @@ fn effective_theme(preference: ThemePreference) -> EffectiveTheme {
     }
 }
 
+fn theme_default_text_color(theme: EffectiveTheme) -> gtk::gdk::RGBA {
+    match theme {
+        EffectiveTheme::Light => gtk::gdk::RGBA::new(32.0 / 255.0, 33.0 / 255.0, 36.0 / 255.0, 1.0),
+        EffectiveTheme::Dark => {
+            gtk::gdk::RGBA::new(241.0 / 255.0, 243.0 / 255.0, 244.0 / 255.0, 1.0)
+        }
+    }
+}
+
 fn theme_colors(theme: EffectiveTheme) -> &'static str {
     match theme {
         EffectiveTheme::Light => {
@@ -1886,8 +1912,15 @@ fn theme_css(theme: EffectiveTheme) -> String {
             color: @text;
             border-color: transparent;
         }}
+        windowcontrols button image, windowcontrols button image:backdrop {{
+            color: @text;
+        }}
         windowcontrols button:hover {{
             background: @control_hover;
+        }}
+        .app-icon {{
+            min-width: 24px;
+            min-height: 24px;
         }}
         .icon-button, .icon-button:backdrop,
         .icon-button image, .icon-button image:backdrop {{
@@ -2058,6 +2091,7 @@ fn theme_css(theme: EffectiveTheme) -> String {
 fn install_resources(theme: ThemePreference) -> gtk::CssProvider {
     let display = gdk_display();
     gtk::IconTheme::for_display(&display).add_resource_path("/io/github/emsi/OneNoteViewer/icons");
+    gtk::Window::set_default_icon_name(APP_ICON_NAME);
     let provider = gtk::CssProvider::new();
     provider.load_from_string(&theme_css(effective_theme(theme)));
     gtk::style_context_add_provider_for_display(

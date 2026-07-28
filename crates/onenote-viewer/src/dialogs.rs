@@ -19,6 +19,7 @@ pub(crate) fn present_package_import<F, E>(
     E: Fn(&str, &str) + 'static,
 {
     let folder_name = package_folder_name(&package);
+    let fallback_parent = default_parent.clone();
     let parent = Rc::new(RefCell::new(default_parent));
     let on_error: ErrorHandler = Rc::new(on_error);
 
@@ -111,41 +112,36 @@ pub(crate) fn present_package_import<F, E>(
     let conflict_for_chooser = conflict.clone();
     let import_for_chooser = import.clone();
     let error_for_chooser = Rc::clone(&on_error);
-    change_location.connect_clicked(move |_| {
-        let initial = gio::File::for_path(parent_for_chooser.borrow().as_path());
-        let chooser = gtk::FileDialog::builder()
-            .title(format!(
-                "Choose where to create \"{folder_name_for_chooser}\""
-            ))
-            .accept_label("Choose This Location")
-            .initial_folder(&initial)
-            .modal(true)
-            .build();
+    change_location.connect_clicked(move |button| {
         let parent = Rc::clone(&parent_for_chooser);
         let folder_name = folder_name_for_chooser.clone();
         let destination = destination_for_chooser.clone();
         let conflict = conflict_for_chooser.clone();
         let import = import_for_chooser.clone();
         let on_error = Rc::clone(&error_for_chooser);
-        chooser.select_folder(
-            Some(&dialog_for_chooser),
-            None::<&gio::Cancellable>,
-            move |result| match result {
-                Ok(file) => {
-                    if let Some(path) = file.path() {
-                        *parent.borrow_mut() = path;
-                        update_import_destination(
-                            &parent.borrow(),
-                            &folder_name,
-                            &destination,
-                            &conflict,
-                            &import,
-                        );
-                    }
-                }
-                Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
-                Err(error) => on_error("Could not select package destination", &error.to_string()),
+        let preferred = parent.borrow().clone();
+        let title = format!("Choose where to create \"{folder_name_for_chooser}\"");
+        select_folder(
+            FolderDialogRequest {
+                owner: &dialog_for_chooser,
+                trigger: button,
+                title: &title,
+                accept_label: "Choose This Location",
+                preferred: &preferred,
+                fallback: &fallback_parent,
+                error_title: "Could not select package destination",
             },
+            move |path| {
+                *parent.borrow_mut() = path;
+                update_import_destination(
+                    &parent.borrow(),
+                    &folder_name,
+                    &destination,
+                    &conflict,
+                    &import,
+                );
+            },
+            on_error,
         );
     });
 
@@ -251,42 +247,38 @@ pub(crate) fn present_settings<F, E>(
 
     let candidate_for_reset = Rc::clone(&candidate);
     let path_for_reset = path_label.clone();
+    let default_for_reset = default.clone();
     reset.connect_clicked(move |_| {
-        path_for_reset.set_label(&default.display().to_string());
-        candidate_for_reset.borrow_mut().clone_from(&default);
+        path_for_reset.set_label(&default_for_reset.display().to_string());
+        candidate_for_reset
+            .borrow_mut()
+            .clone_from(&default_for_reset);
     });
 
     let dialog_for_chooser = dialog.clone();
     let candidate_for_chooser = Rc::clone(&candidate);
     let path_for_chooser = path_label.clone();
     let error_for_chooser = Rc::clone(&on_error);
-    choose.connect_clicked(move |_| {
-        let initial = gio::File::for_path(candidate_for_chooser.borrow().as_path());
-        let chooser = gtk::FileDialog::builder()
-            .title("Choose default notebooks location")
-            .accept_label("Use This Location")
-            .initial_folder(&initial)
-            .modal(true)
-            .build();
+    choose.connect_clicked(move |button| {
         let candidate = Rc::clone(&candidate_for_chooser);
         let path_label = path_for_chooser.clone();
         let on_error = Rc::clone(&error_for_chooser);
-        chooser.select_folder(
-            Some(&dialog_for_chooser),
-            None::<&gio::Cancellable>,
-            move |result| match result {
-                Ok(file) => {
-                    if let Some(path) = file.path() {
-                        path_label.set_label(&path.display().to_string());
-                        *candidate.borrow_mut() = path;
-                    }
-                }
-                Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
-                Err(error) => on_error(
-                    "Could not select default notebooks location",
-                    &error.to_string(),
-                ),
+        let preferred = candidate.borrow().clone();
+        select_folder(
+            FolderDialogRequest {
+                owner: &dialog_for_chooser,
+                trigger: button,
+                title: "Choose default notebooks location",
+                accept_label: "Use This Location",
+                preferred: &preferred,
+                fallback: &default,
+                error_title: "Could not select default notebooks location",
             },
+            move |path| {
+                path_label.set_label(&path.display().to_string());
+                *candidate.borrow_mut() = path;
+            },
+            on_error,
         );
     });
 
@@ -328,6 +320,65 @@ fn path_label(path: Option<&Path>) -> gtk::Label {
     label
 }
 
+#[derive(Clone, Copy)]
+struct FolderDialogRequest<'a> {
+    owner: &'a gtk::Window,
+    trigger: &'a gtk::Button,
+    title: &'a str,
+    accept_label: &'a str,
+    preferred: &'a Path,
+    fallback: &'a Path,
+    error_title: &'static str,
+}
+
+fn select_folder<F>(request: FolderDialogRequest<'_>, on_selected: F, on_error: ErrorHandler)
+where
+    F: Fn(PathBuf) + 'static,
+{
+    let initial = gio::File::for_path(chooser_initial_folder(request.preferred, request.fallback));
+    let chooser = gtk::FileDialog::builder()
+        .title(request.title)
+        .accept_label(request.accept_label)
+        .initial_folder(&initial)
+        .modal(true)
+        .build();
+    let original_label = request
+        .trigger
+        .label()
+        .unwrap_or_else(|| gtk::glib::GString::from("Choose Location"));
+    request.trigger.set_label("Opening...");
+    request.trigger.set_sensitive(false);
+    let trigger = request.trigger.clone();
+    let error_title = request.error_title;
+    chooser.select_folder(
+        Some(request.owner),
+        None::<&gio::Cancellable>,
+        move |result| {
+            trigger.set_label(&original_label);
+            trigger.set_sensitive(true);
+            match result {
+                Ok(file) => {
+                    if let Some(path) = file.path() {
+                        on_selected(path);
+                    }
+                }
+                Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
+                Err(error) => on_error(error_title, &error.to_string()),
+            }
+        },
+    );
+}
+
+fn chooser_initial_folder(preferred: &Path, fallback: &Path) -> PathBuf {
+    if preferred.is_dir() {
+        preferred.to_path_buf()
+    } else if fallback.is_dir() {
+        fallback.to_path_buf()
+    } else {
+        gtk::glib::home_dir()
+    }
+}
+
 fn package_folder_name(package: &Path) -> String {
     package
         .file_stem()
@@ -354,4 +405,30 @@ fn update_import_destination(
         ""
     });
     import.set_sensitive(!exists);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chooser_uses_existing_preferred_folder() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let preferred = temporary.path().join("preferred");
+        let fallback = temporary.path().join("fallback");
+        std::fs::create_dir_all(&preferred).expect("preferred");
+        std::fs::create_dir_all(&fallback).expect("fallback");
+
+        assert_eq!(chooser_initial_folder(&preferred, &fallback), preferred);
+    }
+
+    #[test]
+    fn chooser_uses_default_when_preferred_folder_is_invalid() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let preferred = temporary.path().join("missing");
+        let fallback = temporary.path().join("default-notebooks");
+        std::fs::create_dir_all(&fallback).expect("fallback");
+
+        assert_eq!(chooser_initial_folder(&preferred, &fallback), fallback);
+    }
 }

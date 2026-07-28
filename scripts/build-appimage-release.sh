@@ -108,7 +108,7 @@ APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" \
     --appdir "$appdir" \
     --executable target/release/onenote-viewer \
     --desktop-file packaging/flatpak/io.github.emsi.OneNoteViewer.desktop \
-    --icon-file packaging/flatpak/io.github.emsi.OneNoteViewer.svg \
+    --icon-file crates/onenote-viewer/resources/icons/scalable/apps/io.github.emsi.OneNoteViewer.svg \
     --custom-apprun packaging/appimage/AppRun
 
 pixbuf_module_dir=$(pkg-config --variable=gdk_pixbuf_moduledir gdk-pixbuf-2.0)
