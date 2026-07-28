@@ -1074,12 +1074,71 @@ impl Viewer {
         let title = gtk_text(title);
         let detail = gtk_text(detail);
         self.status.set_label(&title);
-        gtk::AlertDialog::builder()
+
+        let dialog = gtk::Window::builder()
+            .title(title.as_ref())
+            .transient_for(&self.window)
             .modal(true)
-            .message(title.as_ref())
-            .detail(detail.as_ref())
-            .build()
-            .show(Some(&self.window));
+            .resizable(true)
+            .default_width(640)
+            .default_height(280)
+            .build();
+        dialog.add_css_class("error-dialog");
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        content.set_margin_start(18);
+        content.set_margin_end(18);
+        content.set_margin_top(18);
+        content.set_margin_bottom(18);
+
+        let heading = gtk::Label::builder()
+            .label(title.as_ref())
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .xalign(0.0)
+            .build();
+        heading.add_css_class("error-title");
+        content.append(&heading);
+
+        let detail_view = gtk::TextView::builder()
+            .editable(false)
+            .cursor_visible(true)
+            .wrap_mode(gtk::WrapMode::WordChar)
+            .left_margin(10)
+            .right_margin(10)
+            .top_margin(10)
+            .bottom_margin(10)
+            .build();
+        detail_view.add_css_class("error-detail");
+        detail_view.buffer().set_text(detail.as_ref());
+
+        let scroller = gtk::ScrolledWindow::builder()
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .vscrollbar_policy(gtk::PolicyType::Automatic)
+            .min_content_height(140)
+            .child(&detail_view)
+            .build();
+        scroller.add_css_class("error-detail-frame");
+        content.append(&scroller);
+
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        actions.set_halign(gtk::Align::End);
+        let copy = gtk::Button::with_label("Copy error");
+        let close = gtk::Button::with_label("Close");
+        close.add_css_class("suggested-action");
+        actions.append(&copy);
+        actions.append(&close);
+        content.append(&actions);
+
+        let clipboard_text = format!("{title}\n\n{detail}");
+        copy.connect_clicked(move |_| {
+            gdk_display().clipboard().set_text(&clipboard_text);
+        });
+        let dialog_on_close = dialog.clone();
+        close.connect_clicked(move |_| dialog_on_close.close());
+
+        dialog.set_child(Some(&content));
+        dialog.present();
     }
 }
 
@@ -1376,6 +1435,7 @@ fn find_section<'a>(entries: &'a [NotebookEntry], id: &SectionId) -> Option<&'a 
     None
 }
 
+#[allow(clippy::too_many_lines)]
 fn install_resources() {
     let display = gdk_display();
     gtk::IconTheme::for_display(&display).add_resource_path("/io/github/emsi/OneNoteViewer/icons");
@@ -1451,6 +1511,34 @@ fn install_resources() {
             color: #202124;
         }
         .empty-icon, .empty-icon:backdrop { color: #777a80; }
+        .error-dialog, .error-dialog:backdrop {
+            background: #f7f7f8;
+            color: #202124;
+        }
+        .error-dialog label, .error-dialog label:backdrop,
+        .error-dialog button, .error-dialog button:backdrop {
+            color: #202124;
+        }
+        .error-title, .error-title:backdrop {
+            font-size: 18px;
+            font-weight: 700;
+            color: #202124;
+        }
+        .error-detail-frame {
+            border: 1px solid #d9dadd;
+            border-radius: 4px;
+        }
+        .error-detail, .error-detail:backdrop,
+        .error-detail text, .error-detail text:backdrop {
+            background: #ffffff;
+            color: #202124;
+            caret-color: #202124;
+        }
+        .error-detail text selection,
+        .error-detail text selection:backdrop {
+            background: #6b3a96;
+            color: #ffffff;
+        }
         ",
     );
     gtk::style_context_add_provider_for_display(
