@@ -16,7 +16,7 @@ pub use model::{
     Section, SectionGroup, SectionId, SourceFingerprint, SourceId, Table, TableCell, TextAlignment,
     TextBlock, TextRun, TextStyle,
 };
-pub use package::{ExtractionReport, OnePkgExtractor};
+pub use package::{ExtractionPhase, ExtractionReport, OnePkgExtractor};
 pub use parser::{LoadedNotebook, OneNoteLoader, ParseLimits};
 pub use resource::ResourceStore;
 

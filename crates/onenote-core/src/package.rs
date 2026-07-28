@@ -24,6 +24,21 @@ pub struct ExtractionReport {
     pub total_files: usize,
 }
 
+/// A stable phase in the managed `.onepkg` extraction pipeline.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExtractionPhase {
+    /// Validate the bounded archive listing before writing any payload.
+    Inspecting,
+    /// Ask the extractor to test every archive entry.
+    Testing,
+    /// Expand the archive into a private staging directory.
+    Extracting,
+    /// Validate the extracted native notebook tree and path containment.
+    Verifying,
+    /// Atomically publish the completed notebook directory.
+    Publishing,
+}
+
 /// Managed external 7-Zip extractor for `OneNote` CAB packages.
 #[derive(Clone, Debug)]
 pub struct OnePkgExtractor {
@@ -79,6 +94,27 @@ impl OnePkgExtractor {
         destination: impl AsRef<Path>,
         cancel: &AtomicBool,
     ) -> Result<ExtractionReport> {
+        self.extract_with_progress(package, destination, cancel, |_| {})
+    }
+
+    /// Extract a `.onepkg` while reporting durable pipeline phase changes.
+    ///
+    /// The callback runs on the caller's extraction thread. It must return
+    /// quickly and must not access toolkit objects that require a UI thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same structured errors as [`Self::extract`].
+    pub fn extract_with_progress<F>(
+        &self,
+        package: impl AsRef<Path>,
+        destination: impl AsRef<Path>,
+        cancel: &AtomicBool,
+        mut progress: F,
+    ) -> Result<ExtractionReport>
+    where
+        F: FnMut(ExtractionPhase),
+    {
         let package = canonical_file(package.as_ref())?;
         validate_package_extension(&package)?;
         let destination = absolute_destination(destination.as_ref())?;
@@ -97,11 +133,14 @@ impl OnePkgExtractor {
             return Err(Error::ExtractionCancelled);
         }
 
+        progress(ExtractionPhase::Inspecting);
         self.validate_listing(&package, cancel)?;
+        progress(ExtractionPhase::Testing);
         self.run_quiet(&package, cancel, ["t", "-bd", "-bso0", "-bsp0"])?;
 
         let staging = StagingDirectory::create(parent)?;
         let output_argument = format!("-o{}", staging.path().to_string_lossy());
+        progress(ExtractionPhase::Extracting);
         self.run_quiet(
             &package,
             cancel,
@@ -111,8 +150,10 @@ impl OnePkgExtractor {
             return Err(Error::ExtractionCancelled);
         }
 
+        progress(ExtractionPhase::Verifying);
         let counts = validate_extracted_tree(staging.path(), &package)?;
         let staging_path = staging.keep();
+        progress(ExtractionPhase::Publishing);
         fs::rename(&staging_path, &destination).map_err(|source| {
             let _ignored = fs::remove_dir_all(&staging_path);
             Error::Io {
@@ -486,7 +527,7 @@ fn set_private_permissions(_path: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{capture_bounded, is_safe_archive_path, OnePkgExtractor};
+    use super::{capture_bounded, is_safe_archive_path, ExtractionPhase, OnePkgExtractor};
     use crate::Error;
     use std::sync::atomic::AtomicBool;
 
@@ -522,5 +563,64 @@ mod tests {
             .expect_err("must cancel");
         assert!(matches!(error, Error::ExtractionCancelled));
         assert!(!destination.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn extraction_reports_pipeline_phases_in_order() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().expect("temp directory");
+        let extractor = directory.path().join("fake-7z");
+        std::fs::write(
+            &extractor,
+            r#"#!/bin/sh
+case "$1" in
+  l)
+    printf 'Path = Open Notebook.onetoc2\nPath = Section.one\n'
+    ;;
+  t)
+    ;;
+  x)
+    for argument in "$@"; do
+      case "$argument" in
+        -o*) output=${argument#-o} ;;
+      esac
+    done
+    mkdir -p "$output"
+    printf toc > "$output/Open Notebook.onetoc2"
+    printf section > "$output/Section.one"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+"#,
+        )
+        .expect("extractor script");
+        std::fs::set_permissions(&extractor, std::fs::Permissions::from_mode(0o700))
+            .expect("executable permissions");
+        let package = directory.path().join("source.onepkg");
+        std::fs::write(&package, b"MSCF").expect("package fixture");
+        let destination = directory.path().join("output");
+        let mut phases = Vec::new();
+
+        OnePkgExtractor::new(extractor)
+            .extract_with_progress(&package, &destination, &AtomicBool::new(false), |phase| {
+                phases.push(phase);
+            })
+            .expect("extract");
+
+        assert_eq!(
+            phases,
+            vec![
+                ExtractionPhase::Inspecting,
+                ExtractionPhase::Testing,
+                ExtractionPhase::Extracting,
+                ExtractionPhase::Verifying,
+                ExtractionPhase::Publishing,
+            ]
+        );
+        assert!(destination.join("Section.one").is_file());
     }
 }
