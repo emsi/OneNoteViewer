@@ -147,9 +147,11 @@ The detailed milestone sequence and exit gates are in the
   background parsing/indexing/scene construction, global search result
   navigation, a native freeform canvas, settings-backed default notebook
   location discovery, and package onboarding with destination confirmation,
-  phase progress, and cancellation. Page title and creation time appear once
-  in viewer chrome while the reusable renderer can still render the complete
-  native title area for other hosts.
+  phase progress, and cancellation. Its compact single-row shell exposes native
+  window controls, an application-command menu, and persisted System, Light,
+  and Dark themes under the [desktop UI requirements](specs/desktop-ui.md).
+  Page title and creation time appear once in viewer chrome while the reusable
+  renderer can still render the complete native title area for other hosts.
 - A manifest-free backup directory is not yet aggregated: the current
   discovery fallback loads each recursive `.one` file as a standalone source.
   The reusable core replacement, snapshot selection, hierarchy reconstruction,

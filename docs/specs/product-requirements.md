@@ -163,11 +163,18 @@ The primary window provides:
 - an ordered, hierarchical page list;
 - a spatial canvas with pan and zoom;
 - a global search entry and result view spanning all open notebooks;
+- a compact single-row application header with native window controls and a
+  menu for infrequent application commands;
+- persisted System, Light, and Dark application themes with readable active,
+  inactive, selected, and disabled states;
 - scoped compatibility and source-refresh diagnostics.
 
 Navigation lists must be virtualized for large notebooks. Loading, indexing,
 refresh, extraction, and cancellation expose progress without blocking the UI.
 An error in one section or notebook must not remove other usable notebooks.
+All error detail is selectable and has an explicit copy command. The normative
+shell, theming, dialog, and visual-validation rules are specified in
+[Desktop UI Requirements](desktop-ui.md).
 
 ## Acceptance Criteria
 

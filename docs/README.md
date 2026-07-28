@@ -24,6 +24,7 @@ Plans may change as evidence arrives.
 - [OneNote input and parsing profile](specs/onenote-format.md)
 - [Persisted feature inventory](specs/feature-matrix.md)
 - [Search behavior](specs/search.md)
+- [Desktop UI requirements](specs/desktop-ui.md)
 - [Public integration API](specs/public-api.md)
 - [Test corpus specification](specs/test-corpus.md)
 

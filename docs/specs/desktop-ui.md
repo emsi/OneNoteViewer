@@ -1,0 +1,90 @@
+# Desktop UI Requirements
+
+Status: normative for `onenote-viewer`.
+
+This specification defines the viewer shell and dialog behavior. It does not
+constrain the reusable page renderer or indexing APIs.
+
+## Compact Application Shell
+
+The primary window uses one compact header row and one compact status row.
+There is no second menu bar or decorative toolbar consuming document height.
+
+The header contains:
+
+- one main menu for file, import, settings, and application commands;
+- the OneNote Viewer identity;
+- global notebook search; and
+- native minimize, maximize, and close controls supplied by the desktop.
+
+Frequently repeated, context-specific controls may remain beside their
+content. Infrequent application commands belong in the main menu. Every icon
+is bundled with the application, is symbolic, and has an accessible tooltip;
+rendering must not depend on a host icon theme.
+
+## Complete Theme Ownership
+
+The application supports System, Light, and Dark appearance preferences.
+System follows GTK's current application dark-theme preference. The selected
+preference is persisted and applies to the main window, menus, dialogs,
+backdrop states, navigation, status UI, inputs, and controls.
+
+Application CSS must use a complete semantic palette. A component that
+overrides foreground color must also own its background, border, hover,
+disabled, selected, and backdrop colors where those states exist. It is
+invalid to combine an application-defined foreground with a host-theme
+background.
+
+The freeform notebook page is document content rather than application chrome;
+its colors continue to come from OneNote page data and renderer fallbacks.
+
+## Selectable Diagnostics
+
+Every error dialog exposes its full diagnostic text in a non-editable,
+keyboard-focusable text view with normal text selection. A visible `Copy
+error` command copies the title and complete detail to the clipboard. Error
+titles are selectable as well.
+
+Paths, source names, destinations, warnings, and explanatory text in custom
+dialogs are selectable. Selection remains visibly contrasted in active and
+backdrop states. Do not use an ordinary non-selectable label for information a
+user may need to include in a bug report.
+
+## Dialog Controls
+
+Custom dialog buttons and selectors use the same semantic palette as the main
+window. Primary actions use the accent color; ordinary and disabled actions
+remain legible in both themes and when the window loses focus. Dialog content
+must not inherit an uncontrolled mix of host-theme control backgrounds and
+application text colors.
+
+## Regression That Established These Rules
+
+Earlier dialog CSS forced a dark text color on labels and buttons while
+leaving button backgrounds to the host GTK theme. A dark KDE theme therefore
+rendered dark text on dark buttons, and focus/backdrop transitions changed
+which controls were visible. The same class of mistake had already affected
+navigation text and bundled icons.
+
+The failure was not a missing per-button override. It was incomplete theme
+ownership and insufficient validation across active/backdrop states and
+packaging environments. Future UI work must not repair this by adding another
+isolated foreground rule.
+
+## Required Visual Matrix
+
+Before publishing UI changes, exercise:
+
+| Package | System light | System dark | Explicit light | Explicit dark |
+| --- | --- | --- | --- | --- |
+| Native development build | required | required | required | required |
+| AppImage | required | required | smoke | smoke |
+| Flatpak | required | required | smoke | smoke |
+
+For each required case, inspect the main window, open main menu, Settings,
+package-import confirmation, an error dialog, active window, and inactive
+window. Verify native window controls, bundled icons, text selection,
+selection contrast, ordinary buttons, primary buttons, and disabled buttons.
+
+Automated icon checks and GTK smoke tests are necessary gates but do not
+replace this visual matrix.
