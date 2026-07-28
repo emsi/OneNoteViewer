@@ -1,5 +1,5 @@
 use crate::navigation::{NavigationTarget, NotebookTree};
-use crate::settings::{self, AppSettings};
+use crate::settings::{self, AppSettings, ThemePreference};
 use crate::worker::{self, Command, Event};
 use crate::workspace::{self, WorkspaceConfig};
 use anyhow::Result;
@@ -25,12 +25,13 @@ const PAGE_NAVIGATION_WIDTH: i32 = 280;
 const COLLAPSED_NAVIGATION_WIDTH: i32 = 42;
 const NAVIGATION_SEPARATOR_WIDTH: i32 = 1;
 const SEARCH_RESULTS_WIDTH: i32 = 520;
-const SYMBOLIC_ICON_NAMES: [&str; 14] = [
+const SYMBOLIC_ICON_NAMES: [&str; 15] = [
     "onenote-chevron-down-symbolic",
     "onenote-chevron-right-symbolic",
     "onenote-close-symbolic",
     "onenote-folder-symbolic",
     "onenote-import-package-symbolic",
+    "onenote-menu-symbolic",
     "onenote-notebook-symbolic",
     "onenote-open-file-symbolic",
     "onenote-open-folder-symbolic",
@@ -70,13 +71,14 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
             viewer.window.present();
             return;
         }
-        install_resources();
+        let style_provider = install_resources(persisted_settings.theme);
         let instance = Viewer::new(
             application,
             workspace_path.clone(),
             index_path.clone(),
             settings_path.clone(),
             persisted_settings.clone(),
+            style_provider,
         );
         instance.open_notebooks_location();
         for source in &initial_sources {
@@ -104,7 +106,7 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
 pub(crate) fn check_icons() -> Result<()> {
     register_resources()?;
     gtk::init()?;
-    install_resources();
+    let _style_provider = install_resources(ThemePreference::Light);
 
     let display = gdk_display();
     let theme = gtk::IconTheme::for_display(&display);
@@ -266,13 +268,14 @@ struct Viewer {
     import_activity_phase: gtk::Label,
     import_progress: gtk::ProgressBar,
     import_cancel_button: gtk::Button,
-    import_package_button: gtk::Button,
+    import_package_action: gio::SimpleAction,
     import_cancel: RefCell<Option<Arc<AtomicBool>>>,
     state: RefCell<State>,
     workspace_path: PathBuf,
     index_path: PathBuf,
     settings_path: PathBuf,
     settings: RefCell<AppSettings>,
+    style_provider: gtk::CssProvider,
     commands: mpsc::Sender<Command>,
     events: mpsc::Sender<Event>,
     receiver: RefCell<mpsc::Receiver<Event>>,
@@ -289,6 +292,7 @@ impl Viewer {
         index_path: PathBuf,
         settings_path: PathBuf,
         settings: AppSettings,
+        style_provider: gtk::CssProvider,
     ) -> Rc<Self> {
         let notebook_tree = NotebookTree::new();
         let page_model = gtk::StringList::new(&[]);
@@ -302,11 +306,11 @@ impl Viewer {
             .width_request(320)
             .build();
 
-        let open_file = icon_button("onenote-open-file-symbolic", "Open OneNote file");
-        let open_folder = icon_button("onenote-open-folder-symbolic", "Open notebook folder");
-        let import_package =
-            icon_button("onenote-import-package-symbolic", "Import OneNote package");
-        let open_settings = icon_button("onenote-settings-symbolic", "Settings");
+        let open_file = gio::SimpleAction::new("open-file", None);
+        let open_folder = gio::SimpleAction::new("open-folder", None);
+        let import_package = gio::SimpleAction::new("import-package", None);
+        let open_settings = gio::SimpleAction::new("settings", None);
+        let quit = gio::SimpleAction::new("quit", None);
         let close_source = icon_button("onenote-close-symbolic", "Close selected notebook");
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Background activity"));
@@ -317,12 +321,31 @@ impl Viewer {
         header_title.append(&brand);
         header_title.append(&search_entry);
 
+        let file_menu = gio::Menu::new();
+        file_menu.append(Some("Open OneNote File..."), Some("win.open-file"));
+        file_menu.append(Some("Open Notebook Folder..."), Some("win.open-folder"));
+        file_menu.append(
+            Some("Import OneNote Package..."),
+            Some("win.import-package"),
+        );
+        let application_menu = gio::Menu::new();
+        application_menu.append_section(None, &file_menu);
+        let preferences_menu = gio::Menu::new();
+        preferences_menu.append(Some("Settings"), Some("win.settings"));
+        application_menu.append_section(None, &preferences_menu);
+        let quit_menu = gio::Menu::new();
+        quit_menu.append(Some("Quit OneNote Viewer"), Some("win.quit"));
+        application_menu.append_section(None, &quit_menu);
+        let menu = gtk::MenuButton::builder()
+            .icon_name("onenote-menu-symbolic")
+            .menu_model(&application_menu)
+            .build();
+        menu.add_css_class("icon-button");
+        menu.set_tooltip_text(Some("Main menu"));
+
         let header = gtk::HeaderBar::new();
-        header.set_show_title_buttons(false);
-        header.pack_start(&open_file);
-        header.pack_start(&open_folder);
-        header.pack_start(&import_package);
-        header.pack_end(&open_settings);
+        header.set_show_title_buttons(true);
+        header.pack_start(&menu);
         header.set_title_widget(Some(&header_title));
 
         let notebooks = CollapsibleNavigationBand::new(
@@ -531,26 +554,39 @@ impl Viewer {
             import_activity_phase,
             import_progress,
             import_cancel_button,
-            import_package_button: import_package.clone(),
+            import_package_action: import_package.clone(),
             import_cancel: RefCell::default(),
             state: RefCell::default(),
             workspace_path,
             index_path,
             settings_path,
             settings: RefCell::new(settings),
+            style_provider,
             commands,
             events: event_sender,
             receiver: RefCell::new(event_receiver),
             search_timer: RefCell::default(),
         });
         viewer.connect_navigation();
+        viewer.window.add_action(&open_file);
+        viewer.window.add_action(&open_folder);
+        viewer.window.add_action(&import_package);
+        viewer.window.add_action(&open_settings);
+        viewer.window.add_action(&quit);
+        application.set_accels_for_action("win.open-file", &["<Primary>o"]);
+        application.set_accels_for_action("win.open-folder", &["<Primary><Shift>o"]);
+        application.set_accels_for_action("win.import-package", &["<Primary><Shift>i"]);
+        application.set_accels_for_action("win.settings", &["<Primary>comma"]);
+        application.set_accels_for_action("win.quit", &["<Primary>q"]);
         viewer.connect_header(
             &open_file,
             &open_folder,
             &import_package,
             &open_settings,
+            &quit,
             &close_source,
         );
+        viewer.connect_system_theme();
         viewer.connect_import_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
         viewer.poll_events();
@@ -609,40 +645,62 @@ impl Viewer {
 
     fn connect_header(
         self: &Rc<Self>,
-        open_file: &gtk::Button,
-        open_folder: &gtk::Button,
-        import_package: &gtk::Button,
-        open_settings: &gtk::Button,
+        open_file: &gio::SimpleAction,
+        open_folder: &gio::SimpleAction,
+        import_package: &gio::SimpleAction,
+        open_settings: &gio::SimpleAction,
+        quit: &gio::SimpleAction,
         close_source: &gtk::Button,
     ) {
         let weak = Rc::downgrade(self);
-        open_file.connect_clicked(move |_| {
+        open_file.connect_activate(move |_, _| {
             if let Some(viewer) = weak.upgrade() {
                 viewer.choose_file();
             }
         });
         let weak = Rc::downgrade(self);
-        open_folder.connect_clicked(move |_| {
+        open_folder.connect_activate(move |_, _| {
             if let Some(viewer) = weak.upgrade() {
                 viewer.choose_folder();
             }
         });
         let weak = Rc::downgrade(self);
-        import_package.connect_clicked(move |_| {
+        import_package.connect_activate(move |_, _| {
             if let Some(viewer) = weak.upgrade() {
                 viewer.choose_package();
             }
         });
         let weak = Rc::downgrade(self);
-        open_settings.connect_clicked(move |_| {
+        open_settings.connect_activate(move |_, _| {
             if let Some(viewer) = weak.upgrade() {
                 viewer.show_settings();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        quit.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.window.application().expect("application").quit();
             }
         });
         let weak = Rc::downgrade(self);
         close_source.connect_clicked(move |_| {
             if let Some(viewer) = weak.upgrade() {
                 viewer.close_active_source();
+            }
+        });
+    }
+
+    fn connect_system_theme(self: &Rc<Self>) {
+        let Some(settings) = gtk::Settings::default() else {
+            return;
+        };
+        let weak = Rc::downgrade(self);
+        settings.connect_gtk_application_prefer_dark_theme_notify(move |_| {
+            let Some(viewer) = weak.upgrade() else {
+                return;
+            };
+            if viewer.settings.borrow().theme == ThemePreference::System {
+                viewer.apply_theme(ThemePreference::System);
             }
         });
     }
@@ -1221,18 +1279,19 @@ impl Viewer {
     }
 
     fn show_settings(self: &Rc<Self>) {
-        let current = self.settings.borrow().notebooks_location.clone();
+        let current_settings = self.settings.borrow().clone();
         let default = settings::default_notebooks_location();
         let weak_save = Rc::downgrade(self);
         let weak_error = weak_save.clone();
         crate::dialogs::present_settings(
             &self.window,
-            current,
+            current_settings.notebooks_location,
             default,
-            move |location| {
+            current_settings.theme,
+            move |location, theme| {
                 weak_save
                     .upgrade()
-                    .is_some_and(|viewer| viewer.set_notebooks_location(location))
+                    .is_some_and(|viewer| viewer.set_preferences(location, theme))
             },
             move |title, detail| {
                 if let Some(viewer) = weak_error.upgrade() {
@@ -1242,7 +1301,7 @@ impl Viewer {
         );
     }
 
-    fn set_notebooks_location(&self, location: &std::path::Path) -> bool {
+    fn set_preferences(&self, location: &std::path::Path, theme: ThemePreference) -> bool {
         if let Err(error) = settings::ensure_notebooks_location(location) {
             self.show_error(
                 "Could not use default notebooks location",
@@ -1252,15 +1311,22 @@ impl Viewer {
         }
         let updated = AppSettings {
             notebooks_location: location.to_path_buf(),
+            theme,
         };
         if let Err(error) = settings::save(&self.settings_path, &updated) {
             self.show_error("Could not save settings", &error.to_string());
             return false;
         }
         *self.settings.borrow_mut() = updated;
+        self.apply_theme(theme);
         self.persist_workspace();
         self.open_notebooks_location();
         true
+    }
+
+    fn apply_theme(&self, preference: ThemePreference) {
+        self.style_provider
+            .load_from_string(&theme_css(effective_theme(preference)));
     }
 
     fn start_package_import(&self, package: PathBuf, destination: PathBuf) {
@@ -1271,7 +1337,7 @@ impl Viewer {
         }
         let cancel = Arc::new(AtomicBool::new(false));
         *self.import_cancel.borrow_mut() = Some(Arc::clone(&cancel));
-        self.import_package_button.set_sensitive(false);
+        self.import_package_action.set_enabled(false);
         self.import_cancel_button.set_sensitive(true);
         self.import_progress.set_fraction(0.0);
         self.import_activity_title.set_label(&format!(
@@ -1291,7 +1357,7 @@ impl Viewer {
     fn finish_import_activity(&self) {
         self.import_cancel.borrow_mut().take();
         self.import_cancel_button.set_sensitive(false);
-        self.import_package_button.set_sensitive(true);
+        self.import_package_action.set_enabled(true);
         self.import_activity.set_reveal_child(false);
     }
 
@@ -1348,6 +1414,7 @@ impl Viewer {
             .wrap(true)
             .wrap_mode(gtk::pango::WrapMode::WordChar)
             .xalign(0.0)
+            .selectable(true)
             .build();
         heading.add_css_class("error-title");
         content.append(&heading);
@@ -1390,6 +1457,7 @@ impl Viewer {
         close.connect_clicked(move |_| dialog_on_close.close());
 
         dialog.set_child(Some(&content));
+        close.grab_focus();
         dialog.present();
     }
 }
@@ -1697,160 +1765,307 @@ fn find_section<'a>(entries: &'a [NotebookEntry], id: &SectionId) -> Option<&'a 
     None
 }
 
+#[derive(Clone, Copy)]
+enum EffectiveTheme {
+    Light,
+    Dark,
+}
+
+fn effective_theme(preference: ThemePreference) -> EffectiveTheme {
+    match preference {
+        ThemePreference::Light => EffectiveTheme::Light,
+        ThemePreference::Dark => EffectiveTheme::Dark,
+        ThemePreference::System => {
+            if gtk::Settings::default()
+                .is_some_and(|settings| settings.is_gtk_application_prefer_dark_theme())
+            {
+                EffectiveTheme::Dark
+            } else {
+                EffectiveTheme::Light
+            }
+        }
+    }
+}
+
+fn theme_colors(theme: EffectiveTheme) -> &'static str {
+    match theme {
+        EffectiveTheme::Light => {
+            "
+            @define-color app_bg #f7f7f8;
+            @define-color surface #ffffff;
+            @define-color navigation_bg #f3f3f5;
+            @define-color text #202124;
+            @define-color muted #666970;
+            @define-color border #d9dadd;
+            @define-color control_bg #ffffff;
+            @define-color control_hover #e7e8eb;
+            @define-color control_disabled #e1e2e5;
+            @define-color disabled_text #92959c;
+            @define-color accent #6b3a96;
+            @define-color accent_hover #5b2d90;
+            @define-color selected_bg #e8def3;
+            @define-color selected_text #2d183d;
+            @define-color page_accent #b35a24;
+            @define-color activity_bg #f1eaf8;
+            @define-color activity_border #d6c8e4;
+            @define-color activity_text #5f5268;
+            @define-color warning #9b2c1f;
+            "
+        }
+        EffectiveTheme::Dark => {
+            "
+            @define-color app_bg #202124;
+            @define-color surface #292a2d;
+            @define-color navigation_bg #242529;
+            @define-color text #f1f3f4;
+            @define-color muted #b4b7bd;
+            @define-color border #484a50;
+            @define-color control_bg #34363a;
+            @define-color control_hover #414349;
+            @define-color control_disabled #292b2f;
+            @define-color disabled_text #777a80;
+            @define-color accent #a970d5;
+            @define-color accent_hover #b982df;
+            @define-color selected_bg #463454;
+            @define-color selected_text #ffffff;
+            @define-color page_accent #e08a52;
+            @define-color activity_bg #33293d;
+            @define-color activity_border #584467;
+            @define-color activity_text #d4c4df;
+            @define-color warning #ff8a78;
+            "
+        }
+    }
+}
+
 #[allow(clippy::too_many_lines)]
-fn install_resources() {
-    let display = gdk_display();
-    gtk::IconTheme::for_display(&display).add_resource_path("/io/github/emsi/OneNoteViewer/icons");
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(
-        "
-        window, window:backdrop { background: #f7f7f8; color: #202124; }
-        headerbar, headerbar:backdrop {
-            background: #ffffff;
-            color: #202124;
-            border-bottom: 1px solid #d9dadd;
-        }
+fn theme_css(theme: EffectiveTheme) -> String {
+    format!(
+        "{}
+        window, window:backdrop {{
+            background: @app_bg;
+            color: @text;
+        }}
+        headerbar, headerbar:backdrop {{
+            background: @surface;
+            color: @text;
+            border-bottom: 1px solid @border;
+        }}
+        button, button:backdrop,
+        dropdown > button, dropdown > button:backdrop {{
+            background: @control_bg;
+            color: @text;
+            border: 1px solid @border;
+            box-shadow: none;
+        }}
+        button:hover, dropdown > button:hover {{
+            background: @control_hover;
+        }}
+        button:disabled, button:disabled:backdrop,
+        dropdown > button:disabled, dropdown > button:disabled:backdrop {{
+            background: @control_disabled;
+            color: @disabled_text;
+        }}
+        button.suggested-action, button.suggested-action:backdrop {{
+            background: @accent;
+            color: white;
+            border-color: @accent;
+        }}
+        button.suggested-action:hover {{
+            background: @accent_hover;
+            border-color: @accent_hover;
+        }}
+        button.suggested-action:disabled,
+        button.suggested-action:disabled:backdrop {{
+            background: @control_disabled;
+            color: @disabled_text;
+            border-color: @border;
+        }}
+        windowcontrols button, windowcontrols button:backdrop {{
+            background: transparent;
+            color: @text;
+            border-color: transparent;
+        }}
+        windowcontrols button:hover {{
+            background: @control_hover;
+        }}
         .icon-button, .icon-button:backdrop,
-        .icon-button image, .icon-button image:backdrop {
-            background: #f7f7f8;
-            color: #202124;
-        }
-        .icon-button:hover { background: #e7e8eb; }
-        .brand, .brand:backdrop {
+        .icon-button image, .icon-button image:backdrop {{
+            background: @control_bg;
+            color: @text;
+        }}
+        .icon-button:hover {{ background: @control_hover; }}
+        .brand, .brand:backdrop {{
             font-size: 16px;
             font-weight: 700;
-            color: #5b2d90;
-        }
-        searchentry { min-height: 34px; }
-        .navigation-band, .navigation-band:backdrop {
-            background: #f3f3f5;
-            color: #202124;
-        }
+            color: @accent;
+        }}
+        searchentry, searchentry:backdrop,
+        entry, entry:backdrop {{
+            min-height: 34px;
+            background: @control_bg;
+            color: @text;
+            border-color: @border;
+        }}
+        searchentry text, searchentry text:backdrop,
+        entry text, entry text:backdrop {{
+            background: transparent;
+            color: @text;
+        }}
+        searchentry image, searchentry image:backdrop {{
+            color: @muted;
+        }}
+        popover contents, popover contents:backdrop {{
+            background: @surface;
+            color: @text;
+            border: 1px solid @border;
+        }}
+        popover modelbutton, popover modelbutton:backdrop {{
+            background: transparent;
+            color: @text;
+            border-color: transparent;
+        }}
+        popover modelbutton:hover {{ background: @control_hover; }}
+        .navigation-band, .navigation-band:backdrop {{
+            background: @navigation_bg;
+            color: @text;
+        }}
         .navigation-band label, .navigation-band label:backdrop,
         treeexpander, treeexpander:backdrop,
-        treeexpander > expander, treeexpander > expander:backdrop {
-            color: #202124;
-        }
-        treeexpander > expander {
+        treeexpander > expander, treeexpander > expander:backdrop {{
+            color: @text;
+        }}
+        treeexpander > expander {{
             min-width: 16px;
             min-height: 16px;
             -gtk-icon-source: -gtk-icontheme(\"onenote-chevron-right-symbolic\");
-        }
-        treeexpander > expander:checked {
+        }}
+        treeexpander > expander:checked {{
             -gtk-icon-source: -gtk-icontheme(\"onenote-chevron-down-symbolic\");
-        }
-        .nav-heading, .nav-heading:backdrop {
+        }}
+        .nav-heading, .nav-heading:backdrop {{
             font-size: 11px;
             font-weight: 700;
-            color: #666970;
-        }
-        listview, listview:backdrop { background: transparent; color: #202124; }
-        listview row, listview row:backdrop {
+            color: @muted;
+        }}
+        listview, listview:backdrop {{
+            background: transparent;
+            color: @text;
+        }}
+        listview row, listview row:backdrop {{
             border-radius: 4px;
             margin: 1px 6px;
-            color: #202124;
-        }
-        listview row:selected, listview row:selected:backdrop {
-            background: #e8def3;
-            color: #2d183d;
-        }
-        .notebook-row { font-weight: 600; }
-        .group-row { font-weight: 500; }
-        .notebook-tree row:selected { border-left: 3px solid #6b3a96; }
-        .page-list row:selected { border-left: 3px solid #b35a24; }
-        .result-row { line-height: 1.25; }
-        .page-title, .page-title:backdrop {
+            color: @text;
+        }}
+        listview row:selected, listview row:selected:backdrop {{
+            background: @selected_bg;
+            color: @selected_text;
+        }}
+        .notebook-row {{ font-weight: 600; }}
+        .group-row {{ font-weight: 500; }}
+        .notebook-tree row:selected {{ border-left: 3px solid @accent; }}
+        .page-list row:selected {{ border-left: 3px solid @page_accent; }}
+        .result-row {{ line-height: 1.25; }}
+        .page-title, .page-title:backdrop {{
             font-size: 20px;
             font-weight: 650;
-            color: #202124;
-        }
+            color: @text;
+        }}
         .page-date, .page-date:backdrop,
         .page-context, .page-context:backdrop,
-        .status, .status:backdrop { font-size: 12px; color: #666970; }
-        .empty-title, .empty-title:backdrop {
+        .status, .status:backdrop {{
+            font-size: 12px;
+            color: @muted;
+        }}
+        .empty-title, .empty-title:backdrop {{
             font-size: 20px;
             font-weight: 600;
-            color: #202124;
-        }
-        .empty-icon, .empty-icon:backdrop { color: #777a80; }
-        .import-activity, .import-activity:backdrop {
-            background: #f1eaf8;
-            color: #202124;
-            border-bottom: 1px solid #d6c8e4;
-        }
-        .activity-title, .activity-title:backdrop {
+            color: @text;
+        }}
+        .empty-icon, .empty-icon:backdrop {{ color: @muted; }}
+        .import-activity, .import-activity:backdrop {{
+            background: @activity_bg;
+            color: @text;
+            border-bottom: 1px solid @activity_border;
+        }}
+        .activity-title, .activity-title:backdrop {{
             font-size: 14px;
             font-weight: 650;
-            color: #2d183d;
-        }
-        .activity-phase, .activity-phase:backdrop {
+            color: @selected_text;
+        }}
+        .activity-phase, .activity-phase:backdrop {{
             font-size: 12px;
-            color: #5f5268;
-        }
-        .settings-dialog, .settings-dialog:backdrop {
-            background: #f7f7f8;
-            color: #202124;
-        }
+            color: @activity_text;
+        }}
+        .settings-dialog, .settings-dialog:backdrop,
+        .error-dialog, .error-dialog:backdrop {{
+            background: @app_bg;
+            color: @text;
+        }}
         .settings-dialog label, .settings-dialog label:backdrop,
-        .settings-dialog button, .settings-dialog button:backdrop {
-            color: #202124;
-        }
-        .dialog-title, .dialog-title:backdrop {
+        .error-dialog label, .error-dialog label:backdrop {{
+            color: @text;
+        }}
+        .dialog-title, .dialog-title:backdrop,
+        .error-title, .error-title:backdrop {{
             font-size: 18px;
             font-weight: 700;
-            color: #202124;
-        }
-        .field-label, .field-label:backdrop {
+            color: @text;
+        }}
+        .field-label, .field-label:backdrop {{
             font-size: 12px;
             font-weight: 700;
-            color: #55585f;
-        }
-        .path-value, .path-value:backdrop {
-            background: #ffffff;
-            color: #202124;
-            border: 1px solid #d9dadd;
+            color: @muted;
+        }}
+        .dim-label, .dim-label:backdrop {{
+            color: @muted;
+        }}
+        .path-value, .path-value:backdrop {{
+            background: @surface;
+            color: @text;
+            border: 1px solid @border;
             border-radius: 4px;
             padding: 10px;
-        }
-        .warning-label, .warning-label:backdrop {
-            color: #9b2c1f;
+        }}
+        label selection, label selection:backdrop {{
+            background: @accent;
+            color: white;
+        }}
+        .warning-label, .warning-label:backdrop {{
+            color: @warning;
             font-weight: 600;
-        }
-        .error-dialog, .error-dialog:backdrop {
-            background: #f7f7f8;
-            color: #202124;
-        }
-        .error-dialog label, .error-dialog label:backdrop,
-        .error-dialog button, .error-dialog button:backdrop {
-            color: #202124;
-        }
-        .error-title, .error-title:backdrop {
-            font-size: 18px;
-            font-weight: 700;
-            color: #202124;
-        }
-        .error-detail-frame {
-            border: 1px solid #d9dadd;
+        }}
+        .error-detail-frame {{
+            border: 1px solid @border;
             border-radius: 4px;
-        }
+        }}
         .error-detail, .error-detail:backdrop,
-        .error-detail text, .error-detail text:backdrop {
-            background: #ffffff;
-            color: #202124;
-            caret-color: #202124;
-        }
+        .error-detail text, .error-detail text:backdrop {{
+            background: @surface;
+            color: @text;
+            caret-color: @text;
+        }}
         .error-detail text selection,
-        .error-detail text selection:backdrop {
-            background: #6b3a96;
-            color: #ffffff;
-        }
+        .error-detail text selection:backdrop {{
+            background: @accent;
+            color: white;
+        }}
         ",
-    );
+        theme_colors(theme)
+    )
+}
+
+fn install_resources(theme: ThemePreference) -> gtk::CssProvider {
+    let display = gdk_display();
+    gtk::IconTheme::for_display(&display).add_resource_path("/io/github/emsi/OneNoteViewer/icons");
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(&theme_css(effective_theme(theme)));
     gtk::style_context_add_provider_for_display(
         &display,
         &provider,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+    provider
 }
 
 fn gdk_display() -> gtk::gdk::Display {
@@ -1885,6 +2100,25 @@ mod tests {
     fn gtk_text_replaces_interior_nuls() {
         assert_eq!(gtk_text("One\0Note"), "One�Note");
         assert_eq!(gtk_text("OneNote"), "OneNote");
+    }
+
+    #[test]
+    fn both_themes_define_complete_control_and_selection_states() {
+        for theme in [EffectiveTheme::Light, EffectiveTheme::Dark] {
+            let css = theme_css(theme);
+            for required in [
+                "@define-color control_bg",
+                "@define-color control_hover",
+                "@define-color control_disabled",
+                "button:backdrop",
+                "button:disabled",
+                "button.suggested-action",
+                "label selection",
+                ".error-detail text selection",
+            ] {
+                assert!(css.contains(required), "theme CSS is missing {required}");
+            }
+        }
     }
 
     #[test]

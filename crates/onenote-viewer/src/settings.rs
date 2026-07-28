@@ -4,16 +4,46 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ThemePreference {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl ThemePreference {
+    pub(crate) const fn selected(self) -> u32 {
+        match self {
+            Self::System => 0,
+            Self::Light => 1,
+            Self::Dark => 2,
+        }
+    }
+
+    pub(crate) const fn from_selected(selected: u32) -> Self {
+        match selected {
+            1 => Self::Light,
+            2 => Self::Dark,
+            _ => Self::System,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(crate) struct AppSettings {
     #[serde(default = "default_notebooks_location")]
     pub(crate) notebooks_location: PathBuf,
+    #[serde(default)]
+    pub(crate) theme: ThemePreference,
 }
 
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
             notebooks_location: default_notebooks_location(),
+            theme: ThemePreference::default(),
         }
     }
 }
@@ -105,12 +135,14 @@ mod tests {
         let path = temporary.path().join("config/settings.json");
         let expected = AppSettings {
             notebooks_location: temporary.path().join("Documents/OneNoteViewer"),
+            theme: ThemePreference::Dark,
         };
 
         save(&path, &expected).expect("save");
         let actual = load(&path).expect("load");
 
         assert_eq!(actual.notebooks_location, expected.notebooks_location);
+        assert_eq!(actual.theme, ThemePreference::Dark);
         assert!(!path.with_extension("json.new").exists());
     }
 
@@ -123,6 +155,7 @@ mod tests {
         let actual = load(&path).expect("load");
 
         assert_eq!(actual.notebooks_location, default_notebooks_location());
+        assert_eq!(actual.theme, ThemePreference::System);
     }
 
     #[test]

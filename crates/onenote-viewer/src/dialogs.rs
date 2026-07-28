@@ -1,3 +1,4 @@
+use crate::settings::ThemePreference;
 use gtk::gio;
 use gtk::prelude::*;
 use std::cell::RefCell;
@@ -34,6 +35,7 @@ pub(crate) fn present_package_import<F, E>(
     let heading = gtk::Label::builder()
         .label(format!("Import {folder_name}"))
         .xalign(0.0)
+        .selectable(true)
         .build();
     heading.add_css_class("dialog-title");
     content.append(&heading);
@@ -50,6 +52,7 @@ pub(crate) fn present_package_import<F, E>(
     let destination_heading = gtk::Label::builder()
         .label("Notebook folder")
         .xalign(0.0)
+        .selectable(true)
         .build();
     destination_heading.add_css_class("field-label");
     content.append(&destination_heading);
@@ -64,11 +67,16 @@ pub(crate) fn present_package_import<F, E>(
         )
         .xalign(0.0)
         .wrap(true)
+        .selectable(true)
         .build();
     explanation.add_css_class("dim-label");
     content.append(&explanation);
 
-    let conflict = gtk::Label::builder().xalign(0.0).wrap(true).build();
+    let conflict = gtk::Label::builder()
+        .xalign(0.0)
+        .wrap(true)
+        .selectable(true)
+        .build();
     conflict.add_css_class("warning-label");
     content.append(&conflict);
 
@@ -149,17 +157,20 @@ pub(crate) fn present_package_import<F, E>(
     });
 
     dialog.set_child(Some(&content));
+    import.grab_focus();
     dialog.present();
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) fn present_settings<F, E>(
     parent_window: &gtk::ApplicationWindow,
     current: PathBuf,
     default: PathBuf,
+    current_theme: ThemePreference,
     on_save: F,
     on_error: E,
 ) where
-    F: Fn(&Path) -> bool + 'static,
+    F: Fn(&Path, ThemePreference) -> bool + 'static,
     E: Fn(&str, &str) + 'static,
 {
     let candidate = Rc::new(RefCell::new(current));
@@ -177,6 +188,7 @@ pub(crate) fn present_settings<F, E>(
     let heading = gtk::Label::builder()
         .label("Notebook Storage")
         .xalign(0.0)
+        .selectable(true)
         .build();
     heading.add_css_class("dialog-title");
     content.append(&heading);
@@ -188,6 +200,7 @@ pub(crate) fn present_settings<F, E>(
         )
         .xalign(0.0)
         .wrap(true)
+        .selectable(true)
         .build();
     description.add_css_class("dim-label");
     content.append(&description);
@@ -195,6 +208,7 @@ pub(crate) fn present_settings<F, E>(
     let field_heading = gtk::Label::builder()
         .label("Default notebooks location")
         .xalign(0.0)
+        .selectable(true)
         .build();
     field_heading.add_css_class("field-label");
     content.append(&field_heading);
@@ -208,6 +222,20 @@ pub(crate) fn present_settings<F, E>(
     location_actions.append(&choose);
     location_actions.append(&reset);
     content.append(&location_actions);
+
+    let appearance_heading = gtk::Label::builder()
+        .label("Appearance")
+        .xalign(0.0)
+        .selectable(true)
+        .build();
+    appearance_heading.add_css_class("field-label");
+    content.append(&appearance_heading);
+
+    let theme = gtk::DropDown::from_strings(&["System", "Light", "Dark"]);
+    theme.set_selected(current_theme.selected());
+    theme.set_tooltip_text(Some("Choose the application color theme"));
+    theme.set_hexpand(true);
+    content.append(&theme);
 
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::End);
@@ -264,12 +292,16 @@ pub(crate) fn present_settings<F, E>(
 
     let dialog_on_save = dialog.clone();
     save.connect_clicked(move |_| {
-        if on_save(&candidate.borrow()) {
+        if on_save(
+            &candidate.borrow(),
+            ThemePreference::from_selected(theme.selected()),
+        ) {
             dialog_on_save.close();
         }
     });
 
     dialog.set_child(Some(&content));
+    save.grab_focus();
     dialog.present();
 }
 
