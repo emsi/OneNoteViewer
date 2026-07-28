@@ -3,7 +3,7 @@
 The active application dependency is the public
 [`emsi/onenote.rs`](https://github.com/emsi/onenote.rs) fork, pinned in the
 workspace manifest to merge revision
-`3cc4e985d842c76dc04055955b460713d6f6ea24`. That revision starts from upstream
+`6fb8266b67dfa2c1a866668774c8773293585e48`. That revision starts from upstream
 `f9cdc59f984bc1f7f096b54100cefaaebc892573` (version 1.1.1) and contains the
 compatibility patches below.
 
@@ -33,6 +33,10 @@ only through `onenote-core`.
    high-level outline-group model does not consume it; preserving the group's
    children is safer than rejecting the complete section and does not invent a
    timestamp.
+6. `.onetoc2` global ID tables resolve `GlobalIdTableEntry3FNDX` range-copy
+   records against their dependency revision. Source and destination ranges
+   are validated before copying so malformed indices still produce an
+   actionable parser error.
 
 The supplied private corpus has one section requiring patch 1 and two sections
 that reach a wider numeric property requiring patches 2 and 3. All 32 native
@@ -45,7 +49,8 @@ the patches; the corpus remains private and is tested only when
 
 ## Upstream Tracking
 
-The changes are split into independently reviewable draft pull requests:
+The first five changes are split into independently reviewable draft pull
+requests:
 
 - [msiemens/onenote.rs#36](https://github.com/msiemens/onenote.rs/pull/36)
   preserves unavailable attachment payloads and fixes
@@ -56,6 +61,9 @@ The changes are split into independently reviewable draft pull requests:
 - [msiemens/onenote.rs#38](https://github.com/msiemens/onenote.rs/pull/38)
   accepts losslessly convertible enum property widths and fixes
   [issue #34](https://github.com/msiemens/onenote.rs/issues/34).
+
+The `GlobalIdTableEntry3FNDX` implementation is currently carried only by the
+fork and has not yet been submitted upstream.
 
 Until those changes are accepted in an upstream release, update the pinned
 fork revision deliberately and review the corresponding lockfile change.
