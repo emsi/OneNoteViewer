@@ -12,7 +12,8 @@ There is no second menu bar or decorative toolbar consuming document height.
 
 The header contains:
 
-- the bundled application icon at the left edge;
+- one native window-menu icon at the left edge, sourced from the registered
+  bundled application icon rather than a second manually packed image;
 - the OneNote Viewer identity;
 - global notebook search;
 - one main menu beside search for file, import, settings, and application
@@ -75,9 +76,11 @@ destination, fall back to the configured default notebooks location when it is
 invalid, and finally fall back to Home only when neither directory exists.
 
 Desktop portal implementations are permitted to ignore the suggested initial
-folder. The initiating control must therefore show immediate pending feedback
-until the out-of-process chooser appears or returns; the application must not
-look unresponsive while a desktop backend starts.
+folder. KDE versions or portal configurations that ignore `current_folder`
+can consequently open at Home even though OneNote Viewer supplied the validated
+destination. The initiating control must therefore show immediate pending
+feedback until the out-of-process chooser appears or returns; the application
+must not look unresponsive while a desktop backend starts.
 
 ## Regression That Established These Rules
 

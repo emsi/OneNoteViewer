@@ -351,15 +351,14 @@ impl Viewer {
             .menu_model(&application_menu)
             .build();
         menu.add_css_class("icon-button");
+        menu.add_css_class("main-menu");
+        menu.set_size_request(36, 36);
+        menu.set_margin_end(10);
         menu.set_tooltip_text(Some("Main menu"));
         header_title.append(&menu);
 
         let header = gtk::HeaderBar::new();
         header.set_show_title_buttons(true);
-        let app_icon = gtk::Image::from_icon_name(APP_ICON_NAME);
-        app_icon.set_pixel_size(24);
-        app_icon.add_css_class("app-icon");
-        header.pack_start(&app_icon);
         header.set_title_widget(Some(&header_title));
 
         let notebooks = CollapsibleNavigationBand::new(
@@ -1918,16 +1917,17 @@ fn theme_css(theme: EffectiveTheme) -> String {
         windowcontrols button:hover {{
             background: @control_hover;
         }}
-        .app-icon {{
-            min-width: 24px;
-            min-height: 24px;
-        }}
         .icon-button, .icon-button:backdrop,
         .icon-button image, .icon-button image:backdrop {{
             background: @control_bg;
             color: @text;
         }}
         .icon-button:hover {{ background: @control_hover; }}
+        .main-menu {{
+            min-width: 36px;
+            min-height: 36px;
+            padding: 6px;
+        }}
         .brand, .brand:backdrop {{
             font-size: 16px;
             font-weight: 700;
