@@ -82,6 +82,19 @@ impl PageView {
         self.canvas.zoom()
     }
 
+    /// Set the fallback for text whose `OneNote` style uses automatic color.
+    ///
+    /// This lets embedding applications adapt automatic text to their page
+    /// surface without changing explicit colors stored in the notebook.
+    pub fn set_default_text_color(&self, color: &gdk::RGBA) {
+        self.canvas.set_default_text_color(color);
+    }
+
+    /// Current fallback for text whose `OneNote` style uses automatic color.
+    pub fn default_text_color(&self) -> gdk::RGBA {
+        self.canvas.default_text_color()
+    }
+
     /// Scroll a logical object rectangle into view.
     pub fn reveal(&self, bounds: Rect) {
         let Some(scene) = self.canvas.scene() else {

@@ -29,6 +29,7 @@ mod imp {
         pub(super) scene: RefCell<Option<Arc<PageScene>>>,
         pub(super) resources: RefCell<Option<Arc<ResourceStore>>>,
         pub(super) zoom: Cell<f32>,
+        pub(super) default_text_color: RefCell<gdk::RGBA>,
         pub(super) action_handler: RefCell<Option<ActionHandler>>,
         pub(super) textures: RefCell<HashMap<ResourceId, CachedTexture>>,
         pub(super) pending: RefCell<HashSet<ResourceId>>,
@@ -42,6 +43,7 @@ mod imp {
                 scene: RefCell::default(),
                 resources: RefCell::default(),
                 zoom: Cell::new(1.0),
+                default_text_color: RefCell::new(gdk::RGBA::BLACK),
                 action_handler: RefCell::default(),
                 textures: RefCell::default(),
                 pending: RefCell::default(),
@@ -157,6 +159,20 @@ impl PageCanvas {
         self.imp().zoom.get()
     }
 
+    /// Set the fallback for text whose `OneNote` style uses automatic color.
+    ///
+    /// Explicit foreground colors stored in the page continue to override this
+    /// host-provided value.
+    pub fn set_default_text_color(&self, color: &gdk::RGBA) {
+        *self.imp().default_text_color.borrow_mut() = *color;
+        self.queue_draw();
+    }
+
+    /// Current fallback for text whose `OneNote` style uses automatic color.
+    pub fn default_text_color(&self) -> gdk::RGBA {
+        *self.imp().default_text_color.borrow()
+    }
+
     /// Set the host callback for link, attachment, and selection actions.
     pub fn set_action_handler(&self, handler: Option<impl Fn(HitAction) + 'static>) {
         *self.imp().action_handler.borrow_mut() =
@@ -227,7 +243,7 @@ impl PageCanvas {
                 );
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(node.bounds.x, node.bounds.y));
-                snapshot.append_layout(&layout, &gdk::RGBA::BLACK);
+                snapshot.append_layout(&layout, &self.default_text_color());
                 snapshot.restore();
             }
             ScenePrimitive::Image(image) => {
@@ -272,7 +288,7 @@ impl PageCanvas {
                 to_y,
             } => snapshot_line(snapshot, node.bounds, *to_x, *to_y, *color, *width),
             ScenePrimitive::Placeholder { label } => {
-                self.snapshot_label(snapshot, node.bounds, label, gdk::RGBA::BLACK);
+                self.snapshot_label(snapshot, node.bounds, label, self.default_text_color());
             }
         }
     }
