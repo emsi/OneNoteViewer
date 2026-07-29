@@ -181,10 +181,29 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_NOTES: |
+            ## Install the Flatpak
+
+            Flatpak is the primary release channel. Download
+            `OneNoteViewer-linux-x86_64.flatpak` and its `.sha256` file below,
+            then run:
+
+            ```bash
+            sha256sum --check OneNoteViewer-linux-x86_64.flatpak.sha256
+            flatpak remote-add --user --if-not-exists flathub \
+              https://dl.flathub.org/repo/flathub.flatpakrepo
+            flatpak install --user --or-update ./OneNoteViewer-linux-x86_64.flatpak
+            flatpak run io.github.emsi.OneNoteViewer
+            ```
+
+            This is a directly distributed bundle. To update, download the
+            newer bundle and repeat the checksum and `flatpak install
+            --user --or-update` commands.
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --verify-tag \
             --generate-notes \
+            --notes "${RELEASE_NOTES}" \
             --title "OneNote Viewer ${GITHUB_REF_NAME}" \
             dist/*.AppImage \
             dist/*.flatpak \

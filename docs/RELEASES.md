@@ -3,21 +3,60 @@
 GitHub releases publish two runnable Linux preview artifacts: Flatpak and
 AppImage. Neither requires Rust, Cargo, compiler headers, or `pkg-config` on
 the machine used to run it. Native binaries remain local and CI-only build
-products.
+products. Flatpak is the primary release channel; AppImage is the secondary
+installation-free option.
 
 ## Artifact Choice
 
 ### Flatpak Bundle
 
-`OneNoteViewer-linux-x86_64.flatpak` is the recommended cross-distribution
+`OneNoteViewer-linux-x86_64.flatpak` is the primary cross-distribution
 artifact. It uses the GNOME 50 runtime, so the GTK version is independent of
 the host distribution.
 
-Install and run:
+Install Flatpak first through the host distribution if the `flatpak` command is
+not available. For Debian and Ubuntu:
 
 ```bash
-flatpak install --user ./OneNoteViewer-linux-x86_64.flatpak
+sudo apt update
+sudo apt install flatpak
+```
+
+Download the bundle and its checksum from the
+[latest GitHub release](https://github.com/emsi/OneNoteViewer/releases/latest).
+They can also be downloaded directly:
+
+```bash
+curl --fail --location --remote-name \
+  https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-linux-x86_64.flatpak
+curl --fail --location --remote-name \
+  https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-linux-x86_64.flatpak.sha256
+```
+
+Alternatively, with GitHub CLI:
+
+```bash
+gh release download --repo emsi/OneNoteViewer \
+  --pattern 'OneNoteViewer-linux-x86_64.flatpak*'
+```
+
+Verify, install or update, and run:
+
+```bash
+sha256sum --check OneNoteViewer-linux-x86_64.flatpak.sha256
+flatpak remote-add --user --if-not-exists flathub \
+  https://dl.flathub.org/repo/flathub.flatpakrepo
+flatpak install --user --or-update ./OneNoteViewer-linux-x86_64.flatpak
 flatpak run io.github.emsi.OneNoteViewer
+```
+
+The bundle is distributed directly rather than through a Flatpak repository,
+so `flatpak update` cannot discover new OneNote Viewer releases. Download each
+new bundle and repeat the checksum and `flatpak install --user --or-update`
+commands. Uninstalling the application does not delete notebooks:
+
+```bash
+flatpak uninstall --user io.github.emsi.OneNoteViewer
 ```
 
 Use the application's folder/file chooser to grant read-only access to
