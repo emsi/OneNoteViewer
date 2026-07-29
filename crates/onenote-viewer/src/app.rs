@@ -1,4 +1,6 @@
-use crate::navigation::{NavigationTarget, NotebookTree};
+use crate::navigation::{
+    connect_keyboard_activation, connect_pointer_activation, NavigationTarget, NotebookTree,
+};
 use crate::settings::{self, AppSettings, ThemePreference};
 use crate::worker::{self, Command, Event};
 use crate::workspace::{self, WorkspaceConfig};
@@ -1005,16 +1007,23 @@ impl Viewer {
             let state = self.state.borrow();
             let row = state.pages.get(position)?;
             let source = state.sources.get(row.source)?;
-            let section = find_section(&source.loaded.notebook.entries, &row.section_id)?;
+            let section = source.loaded.notebook.section(&row.section_id)?;
             let page = section.pages.iter().find(|page| page.id == row.page_id)?;
+            let section_path = source
+                .loaded
+                .notebook
+                .section_path(&row.section_id)?
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
             Some((
                 page.clone(),
                 source.loaded.clone(),
                 source.loaded.notebook.name.clone(),
-                section.name.clone(),
+                section_path,
             ))
         })();
-        let Some((page, loaded, notebook_name, section_name)) = value else {
+        let Some((page, loaded, notebook_name, section_path)) = value else {
             return;
         };
         let display_title = display_title(&page);
@@ -1022,7 +1031,10 @@ impl Viewer {
         self.page_title.set_label(&title);
         let date = display_timestamp(&page.created_at);
         self.page_date.set_label(&date);
-        let display_context = format!("{notebook_name}  /  {section_name}");
+        let display_context = std::iter::once(notebook_name.as_str())
+            .chain(section_path.iter().map(String::as_str))
+            .collect::<Vec<_>>()
+            .join("  /  ");
         let context = gtk_text(&display_context);
         self.page_context.set_label(&context);
         self.page_view
@@ -1491,9 +1503,16 @@ fn extraction_phase_label(phase: ExtractionPhase) -> &'static str {
 fn list_view(model: &gtk::StringList, css_class: &str) -> (gtk::SingleSelection, gtk::ListView) {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     selection.set_autoselect(false);
+    let list = gtk::ListView::builder()
+        .model(&selection)
+        .single_click_activate(false)
+        .css_classes([css_class])
+        .build();
     let factory = gtk::SignalListItemFactory::new();
+    let list_for_setup = list.downgrade();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
+        item.set_activatable(false);
         let label = gtk::Label::builder()
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -1503,23 +1522,27 @@ fn list_view(model: &gtk::StringList, css_class: &str) -> (gtk::SingleSelection,
         label.set_margin_top(8);
         label.set_margin_bottom(8);
         item.set_child(Some(&label));
+        connect_pointer_activation(item, &label, &list_for_setup);
     });
     factory.connect_bind(|_, item| bind_string(item, false));
-    let list = gtk::ListView::builder()
-        .model(&selection)
-        .factory(&factory)
-        .single_click_activate(true)
-        .css_classes([css_class])
-        .build();
+    list.set_factory(Some(&factory));
+    connect_keyboard_activation(&list, &selection);
     (selection, list)
 }
 
 fn result_list(model: &gtk::StringList) -> (gtk::SingleSelection, gtk::ListView) {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     selection.set_autoselect(false);
+    let list = gtk::ListView::builder()
+        .model(&selection)
+        .single_click_activate(false)
+        .css_classes(["result-list"])
+        .build();
     let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| {
+    let list_for_setup = list.downgrade();
+    factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
+        item.set_activatable(false);
         let label = gtk::Label::builder()
             .xalign(0.0)
             .wrap(true)
@@ -1532,14 +1555,11 @@ fn result_list(model: &gtk::StringList) -> (gtk::SingleSelection, gtk::ListView)
         label.set_margin_top(10);
         label.set_margin_bottom(10);
         item.set_child(Some(&label));
+        connect_pointer_activation(item, &label, &list_for_setup);
     });
     factory.connect_bind(|_, item| bind_string(item, true));
-    let list = gtk::ListView::builder()
-        .model(&selection)
-        .factory(&factory)
-        .single_click_activate(true)
-        .css_classes(["result-list"])
-        .build();
+    list.set_factory(Some(&factory));
+    connect_keyboard_activation(&list, &selection);
     (selection, list)
 }
 
@@ -1988,7 +2008,12 @@ fn theme_css(theme: EffectiveTheme) -> String {
             margin: 1px 6px;
             color: @text;
         }}
-        listview row:selected, listview row:selected:backdrop {{
+        listview row:hover, listview row:hover:backdrop {{
+            background: transparent;
+            color: @text;
+        }}
+        listview row:selected, listview row:selected:backdrop,
+        listview row:selected:hover, listview row:selected:hover:backdrop {{
             background: @selected_bg;
             color: @selected_text;
         }}
@@ -2169,6 +2194,8 @@ mod tests {
         }
         let (_, notebook_list) = list_view(&gtk::StringList::new(&[]), "notebook-list");
         let (_, page_list) = list_view(&gtk::StringList::new(&[]), "page-list");
+        assert!(!notebook_list.is_single_click_activate());
+        assert!(!page_list.is_single_click_activate());
         let close_source = gtk::Button::new();
         let notebooks = CollapsibleNavigationBand::new(
             "NOTEBOOKS",

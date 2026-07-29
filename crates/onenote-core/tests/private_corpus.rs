@@ -84,6 +84,63 @@ fn extracted_private_notebook_projects_all_native_sections() {
 }
 
 #[test]
+fn machine_learning_toc_uses_latest_complete_ordering_snapshot() {
+    let Some(corpus) = machine_learning_corpus_path() else {
+        return;
+    };
+    let loaded = OneNoteLoader::default()
+        .load(corpus.join("Open Notebook.onetoc2"))
+        .expect("the MachineLearning notebook must project");
+    let root_entries = loaded
+        .notebook
+        .entries
+        .iter()
+        .map(|entry| match entry {
+            NotebookEntry::Section(section) => ("section", section.name.as_str()),
+            NotebookEntry::Group(group) => ("group", group.name.as_str()),
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        root_entries,
+        [
+            ("section", "Notes"),
+            ("section", "Coursera"),
+            ("section", "Biometric Behavioral"),
+            ("section", "Courses links and tutorials"),
+            ("section", "Reinforcement Learning"),
+            ("section", "Tips"),
+            ("section", "Datasets"),
+            ("section", "LLMs"),
+            ("section", "Papers"),
+            ("group", "_Tensorflow"),
+            ("group", "Experiments"),
+            ("group", "fastai Part 1 v3"),
+            ("group", "md893 RL Nanodegree"),
+            ("group", "nd101 Deep Learning Fundation"),
+            ("group", "nd188 pytorch"),
+            ("group", "nd892 NLP Nanodegree"),
+            ("group", "ud012 deepracer"),
+            ("group", "Udacity"),
+        ]
+    );
+    assert_eq!(
+        loaded.notebook.sections().count(),
+        39,
+        "every section referenced by the latest TOC snapshot must appear exactly once"
+    );
+    let deep_learning = loaded
+        .notebook
+        .sections()
+        .find(|section| section.name == "Deep Larning (Udacity)")
+        .expect("nested Udacity section");
+    assert_eq!(
+        loaded.notebook.section_path(&deep_learning.id),
+        Some(vec!["Udacity", "Deep Larning (Udacity)"])
+    );
+}
+
+#[test]
 fn every_private_backup_section_snapshot_opens_individually() {
     let Some(corpus) = backup_corpus_path() else {
         return;
@@ -183,6 +240,11 @@ fn corpus_path() -> Option<PathBuf> {
 fn package_path() -> Option<PathBuf> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.onepkg");
     path.is_file().then_some(path)
+}
+
+fn machine_learning_corpus_path() -> Option<PathBuf> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/MachineLearning");
+    path.is_dir().then_some(path)
 }
 
 fn backup_corpus_path() -> Option<PathBuf> {

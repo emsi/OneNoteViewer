@@ -137,6 +137,41 @@ impl Notebook {
         sections.into_iter()
     }
 
+    /// Find a section by its stable source-scoped identity.
+    pub fn section(&self, id: &SectionId) -> Option<&Section> {
+        self.sections().find(|section| section.id == *id)
+    }
+
+    /// Return the section-group ancestry followed by the section name.
+    pub fn section_path(&self, id: &SectionId) -> Option<Vec<&str>> {
+        fn locate<'a>(
+            entries: &'a [NotebookEntry],
+            id: &SectionId,
+            path: &mut Vec<&'a str>,
+        ) -> bool {
+            for entry in entries {
+                match entry {
+                    NotebookEntry::Section(section) if section.id == *id => {
+                        path.push(&section.name);
+                        return true;
+                    }
+                    NotebookEntry::Section(_) => {}
+                    NotebookEntry::Group(group) => {
+                        path.push(&group.name);
+                        if locate(&group.entries, id, path) {
+                            return true;
+                        }
+                        path.pop();
+                    }
+                }
+            }
+            false
+        }
+
+        let mut path = Vec::new();
+        locate(&self.entries, id, &mut path).then_some(path)
+    }
+
     /// Visit every page in notebook order.
     pub fn pages(&self) -> impl Iterator<Item = &Page> {
         self.sections().flat_map(|section| section.pages.iter())
@@ -634,7 +669,10 @@ fn append_text(output: &mut String, text: Option<&str>) {
 
 #[cfg(test)]
 mod tests {
-    use super::{ResourceRef, ResourceStatus, TextBlock, TextRun, TextStyle};
+    use super::{
+        Notebook, NotebookEntry, ResourceRef, ResourceStatus, Section, SectionGroup, SectionId,
+        SourceFingerprint, SourceId, TextBlock, TextRun, TextStyle,
+    };
 
     #[test]
     fn legacy_resource_json_defaults_to_available() {
@@ -644,6 +682,40 @@ mod tests {
         .expect("legacy resource");
 
         assert_eq!(resource.status, ResourceStatus::Available);
+    }
+
+    #[test]
+    fn section_path_includes_nested_group_ancestry() {
+        let section_id = SectionId::new("deep-learning");
+        let notebook = Notebook {
+            source_id: SourceId::new("source"),
+            fingerprint: SourceFingerprint::new("fingerprint"),
+            name: "Machine Learning".to_owned(),
+            color: None,
+            entries: vec![NotebookEntry::Group(SectionGroup {
+                id: SectionId::new("udacity"),
+                name: "Udacity".to_owned(),
+                entries: vec![NotebookEntry::Section(Section {
+                    id: section_id.clone(),
+                    name: "Deep Learning (Udacity)".to_owned(),
+                    color: None,
+                    pages: Vec::new(),
+                    diagnostics: Vec::new(),
+                })],
+            })],
+            diagnostics: Vec::new(),
+        };
+
+        assert_eq!(
+            notebook
+                .section(&section_id)
+                .map(|section| section.name.as_str()),
+            Some("Deep Learning (Udacity)")
+        );
+        assert_eq!(
+            notebook.section_path(&section_id),
+            Some(vec!["Udacity", "Deep Learning (Udacity)"])
+        );
     }
 
     #[test]

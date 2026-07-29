@@ -16,6 +16,8 @@ reading and finding existing notes:
 - several notebooks can remain open in one workspace;
 - notebook, section group, section, and page navigation remain visible and
   preserve source ordering;
+- page context identifies the notebook and complete section-group ancestry,
+  followed by the owning section;
 - selecting a page displays its native freeform canvas;
 - one search covers all open notebooks and navigates to the matching page and
   canvas object;

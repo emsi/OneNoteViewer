@@ -32,8 +32,8 @@ contains the user-facing behavior.
   content. Desktop revision-store support exists at upstream commit
   `f9cdc59...` and is described for the next major release.
 - **Current mitigation:** The public `emsi/onenote.rs` fork is pinned to
-  signed revision `6fb8266...` and isolated behind `onenote-core`.
-  `third_party/onenote.rs/PATCHES.md` records the six narrow compatibility
+  signed revision `8454acf...` and isolated behind `onenote-core`.
+  `third_party/onenote.rs/PATCHES.md` records the seven narrow compatibility
   patches and their upstream tracking where applicable.
 - **Remaining mitigation:** Complete upstream review and move to a tagged
   upstream release when it contains the required fixes.

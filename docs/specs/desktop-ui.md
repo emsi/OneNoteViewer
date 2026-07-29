@@ -38,6 +38,10 @@ disabled, selected, and backdrop colors where those states exist. It is
 invalid to combine an application-defined foreground with a host-theme
 background.
 
+Navigation rows use selection as their only highlight. Pointer hover alone
+does not resemble selection; moving across sections or pages must not obscure
+which page is currently active.
+
 The freeform notebook page is document content rather than application chrome;
 its explicit colors continue to come from OneNote page data. Text stored with
 OneNote's automatic/default color uses a host-provided renderer fallback so it

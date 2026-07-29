@@ -2,8 +2,8 @@
 
 The active application dependency is the public
 [`emsi/onenote.rs`](https://github.com/emsi/onenote.rs) fork, pinned in the
-workspace manifest to merge revision
-`6fb8266b67dfa2c1a866668774c8773293585e48`. That revision starts from upstream
+workspace manifest to revision
+`8454acf2dd8217236ec17e883cbf225bd11563cd`. That revision starts from upstream
 `f9cdc59f984bc1f7f096b54100cefaaebc892573` (version 1.1.1) and contains the
 compatibility patches below.
 
@@ -37,6 +37,10 @@ only through `onenote-core`.
    records against their dependency revision. Source and destination ranges
    are validated before copying so malformed indices still produce an
    actionable parser error.
+7. Notebook TOC entries are deduplicated before sorting, with the latest
+   reference to a section or section-group filename taking precedence. This
+   prevents stale ordering snapshots retained by OneNote Desktop from
+   duplicating sections or interleaving section groups in an obsolete order.
 
 The supplied private corpus has one section requiring patch 1 and two sections
 that reach a wider numeric property requiring patches 2 and 3. All 32 native
@@ -63,7 +67,9 @@ requests:
   [issue #34](https://github.com/msiemens/onenote.rs/issues/34).
 
 The `GlobalIdTableEntry3FNDX` implementation is currently carried only by the
-fork and has not yet been submitted upstream.
+fork and has not yet been submitted upstream. The TOC ordering fix is tracked
+by [msiemens/onenote.rs#40](https://github.com/msiemens/onenote.rs/pull/40) and
+fixes [issue #5](https://github.com/msiemens/onenote.rs/issues/5).
 
 Until those changes are accepted in an upstream release, update the pinned
 fork revision deliberately and review the corresponding lockfile change.

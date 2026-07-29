@@ -52,13 +52,14 @@ impl NotebookTree {
         let selection = gtk::SingleSelection::new(Some(model.clone()));
         selection.set_autoselect(false);
         selection.set_can_unselect(true);
-        let factory = tree_factory();
         let view = gtk::ListView::builder()
             .model(&selection)
-            .factory(&factory)
-            .single_click_activate(true)
+            .single_click_activate(false)
             .css_classes(["notebook-tree"])
             .build();
+        let factory = tree_factory(&view);
+        view.set_factory(Some(&factory));
+        connect_keyboard_activation(&view, &selection);
         let model_for_activation = model.clone();
         view.connect_activate(move |_, position| {
             toggle_expansion(&model_for_activation, position);
@@ -220,15 +221,17 @@ fn toggle_expansion(model: &gtk::TreeListModel, position: u32) -> bool {
     true
 }
 
-fn tree_factory() -> gtk::SignalListItemFactory {
+fn tree_factory(view: &gtk::ListView) -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| setup_tree_item(item));
+    let view = view.downgrade();
+    factory.connect_setup(move |_, item| setup_tree_item(item, &view));
     factory.connect_bind(|_, item| bind_tree_item(item));
     factory
 }
 
-fn setup_tree_item(item: &glib::Object) {
+fn setup_tree_item(item: &glib::Object, view: &glib::WeakRef<gtk::ListView>) {
     let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
+    item.set_activatable(false);
     let expander = gtk::TreeExpander::new();
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     content.set_margin_start(4);
@@ -251,6 +254,55 @@ fn setup_tree_item(item: &glib::Object) {
     content.append(&label);
     expander.set_child(Some(&content));
     item.set_child(Some(&expander));
+    connect_pointer_activation(item, &content, view);
+}
+
+pub(crate) fn connect_pointer_activation(
+    item: &gtk::ListItem,
+    widget: &impl IsA<gtk::Widget>,
+    view: &glib::WeakRef<gtk::ListView>,
+) {
+    let click = gtk::GestureClick::new();
+    click.set_button(gtk::gdk::BUTTON_PRIMARY);
+    let item = item.downgrade();
+    let view = view.clone();
+    click.connect_released(move |_, press_count, _, _| {
+        if press_count != 1 {
+            return;
+        }
+        let (Some(item), Some(view)) = (item.upgrade(), view.upgrade()) else {
+            return;
+        };
+        let position = item.position();
+        if position != gtk::INVALID_LIST_POSITION {
+            view.emit_by_name::<()>("activate", &[&position]);
+        }
+    });
+    widget.add_controller(click);
+}
+
+pub(crate) fn connect_keyboard_activation(view: &gtk::ListView, selection: &gtk::SingleSelection) {
+    let keys = gtk::EventControllerKey::new();
+    let weak_view = view.downgrade();
+    let selection = selection.downgrade();
+    keys.connect_key_pressed(move |_, key, _, _| {
+        if !matches!(
+            key,
+            gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter | gtk::gdk::Key::space
+        ) {
+            return glib::Propagation::Proceed;
+        }
+        let (Some(view), Some(selection)) = (weak_view.upgrade(), selection.upgrade()) else {
+            return glib::Propagation::Proceed;
+        };
+        let position = selection.selected();
+        if position == gtk::INVALID_LIST_POSITION {
+            return glib::Propagation::Proceed;
+        }
+        view.emit_by_name::<()>("activate", &[&position]);
+        glib::Propagation::Stop
+    });
+    view.add_controller(keys);
 }
 
 fn bind_tree_item(item: &glib::Object) {
@@ -389,6 +441,7 @@ mod tests {
         if gtk::init().is_err() {
             return;
         }
+        assert!(!super::NotebookTree::new().view.is_single_click_activate());
         let child = NavigationNode {
             label: "Section".to_owned(),
             target: NavigationTarget::Section {
