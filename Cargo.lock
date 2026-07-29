@@ -851,7 +851,7 @@ checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
 name = "onenote-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "blake3",
  "onenote_parser",
@@ -865,7 +865,7 @@ dependencies = [
 
 [[package]]
 name = "onenote-index"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "onenote-core",
  "rusqlite",
@@ -877,7 +877,7 @@ dependencies = [
 
 [[package]]
 name = "onenote-render"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "onenote-core",
  "serde",
@@ -886,7 +886,7 @@ dependencies = [
 
 [[package]]
 name = "onenote-render-gtk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "gtk4",
@@ -898,7 +898,7 @@ dependencies = [
 
 [[package]]
 name = "onenote-viewer"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "glib-build-tools",

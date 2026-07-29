@@ -60,17 +60,36 @@ jobs:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
+      - name: Resolve release metadata
+        id: release
+        shell: bash
+        run: |
+          version=$(sed -n '/^\[workspace\.package\]$/,/^\[/ { s/^version = "\([^"]*\)"/\1/p; }' Cargo.toml)
+          test -n "${version}"
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "bundle=OneNoteViewer-${version}-linux-x86_64.flatpak" >> "${GITHUB_OUTPUT}"
+
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@401fe28a8384095fc1531b9d320b292f0ee45adb
         with:
-          bundle: OneNoteViewer-linux-x86_64.flatpak
+          bundle: ${{ steps.release.outputs.bundle }}
+          branch: stable
           manifest-path: packaging/flatpak/io.github.emsi.OneNoteViewer.yml
           cache-key: flatpak-builder-${{ github.sha }}
           upload-artifact: false
 
       - name: Verify bundled application and extractor
+        env:
+          BUNDLE: ${{ steps.release.outputs.bundle }}
+          VERSION: ${{ steps.release.outputs.version }}
         run: |
-          flatpak install --noninteractive ./OneNoteViewer-linux-x86_64.flatpak
+          flatpak install --noninteractive "./${BUNDLE}"
+          installed=$(flatpak list --app --columns=application,version,branch |
+            awk '$1 == "io.github.emsi.OneNoteViewer" { print $2 "|" $3 }')
+          test "${installed}" = "${VERSION}|stable"
+          reported_version=$(flatpak run io.github.emsi.OneNoteViewer --version |
+            head -n 1)
+          test "${reported_version}" = "OneNote Viewer ${VERSION}"
           flatpak run --command=7zz io.github.emsi.OneNoteViewer i |
             grep 'Cab' >/dev/null
           xvfb-run -a \
@@ -88,15 +107,17 @@ jobs:
               io.github.emsi.OneNoteViewer
 
       - name: Generate Flatpak checksum
-        run: sha256sum OneNoteViewer-linux-x86_64.flatpak > OneNoteViewer-linux-x86_64.flatpak.sha256
+        env:
+          BUNDLE: ${{ steps.release.outputs.bundle }}
+        run: sha256sum "${BUNDLE}" > "${BUNDLE}.sha256"
 
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: onenote-viewer-flatpak-x86_64
           path: |
-            OneNoteViewer-linux-x86_64.flatpak
-            OneNoteViewer-linux-x86_64.flatpak.sha256
+            OneNoteViewer-*-linux-x86_64.flatpak
+            OneNoteViewer-*-linux-x86_64.flatpak.sha256
           if-no-files-found: error
 
   appimage:
@@ -181,30 +202,37 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_NOTES: |
-            ## Install the Flatpak
-
-            Flatpak is the primary release channel. Download
-            `OneNoteViewer-linux-x86_64.flatpak` and its `.sha256` file below,
-            then run:
-
-            ```bash
-            sha256sum --check OneNoteViewer-linux-x86_64.flatpak.sha256
-            flatpak remote-add --user --if-not-exists flathub \
-              https://dl.flathub.org/repo/flathub.flatpakrepo
-            flatpak install --user --or-update ./OneNoteViewer-linux-x86_64.flatpak
-            flatpak run io.github.emsi.OneNoteViewer
-            ```
-
-            This is a directly distributed bundle. To update, download the
-            newer bundle and repeat the checksum and `flatpak install
-            --user --or-update` commands.
         run: |
+          version="${GITHUB_REF_NAME#v}"
+          bundle="OneNoteViewer-${version}-linux-x86_64.flatpak"
+          read -r -d '' release_notes <<EOF || true
+          ## Install the Flatpak
+
+          Flatpak is the primary release channel. Download \`${bundle}\` and
+          \`${bundle}.sha256\` below.
+
+          If upgrading from v0.1.0, remove its legacy \`master\` branch once:
+
+          \`\`\`bash
+          flatpak uninstall --user io.github.emsi.OneNoteViewer//master
+          \`\`\`
+
+          Then verify, install, and run:
+
+          \`\`\`bash
+          sha256sum --check ${bundle}.sha256
+          flatpak install --user --or-update ./${bundle}
+          flatpak run io.github.emsi.OneNoteViewer
+          \`\`\`
+
+          This is a directly distributed bundle. To update, download the
+          newer bundle and repeat the checksum and install commands.
+          EOF
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --generate-notes \
-            --notes "${RELEASE_NOTES}" \
+            --notes "${release_notes}" \
             --title "OneNote Viewer ${GITHUB_REF_NAME}" \
             dist/*.AppImage \
             dist/*.flatpak \

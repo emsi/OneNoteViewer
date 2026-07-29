@@ -1,4 +1,5 @@
 id: io.github.emsi.OneNoteViewer
+default-branch: stable
 runtime: org.gnome.Platform
 runtime-version: '50'
 sdk: org.gnome.Sdk
@@ -42,6 +43,7 @@ modules:
       - cargo build --offline --frozen --release -p onenote-viewer
       - install -Dm0755 target/release/onenote-viewer /app/bin/onenote-viewer
       - install -Dm0644 packaging/flatpak/io.github.emsi.OneNoteViewer.desktop /app/share/applications/io.github.emsi.OneNoteViewer.desktop
+      - install -Dm0644 packaging/flatpak/io.github.emsi.OneNoteViewer.metainfo.xml /app/share/metainfo/io.github.emsi.OneNoteViewer.metainfo.xml
       - install -Dm0644 crates/onenote-viewer/resources/icons/scalable/apps/io.github.emsi.OneNoteViewer.svg /app/share/icons/hicolor/scalable/apps/io.github.emsi.OneNoteViewer.svg
       - install -Dm0644 LICENSE /app/share/licenses/io.github.emsi.OneNoteViewer/LICENSE
       - install -Dm0644 SOURCE-CODE.md /app/share/doc/io.github.emsi.OneNoteViewer/SOURCE-CODE.md

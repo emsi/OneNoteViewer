@@ -36,6 +36,7 @@ if [ -z "$version" ]; then
 fi
 
 arch=$(flatpak --default-arch)
+branch=stable
 manifest=packaging/flatpak/io.github.emsi.OneNoteViewer.yml
 build_dir=target/flatpak/build
 repo_dir=target/flatpak/repo
@@ -50,6 +51,7 @@ flatpak-builder \
     --user \
     --force-clean \
     --disable-rofiles-fuse \
+    --default-branch="$branch" \
     --install-deps-from=flathub \
     --repo="$repo_dir" \
     "$build_dir" \
@@ -59,6 +61,7 @@ flatpak build-bundle \
     "$repo_dir" \
     "$bundle" \
     io.github.emsi.OneNoteViewer \
+    "$branch" \
     --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
 (cd dist && sha256sum "$(basename "$bundle")" >"$(basename "$bundle").sha256")
 printf 'Created %s\n' "$root/$bundle"

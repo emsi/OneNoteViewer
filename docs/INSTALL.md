@@ -11,7 +11,7 @@ distribution at [flatpak.org/setup](https://flatpak.org/setup/).
 
 Then:
 
-1. [Download the latest OneNote Viewer Flatpak](https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-linux-x86_64.flatpak).
+1. [Download the latest OneNote Viewer Flatpak](https://github.com/emsi/OneNoteViewer/releases/latest).
 2. Open the downloaded file with your software center and install it.
 3. Start **OneNote Viewer** from the desktop application menu.
 
@@ -19,7 +19,7 @@ The equivalent terminal command, run from the folder containing the downloaded
 file, is:
 
 ```bash
-flatpak install --user --or-update ./OneNoteViewer-linux-x86_64.flatpak
+flatpak install --user --or-update ./OneNoteViewer-0.1.1-linux-x86_64.flatpak
 ```
 
 The bundle is published directly through GitHub rather than a Flatpak
@@ -28,36 +28,48 @@ repository. It therefore does not appear in Flathub search results.
 ## Verify the Download
 
 Checksum verification is optional but recommended. Download
-`OneNoteViewer-linux-x86_64.flatpak.sha256` from the
+`OneNoteViewer-0.1.1-linux-x86_64.flatpak.sha256` from the
 [latest release](https://github.com/emsi/OneNoteViewer/releases/latest) into
 the same directory as the Flatpak, then run:
 
 ```bash
-sha256sum --check OneNoteViewer-linux-x86_64.flatpak.sha256
+sha256sum --check OneNoteViewer-0.1.1-linux-x86_64.flatpak.sha256
 ```
 
 Both files can also be downloaded from a terminal:
 
 ```bash
+version=0.1.1
 curl --fail --location --remote-name \
-  https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-linux-x86_64.flatpak
+  "https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-${version}-linux-x86_64.flatpak"
 curl --fail --location --remote-name \
-  https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-linux-x86_64.flatpak.sha256
+  "https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-${version}-linux-x86_64.flatpak.sha256"
 ```
 
 Or with GitHub CLI:
 
 ```bash
 gh release download --repo emsi/OneNoteViewer \
-  --pattern 'OneNoteViewer-linux-x86_64.flatpak*'
+  --pattern 'OneNoteViewer-*-linux-x86_64.flatpak*'
 ```
 
 ## Update
 
-Download the newer Flatpak and open it with the software center again, or run:
+Version `0.1.0` was incorrectly published on the `master` Flatpak branch.
+Remove that legacy branch once before installing `0.1.1`:
 
 ```bash
-flatpak install --user --or-update ./OneNoteViewer-linux-x86_64.flatpak
+flatpak uninstall --user io.github.emsi.OneNoteViewer//master
+```
+
+This does not remove application data; Flatpak only removes it when explicitly
+requested with `--delete-data`.
+
+Then download the newer Flatpak and open it with the software center again, or
+run:
+
+```bash
+flatpak install --user --or-update ./OneNoteViewer-0.1.1-linux-x86_64.flatpak
 ```
 
 Because this is a directly distributed bundle, `flatpak update` cannot discover

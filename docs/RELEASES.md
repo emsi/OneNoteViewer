@@ -6,7 +6,7 @@ repository landing page.
 
 GitHub releases publish two runnable Linux preview artifacts:
 
-- `OneNoteViewer-linux-x86_64.flatpak`, the primary release channel;
+- `OneNoteViewer-<version>-linux-x86_64.flatpak`, the primary release channel;
 - `OneNoteViewer-<version>-x86_64.AppImage`, the secondary portable option.
 
 Both include the private, pinned `7zz` extractor. Native `.bin` files and
@@ -25,7 +25,8 @@ for Ubuntu 24.04 or compatible hosts.
   SHA-256 checksums.
 
 A release tag must equal `v` plus `[workspace.package].version`; for example,
-version `0.1.0` uses tag `v0.1.0`.
+version `0.1.1` uses tag `v0.1.1`. The same version must be the newest release
+in `packaging/flatpak/io.github.emsi.OneNoteViewer.metainfo.xml`.
 
 The workflow pins third-party actions by commit. Flatpak Cargo inputs,
 linuxdeploy, appimagetool, the AppImage runtime, and the bundled 7-Zip binary
