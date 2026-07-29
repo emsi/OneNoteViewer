@@ -201,6 +201,7 @@ jobs:
             --user --or-update` commands.
         run: |
           gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --generate-notes \
             --notes "${RELEASE_NOTES}" \
