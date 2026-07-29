@@ -48,6 +48,16 @@ directory. Additional notebook directories join the same searchable workspace
 without being moved. Notebook folders copied under the configurable default
 notebooks location open automatically on the next launch.
 
+## Screenshots
+
+### Light Theme
+
+![OneNote Viewer displaying a notebook in the light theme](docs/images/onenote-viewer-light.png)
+
+### Dark Theme
+
+![OneNote Viewer displaying a notebook in the dark theme](docs/images/onenote-viewer-dark.png)
+
 ## Scope
 
 The initial product:
