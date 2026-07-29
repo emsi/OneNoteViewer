@@ -35,11 +35,12 @@ normative.
 
 ## Delivery and Risk
 
+- [End-user installation guide](INSTALL.md)
 - [Roadmap and milestone gates](plans/roadmap.md)
 - [Reusable backup-folder loader plan](plans/backup-folder-loader.md)
 - [Potential limitations](limitations.md)
 - [Current remaining work](REMAINING-WORK.md)
-- [Release build and artifact guide](RELEASES.md)
+- [Developer packaging and release guide](RELEASES.md)
 - [Project and third-party licensing](../THIRD-PARTY-NOTICES.md)
 - [Corresponding-source information](../SOURCE-CODE.md)
 - [Documentation baseline audit](plans/completion-audit.md)

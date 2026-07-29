@@ -23,6 +23,31 @@ and architecture decisions, and a versioned copy of the primary format
 references. The implementation is a functional pre-release baseline; it is not
 yet a broad format-compatibility or visual-fidelity claim.
 
+## Install
+
+Flatpak is the primary release channel.
+
+1. [Download the latest OneNote Viewer Flatpak](https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-linux-x86_64.flatpak).
+2. Open the downloaded file with your software center and install it.
+
+Alternatively, install it from a terminal opened in the download folder:
+
+```bash
+flatpak install --user --or-update ./OneNoteViewer-linux-x86_64.flatpak
+```
+
+Start **OneNote Viewer** from the desktop application menu. Flatpak and the
+Flathub repository must already be configured; the
+[installation guide](docs/INSTALL.md) covers that setup, checksum verification,
+updates, removal, and the AppImage alternative.
+
+## Open Notebooks
+
+Use the application menu to open a `.one`, `.onetoc2`, `.onepkg`, or notebook
+directory. Additional notebook directories join the same searchable workspace
+without being moved. Notebook folders copied under the configurable default
+notebooks location open automatically on the next launch.
+
 ## Scope
 
 The initial product:
@@ -64,7 +89,8 @@ and document authority. The supporting documents are:
 - [Persisted feature inventory](docs/specs/feature-matrix.md)
 - [Known limitations and risks](docs/limitations.md)
 - [Remaining release work](docs/REMAINING-WORK.md)
-- [Release builds](docs/RELEASES.md)
+- [Installation guide](docs/INSTALL.md)
+- [Packaging and release guide](docs/RELEASES.md)
 - [Roadmap and acceptance gates](docs/plans/roadmap.md)
 - [Reference provenance](docs/references/README.md)
 
@@ -92,88 +118,6 @@ stable packaging remain release blockers. See
 [remaining work](docs/REMAINING-WORK.md) for the exact gaps and completion
 evidence required.
 
-## Build and Run
-
-Ubuntu 24.04 development requires Rust 1.85.1 and the GTK 4.14 development
-stack. Install the native build dependencies with:
-
-```bash
-sudo apt update
-sudo apt install build-essential pkg-config libgtk-4-dev
-```
-
-`libgtk-4-dev` pulls in the required Graphene, Pango, Cairo, GDK, and GSK
-development metadata. `7zz` or `7z` is optional for package import and is not
-needed to open an extracted notebook; on Ubuntu 24.04 it can be installed with
-`sudo apt install 7zip`.
-
-Check the host before compiling:
-
-```bash
-./scripts/check-system-deps.sh
-```
-
-```bash
-cargo run -p onenote-viewer -- /path/to/notebook
-cargo run -p onenote-render-gtk --example standalone -- /path/to/section.one
-cargo test --workspace --all-targets
-```
-
-If Cargo reports that `gtk4.pc` or `graphene-gobject-1.0.pc` is missing, the
-development packages are not installed on that host. An unset
-`PKG_CONFIG_PATH` is normal for distribution packages; do not set it manually
-unless GTK was deliberately installed under a nonstandard prefix.
-
-## Install a Release
-
-Flatpak is the primary release channel. It supplies a consistent GTK runtime
-across distributions and includes the private 7-Zip console tool needed for
-`.onepkg` extraction.
-
-Open the [latest GitHub release](https://github.com/emsi/OneNoteViewer/releases/latest)
-and download:
-
-- `OneNoteViewer-linux-x86_64.flatpak`
-- `OneNoteViewer-linux-x86_64.flatpak.sha256`
-
-Verify, install or update, and run the bundle:
-
-```bash
-sha256sum --check OneNoteViewer-linux-x86_64.flatpak.sha256
-flatpak remote-add --user --if-not-exists flathub \
-  https://dl.flathub.org/repo/flathub.flatpakrepo
-flatpak install --user --or-update ./OneNoteViewer-linux-x86_64.flatpak
-flatpak run io.github.emsi.OneNoteViewer
-```
-
-The bundle is published directly on GitHub rather than through a Flatpak
-repository. To update, download the newer bundle and repeat the checksum and
-`flatpak install --user --or-update` commands.
-
-The AppImage is the secondary installation-free artifact:
-
-```bash
-chmod +x OneNoteViewer-*-x86_64.AppImage
-./OneNoteViewer-*-x86_64.AppImage
-```
-
-For a quick unpublished native test on the build host:
-
-```bash
-./scripts/package-native-release.sh
-./dist/OneNoteViewer-*-linux-x86_64.bin /path/to/notebook
-```
-
-See [release builds](docs/RELEASES.md) for artifact selection, local build
-commands, checksums, sandbox constraints, AppImage compatibility, and
-tag-based GitHub releases.
-
-The viewer accepts a `.one`, `.onetoc2`, or directory. Additional paths add
-sources to the same workspace. Notebook folders copied under the default
-notebooks location open automatically at the next launch. `.onepkg` files are
-imported through the viewer into that location by default, with the exact
-destination confirmed before extraction and a per-import location override.
-
 ## Repository Shape
 
 The code is a modular Cargo workspace:
@@ -193,6 +137,30 @@ scripts/            Reproducible maintenance and validation commands
 
 See the [repository layout](docs/architecture/repository-layout.md) for
 ownership rules and dependency direction.
+
+## Development
+
+Ubuntu 24.04 development requires Rust 1.85.1 and the GTK 4.14 development
+stack:
+
+```bash
+sudo apt update
+sudo apt install build-essential pkg-config libgtk-4-dev
+./scripts/check-system-deps.sh
+cargo run -p onenote-viewer -- /path/to/notebook
+cargo test --workspace --all-targets
+```
+
+`libgtk-4-dev` supplies the required Graphene, Pango, Cairo, GDK, and GSK
+development metadata. An unset `PKG_CONFIG_PATH` is normal for distribution
+packages. The standalone reusable renderer can be exercised with:
+
+```bash
+cargo run -p onenote-render-gtk --example standalone -- /path/to/section.one
+```
+
+See the [packaging and release guide](docs/RELEASES.md) for local artifact
+builds and the tagged GitHub release workflow.
 
 ## Safety Baseline
 
