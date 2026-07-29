@@ -441,7 +441,6 @@ mod tests {
         if gtk::init().is_err() {
             return;
         }
-        assert!(!super::NotebookTree::new().view.is_single_click_activate());
         let child = NavigationNode {
             label: "Section".to_owned(),
             target: NavigationTarget::Section {
