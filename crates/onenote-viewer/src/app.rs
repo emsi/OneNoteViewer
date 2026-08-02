@@ -1767,6 +1767,60 @@ fn display_title(page: &Page) -> String {
 }
 
 fn display_timestamp(value: &str) -> String {
+    display_timestamp_in_timezone(value, &glib::TimeZone::local())
+        .unwrap_or_else(|| display_unparsed_timestamp(value))
+}
+
+fn display_timestamp_in_timezone(value: &str, timezone: &glib::TimeZone) -> Option<String> {
+    let timestamp =
+        glib::DateTime::from_iso8601(&iso8601_timestamp(value)?, Some(&glib::TimeZone::utc()))
+            .ok()?;
+    timestamp
+        .to_timezone(timezone)
+        .and_then(|local| local.format("%Y-%m-%d  %H:%M"))
+        .ok()
+        .map(Into::into)
+}
+
+fn iso8601_timestamp(value: &str) -> Option<String> {
+    let mut parts = value.split_whitespace();
+    let date = parts.next()?;
+    let time = parts.next()?;
+    let offset = match parts.next() {
+        None | Some("Z") => "Z".to_owned(),
+        Some(offset) if is_hour_offset(offset) => format!("{offset}:00"),
+        Some(offset) if is_minute_offset(offset) => offset.to_owned(),
+        Some(offset) if is_zero_second_offset(offset) => offset[..6].to_owned(),
+        Some(_) => return None,
+    };
+    (parts.next().is_none()).then(|| format!("{date}T{time}{offset}"))
+}
+
+fn is_hour_offset(value: &str) -> bool {
+    value.len() == 3
+        && matches!(value.as_bytes()[0], b'+' | b'-')
+        && value.as_bytes()[1..].iter().all(u8::is_ascii_digit)
+}
+
+fn is_minute_offset(value: &str) -> bool {
+    value.len() == 6
+        && matches!(value.as_bytes()[0], b'+' | b'-')
+        && value.as_bytes()[1..3].iter().all(u8::is_ascii_digit)
+        && value.as_bytes()[3] == b':'
+        && value.as_bytes()[4..].iter().all(u8::is_ascii_digit)
+}
+
+fn is_zero_second_offset(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 9
+        && matches!(bytes[0], b'+' | b'-')
+        && bytes[1..3].iter().all(u8::is_ascii_digit)
+        && bytes[3] == b':'
+        && bytes[4..6].iter().all(u8::is_ascii_digit)
+        && &bytes[6..] == b":00"
+}
+
+fn display_unparsed_timestamp(value: &str) -> String {
     let mut parts = value.split_whitespace();
     let Some(date) = parts.next() else {
         return String::new();
@@ -2179,11 +2233,22 @@ mod tests {
     }
 
     #[test]
-    fn page_timestamp_keeps_source_date_and_minute() {
+    fn page_timestamp_uses_timezone_offset_for_the_note_date() {
+        #[allow(deprecated)]
+        let warsaw = glib::TimeZone::new(Some("Europe/Warsaw"));
+
         assert_eq!(
-            display_timestamp("2015-06-12 11:06:27.0 +00"),
-            "2015-06-12  11:06"
+            display_timestamp_in_timezone("2025-11-18 12:54:27.0 +00", &warsaw).as_deref(),
+            Some("2025-11-18  13:54")
         );
+        assert_eq!(
+            display_timestamp_in_timezone("2025-07-18 12:54:27.0 +00:00:00", &warsaw).as_deref(),
+            Some("2025-07-18  14:54")
+        );
+    }
+
+    #[test]
+    fn page_timestamp_falls_back_for_unparsed_values() {
         assert_eq!(display_timestamp("unknown"), "unknown");
     }
 
