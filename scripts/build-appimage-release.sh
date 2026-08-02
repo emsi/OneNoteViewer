@@ -31,12 +31,12 @@ if [ -z "$version" ]; then
     exit 1
 fi
 
-linuxdeploy_url=https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-linuxdeploy_sha256=e87ee0815d109282fdda73e34c2361d64d02b0ffaea3674b18f1fd1f6a687dcf
-appimagetool_url=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-appimagetool_sha256=a6d71e2b6cd66f8e8d16c37ad164658985e0cf5fcaa950c90a482890cb9d13e0
-appimage_runtime_url=https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64
-appimage_runtime_sha256=1cc49bcf1e2ccd593c379adb17c9f85a36d619088296504de95b1d06215aebbf
+linuxdeploy_url=https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+linuxdeploy_sha256=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
+appimagetool_url=https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+appimagetool_sha256=ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+appimage_runtime_url=https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64
+appimage_runtime_sha256=2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
 sevenzip_binary_url=https://github.com/ip7z/7zip/releases/download/26.02/7z2602-linux-x64.tar.xz
 sevenzip_binary_sha256=41aaba7b1235304ab5aa0624530c67ae829496cd29e875925271efdccc28c03e
 sevenzip_source_url=https://github.com/ip7z/7zip/releases/download/26.02/7z2602-src.tar.xz
