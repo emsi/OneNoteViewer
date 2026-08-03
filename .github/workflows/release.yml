@@ -34,6 +34,9 @@ jobs:
           cargo fetch --locked
           ./scripts/check-licenses.sh
           cargo test --workspace --all-targets --locked --offline
+          GTK_A11Y=none \
+            GSK_RENDERER=cairo \
+            xvfb-run -a cargo test -p onenote-viewer navigation::tests --locked --offline
           ./scripts/package-native-release.sh
 
       - name: Smoke-test quick-run executable
