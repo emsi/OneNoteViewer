@@ -36,6 +36,16 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.2" date="2026-08-03">
+      <description>
+        <p>
+          Display mathematical formulas with their original structure,
+          including fractions, roots, scripts, matrices, and large operators.
+          This release also improves navigation selection and page timestamps.
+        </p>
+      </description>
+      <url type="details">https://github.com/emsi/OneNoteViewer/releases/tag/v0.1.2</url>
+    </release>
     <release version="0.1.1" date="2026-07-29">
       <description>
         <p>

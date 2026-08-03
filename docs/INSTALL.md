@@ -19,7 +19,7 @@ The equivalent terminal command, run from the folder containing the downloaded
 file, is:
 
 ```bash
-flatpak install --user --or-update ./OneNoteViewer-0.1.1-linux-x86_64.flatpak
+flatpak install --user --or-update ./OneNoteViewer-0.1.2-linux-x86_64.flatpak
 ```
 
 The bundle is published directly through GitHub rather than a Flatpak
@@ -28,18 +28,18 @@ repository. It therefore does not appear in Flathub search results.
 ## Verify the Download
 
 Checksum verification is optional but recommended. Download
-`OneNoteViewer-0.1.1-linux-x86_64.flatpak.sha256` from the
+`OneNoteViewer-0.1.2-linux-x86_64.flatpak.sha256` from the
 [latest release](https://github.com/emsi/OneNoteViewer/releases/latest) into
 the same directory as the Flatpak, then run:
 
 ```bash
-sha256sum --check OneNoteViewer-0.1.1-linux-x86_64.flatpak.sha256
+sha256sum --check OneNoteViewer-0.1.2-linux-x86_64.flatpak.sha256
 ```
 
 Both files can also be downloaded from a terminal:
 
 ```bash
-version=0.1.1
+version=0.1.2
 curl --fail --location --remote-name \
   "https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-${version}-linux-x86_64.flatpak"
 curl --fail --location --remote-name \
@@ -69,7 +69,7 @@ Then download the newer Flatpak and open it with the software center again, or
 run:
 
 ```bash
-flatpak install --user --or-update ./OneNoteViewer-0.1.1-linux-x86_64.flatpak
+flatpak install --user --or-update ./OneNoteViewer-0.1.2-linux-x86_64.flatpak
 ```
 
 Because this is a directly distributed bundle, `flatpak update` cannot discover
