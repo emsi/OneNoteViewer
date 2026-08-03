@@ -1,6 +1,5 @@
-use crate::navigation::{
-    connect_keyboard_activation, connect_pointer_activation, NavigationTarget, NotebookTree,
-};
+use crate::navigation::{NavigationTarget, NotebookTree};
+use crate::navigation_state::{location_for_section, preferred_location, SectionLocation};
 use crate::settings::{self, AppSettings, ThemePreference};
 use crate::worker::{self, Command, Event};
 use crate::workspace::{self, WorkspaceConfig};
@@ -8,9 +7,7 @@ use anyhow::Result;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use onenote_core::{
-    ExtractionPhase, LoadedNotebook, NotebookEntry, Page, PageId, Rect, Section, SectionId,
-};
+use onenote_core::{ExtractionPhase, LoadedNotebook, Page, PageId, Rect, SectionId, SourceId};
 use onenote_index::SearchHit;
 use onenote_render_gtk::PageView;
 use std::borrow::Cow;
@@ -232,13 +229,20 @@ fn smoke_quit_delay() -> Option<Duration> {
 struct Source {
     path: PathBuf,
     loaded: Arc<LoadedNotebook>,
+    last_location: Option<SectionLocation>,
 }
 
 #[derive(Clone)]
 struct PageRow {
-    source: usize,
-    section_id: SectionId,
-    page_id: PageId,
+    source: SourceId,
+    section: SectionId,
+    page: PageId,
+}
+
+#[derive(Clone)]
+struct ActiveLocation {
+    source: SourceId,
+    section: Option<SectionLocation>,
 }
 
 #[derive(Default)]
@@ -246,7 +250,7 @@ struct State {
     sources: Vec<Source>,
     pages: Vec<PageRow>,
     search_hits: Vec<SearchHit>,
-    active_source: Option<usize>,
+    active: Option<ActiveLocation>,
     search_generation: u64,
     scene_generation: u64,
     pending_reveal: Option<Rect>,
@@ -257,10 +261,8 @@ struct Viewer {
     notebook_tree: NotebookTree,
     page_model: gtk::StringList,
     page_selection: gtk::SingleSelection,
-    page_list: gtk::ListView,
     result_model: gtk::StringList,
     result_selection: gtk::SingleSelection,
-    result_list: gtk::ListView,
     navigation_stack: gtk::Stack,
     content_paned: gtk::Paned,
     page_navigation_width: Rc<Cell<i32>>,
@@ -280,6 +282,8 @@ struct Viewer {
     import_cancel_button: gtk::Button,
     import_package_action: gio::SimpleAction,
     import_cancel: RefCell<Option<Arc<AtomicBool>>>,
+    scene_cancel: RefCell<Option<Arc<AtomicBool>>>,
+    selection_syncing: Cell<bool>,
     state: RefCell<State>,
     workspace_path: PathBuf,
     index_path: PathBuf,
@@ -549,10 +553,8 @@ impl Viewer {
             notebook_tree,
             page_model,
             page_selection,
-            page_list,
             result_model,
             result_selection,
-            result_list,
             navigation_stack,
             content_paned,
             page_navigation_width,
@@ -572,6 +574,8 @@ impl Viewer {
             import_cancel_button,
             import_package_action: import_package.clone(),
             import_cancel: RefCell::default(),
+            scene_cancel: RefCell::default(),
+            selection_syncing: Cell::new(false),
             state: RefCell::default(),
             workspace_path,
             index_path,
@@ -612,24 +616,26 @@ impl Viewer {
     fn connect_navigation(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
         self.notebook_tree
-            .view
-            .connect_activate(move |_, position| {
+            .selection
+            .connect_selected_notify(move |_| {
                 if let Some(viewer) = weak.upgrade() {
-                    viewer.activate_navigation(position);
+                    viewer.notebook_selection_changed();
                 }
             });
         let weak = Rc::downgrade(self);
-        self.page_list.connect_activate(move |_, position| {
-            if let Some(viewer) = weak.upgrade() {
-                viewer.activate_page(position as usize, None);
-            }
-        });
+        self.page_selection
+            .connect_selected_notify(move |selection| {
+                if let Some(viewer) = weak.upgrade() {
+                    viewer.page_selection_changed(selection.selected());
+                }
+            });
         let weak = Rc::downgrade(self);
-        self.result_list.connect_activate(move |_, position| {
-            if let Some(viewer) = weak.upgrade() {
-                viewer.activate_result(position as usize);
-            }
-        });
+        self.result_selection
+            .connect_selected_notify(move |selection| {
+                if let Some(viewer) = weak.upgrade() {
+                    viewer.result_selection_changed(selection.selected());
+                }
+            });
 
         let weak = Rc::downgrade(self);
         self.search_entry.connect_search_changed(move |entry| {
@@ -842,6 +848,7 @@ impl Viewer {
                 if generation != self.state.borrow().scene_generation {
                     return;
                 }
+                self.scene_cancel.borrow_mut().take();
                 self.spinner.stop();
                 match result {
                     Ok(scene) => {
@@ -914,91 +921,198 @@ impl Viewer {
             existing.path = path;
             existing.loaded = loaded;
         } else {
-            state.sources.push(Source { path, loaded });
+            state.sources.push(Source {
+                path,
+                loaded,
+                last_location: None,
+            });
         }
-        let select = state
+        let notebook = state
             .sources
             .iter()
-            .position(|source| source.loaded.notebook.source_id == source_id)
-            .unwrap_or_else(|| state.sources.len().saturating_sub(1));
-        let first_section = state
-            .sources
-            .get(select)
-            .and_then(|source| first_section(&source.loaded.notebook.entries))
-            .map(|section| section.id.clone());
+            .find(|source| source.loaded.notebook.source_id == source_id)
+            .map(|source| source.loaded.notebook.clone())
+            .expect("inserted source");
+        let active_source = state.active.as_ref().map(|active| active.source.clone());
         drop(state);
-        self.refresh_notebooks();
-        self.notebook_tree.select_notebook(select);
-        if let Some(section_id) = first_section {
-            self.notebook_tree.select_section(select, &section_id);
-            self.activate_section(select, &section_id);
+
+        self.synchronize_selections(|| self.notebook_tree.upsert(&notebook));
+        if active_source
+            .as_ref()
+            .is_none_or(|active| active == &source_id)
+        {
+            self.activate_source(&source_id);
         }
         self.persist_workspace();
         self.status
             .set_label("Notebook opened; building search index");
     }
 
-    fn refresh_notebooks(&self) {
-        let state = self.state.borrow();
-        self.notebook_tree.rebuild(
-            state
+    fn synchronize_selections<R>(&self, update: impl FnOnce() -> R) -> R {
+        let previous = self.selection_syncing.replace(true);
+        let result = update();
+        self.selection_syncing.set(previous);
+        result
+    }
+
+    fn notebook_selection_changed(&self) {
+        if self.selection_syncing.get() {
+            return;
+        }
+        match self.notebook_tree.selected_target() {
+            Some(NavigationTarget::Notebook { source_id }) => self.activate_source(&source_id),
+            Some(NavigationTarget::Section {
+                source_id,
+                section_id,
+            }) => self.activate_section(&source_id, &section_id),
+            Some(NavigationTarget::Group { .. }) | None => {}
+        }
+    }
+
+    fn page_selection_changed(&self, position: u32) {
+        if self.selection_syncing.get() || position == NO_SELECTION {
+            return;
+        }
+        self.activate_page(position as usize, None);
+    }
+
+    fn result_selection_changed(&self, position: u32) {
+        if self.selection_syncing.get() || position == NO_SELECTION {
+            return;
+        }
+        self.activate_result(position as usize);
+    }
+
+    fn activate_source(&self, source_id: &SourceId) {
+        let location = {
+            let mut state = self.state.borrow_mut();
+            let Some(source) = state
                 .sources
                 .iter()
-                .enumerate()
-                .map(|(index, source)| (index, &source.loaded.notebook)),
-        );
-        if state.sources.is_empty() {
-            self.canvas_stack.set_visible_child_name("empty");
-            clear_model(&self.page_model);
-        }
-    }
-
-    fn activate_navigation(&self, position: u32) {
-        let Some(target) = self.notebook_tree.target_at(position) else {
-            return;
+                .find(|source| source.loaded.notebook.source_id == *source_id)
+            else {
+                return;
+            };
+            let location =
+                preferred_location(&source.loaded.notebook, source.last_location.as_ref());
+            state.active = Some(ActiveLocation {
+                source: source_id.clone(),
+                section: location.clone(),
+            });
+            location
         };
-        match target {
-            NavigationTarget::Notebook { source } | NavigationTarget::Group { source } => {
-                self.state.borrow_mut().active_source = Some(source);
-            }
-            NavigationTarget::Section { source, section_id } => {
-                self.activate_section(source, &section_id);
-            }
+        if let Some(location) = location {
+            self.activate_location(source_id, &location, None);
+        } else {
+            self.clear_page_content();
+            self.synchronize_selections(|| {
+                self.notebook_tree.select_notebook(source_id);
+                self.page_selection.set_selected(NO_SELECTION);
+            });
         }
     }
 
-    fn activate_section(&self, source_index: usize, section_id: &SectionId) {
-        let pages = {
+    fn activate_section(&self, source_id: &SourceId, section_id: &SectionId) {
+        let location = {
             let state = self.state.borrow();
             state
                 .sources
-                .get(source_index)
-                .and_then(|source| find_section(&source.loaded.notebook.entries, section_id))
-                .map(|section| section.pages.clone())
-                .unwrap_or_default()
+                .iter()
+                .find(|source| source.loaded.notebook.source_id == *source_id)
+                .and_then(|source| {
+                    location_for_section(
+                        &source.loaded.notebook,
+                        source.last_location.as_ref(),
+                        section_id,
+                    )
+                })
         };
-        let mut state = self.state.borrow_mut();
-        state.active_source = Some(source_index);
-        state.pages = pages
-            .iter()
-            .map(|page| PageRow {
-                source: source_index,
-                section_id: section_id.clone(),
-                page_id: page.id.clone(),
-            })
-            .collect();
-        drop(state);
-        clear_model(&self.page_model);
-        for page in pages {
-            let indent = "  ".repeat(usize::try_from(page.level.max(0)).unwrap_or(0).min(8));
-            append_model(
-                &self.page_model,
-                &format!("{indent}{}", display_title(&page)),
-            );
+        if let Some(location) = location {
+            self.activate_location(source_id, &location, None);
         }
-        if self.page_model.n_items() > 0 {
-            self.page_selection.set_selected(0);
-            self.activate_page(0, None);
+    }
+
+    fn activate_location(
+        &self,
+        source_id: &SourceId,
+        requested: &SectionLocation,
+        reveal: Option<Rect>,
+    ) {
+        let (pages, location) = {
+            let state = self.state.borrow();
+            let Some(source) = state
+                .sources
+                .iter()
+                .find(|source| source.loaded.notebook.source_id == *source_id)
+            else {
+                return;
+            };
+            let Some(location) = location_for_section(
+                &source.loaded.notebook,
+                Some(requested),
+                &requested.section_id,
+            ) else {
+                return;
+            };
+            let pages = source
+                .loaded
+                .notebook
+                .section(&location.section_id)
+                .map(|section| section.pages.clone())
+                .unwrap_or_default();
+            (pages, location)
+        };
+
+        let page_position = location
+            .page_id
+            .as_ref()
+            .and_then(|page_id| pages.iter().position(|page| page.id == *page_id));
+        {
+            let mut state = self.state.borrow_mut();
+            let Some(source) = state
+                .sources
+                .iter_mut()
+                .find(|source| source.loaded.notebook.source_id == *source_id)
+            else {
+                return;
+            };
+            source.last_location = Some(location.clone());
+            state.active = Some(ActiveLocation {
+                source: source_id.clone(),
+                section: Some(location.clone()),
+            });
+            state.pages = pages
+                .iter()
+                .map(|page| PageRow {
+                    source: source_id.clone(),
+                    section: location.section_id.clone(),
+                    page: page.id.clone(),
+                })
+                .collect();
+        }
+
+        self.synchronize_selections(|| {
+            self.notebook_tree
+                .select_section(source_id, &location.section_id);
+            clear_model(&self.page_model);
+            for page in &pages {
+                let indent = "  ".repeat(usize::try_from(page.level.max(0)).unwrap_or(0).min(8));
+                append_model(
+                    &self.page_model,
+                    &format!("{indent}{}", display_title(page)),
+                );
+            }
+            self.page_selection.set_selected(
+                page_position
+                    .and_then(|position| u32::try_from(position).ok())
+                    .unwrap_or(NO_SELECTION),
+            );
+        });
+
+        if let Some(position) = page_position {
+            self.activate_page(position, reveal);
+        } else {
+            self.clear_rendered_page();
         }
     }
 
@@ -1006,26 +1120,57 @@ impl Viewer {
         let value = (|| {
             let state = self.state.borrow();
             let row = state.pages.get(position)?;
-            let source = state.sources.get(row.source)?;
-            let section = source.loaded.notebook.section(&row.section_id)?;
-            let page = section.pages.iter().find(|page| page.id == row.page_id)?;
+            let source = state
+                .sources
+                .iter()
+                .find(|source| source.loaded.notebook.source_id == row.source)?;
+            let section = source.loaded.notebook.section(&row.section)?;
+            let page = section.pages.iter().find(|page| page.id == row.page)?;
             let section_path = source
                 .loaded
                 .notebook
-                .section_path(&row.section_id)?
+                .section_path(&row.section)?
                 .into_iter()
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
             Some((
+                row.source.clone(),
+                row.section.clone(),
+                row.page.clone(),
                 page.clone(),
                 source.loaded.clone(),
                 source.loaded.notebook.name.clone(),
                 section_path,
             ))
         })();
-        let Some((page, loaded, notebook_name, section_path)) = value else {
+        let Some((source_id, section_id, page_id, page, loaded, notebook_name, section_path)) =
+            value
+        else {
             return;
         };
+        let location = SectionLocation {
+            section_id: section_id.clone(),
+            page_id: Some(page_id),
+        };
+        {
+            let mut state = self.state.borrow_mut();
+            if let Some(source) = state
+                .sources
+                .iter_mut()
+                .find(|source| source.loaded.notebook.source_id == source_id)
+            {
+                source.last_location = Some(location.clone());
+            }
+            state.active = Some(ActiveLocation {
+                source: source_id.clone(),
+                section: Some(location),
+            });
+        }
+        self.synchronize_selections(|| {
+            self.notebook_tree.select_section(&source_id, &section_id);
+            self.page_selection
+                .set_selected(u32::try_from(position).unwrap_or(NO_SELECTION));
+        });
         let display_title = display_title(&page);
         let title = gtk_text(&display_title);
         self.page_title.set_label(&title);
@@ -1046,8 +1191,43 @@ impl Viewer {
             state.pending_reveal = reveal;
             state.scene_generation
         };
+        if let Some(cancel) = self.scene_cancel.borrow_mut().take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        *self.scene_cancel.borrow_mut() = Some(cancel.clone());
         self.set_busy("Laying out page");
-        worker::build_scene(generation, page, self.events.clone());
+        worker::build_scene(generation, page, cancel, self.events.clone());
+    }
+
+    fn clear_page_content(&self) {
+        let mut state = self.state.borrow_mut();
+        if let Some(active) = state.active.as_mut() {
+            active.section = None;
+        }
+        state.pages.clear();
+        drop(state);
+        self.synchronize_selections(|| {
+            clear_model(&self.page_model);
+            self.page_selection.set_selected(NO_SELECTION);
+        });
+        self.clear_rendered_page();
+    }
+
+    fn clear_rendered_page(&self) {
+        if let Some(cancel) = self.scene_cancel.borrow_mut().take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+        {
+            let mut state = self.state.borrow_mut();
+            state.scene_generation = state.scene_generation.wrapping_add(1);
+            state.pending_reveal = None;
+        }
+        self.page_title.set_label("");
+        self.page_date.set_label("");
+        self.page_context.set_label("");
+        self.page_view.set_scene(None);
+        self.canvas_stack.set_visible_child_name("empty");
     }
 
     fn start_search(&self, text: String) {
@@ -1095,75 +1275,69 @@ impl Viewer {
         let Some(hit) = hit else {
             return;
         };
-        let source_position = {
+        let source_exists = {
             let state = self.state.borrow();
             state
                 .sources
                 .iter()
-                .position(|source| source.loaded.notebook.source_id == hit.source_id)
+                .any(|source| source.loaded.notebook.source_id == hit.source_id)
         };
-        let Some(source_position) = source_position else {
+        if !source_exists {
             self.show_error(
                 "Search result is stale",
                 "The source is no longer open. Refresh the search index.",
             );
             return;
-        };
-        if self
-            .notebook_tree
-            .select_section(source_position, &hit.section_id)
-            .is_none()
-        {
-            return;
         }
-        self.activate_section(source_position, &hit.section_id);
-        let page_position = self
-            .state
-            .borrow()
-            .pages
-            .iter()
-            .position(|row| row.page_id == hit.page_id);
-        let Some(page_position) = page_position else {
-            return;
-        };
-        self.page_selection
-            .set_selected(u32::try_from(page_position).unwrap_or(NO_SELECTION));
-        self.activate_page(page_position, hit.bounds);
+        self.activate_location(
+            &hit.source_id,
+            &SectionLocation {
+                section_id: hit.section_id,
+                page_id: Some(hit.page_id),
+            },
+            hit.bounds,
+        );
     }
 
     fn close_active_source(&self) {
         let removed = {
             let mut state = self.state.borrow_mut();
-            let Some(position) = state.active_source else {
+            let Some(source_id) = state.active.as_ref().map(|active| active.source.clone()) else {
                 return;
             };
-            if position >= state.sources.len() {
+            let Some(position) = state
+                .sources
+                .iter()
+                .position(|source| source.loaded.notebook.source_id == source_id)
+            else {
                 return;
-            }
-            state.active_source = None;
+            };
+            state.active = None;
             state.pages.clear();
             (position, state.sources.remove(position))
         };
+        let removed_source_id = removed.1.loaded.notebook.source_id.clone();
         let _ignored = self
             .commands
-            .send(Command::Remove(removed.1.loaded.notebook.source_id.clone()));
-        self.refresh_notebooks();
+            .send(Command::Remove(removed_source_id.clone()));
+        self.synchronize_selections(|| {
+            self.notebook_tree.remove(&removed_source_id);
+            self.notebook_tree.selection.set_selected(NO_SELECTION);
+            self.page_selection.set_selected(NO_SELECTION);
+            clear_model(&self.page_model);
+        });
+        self.clear_rendered_page();
         self.persist_workspace();
-        let remaining = self.state.borrow().sources.len();
-        if remaining > 0 {
-            let new_position = removed.0.min(remaining - 1);
-            self.notebook_tree.select_notebook(new_position);
-            let first_section = self
-                .state
-                .borrow()
+        let fallback = {
+            let state = self.state.borrow();
+            let position = removed.0.min(state.sources.len().saturating_sub(1));
+            state
                 .sources
-                .get(new_position)
-                .and_then(|source| first_section(&source.loaded.notebook.entries))
-                .map(|section| section.id.clone());
-            if let Some(section_id) = first_section {
-                self.notebook_tree.select_section(new_position, &section_id);
-                self.activate_section(new_position, &section_id);
-            }
+                .get(position)
+                .map(|source| source.loaded.notebook.source_id.clone())
+        };
+        if let Some(source_id) = fallback {
+            self.activate_source(&source_id);
         } else {
             self.status.set_label("No notebooks open");
         }
@@ -1509,10 +1683,8 @@ fn list_view(model: &gtk::StringList, css_class: &str) -> (gtk::SingleSelection,
         .css_classes([css_class])
         .build();
     let factory = gtk::SignalListItemFactory::new();
-    let list_for_setup = list.downgrade();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
-        item.set_activatable(false);
         let label = gtk::Label::builder()
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
@@ -1522,11 +1694,9 @@ fn list_view(model: &gtk::StringList, css_class: &str) -> (gtk::SingleSelection,
         label.set_margin_top(8);
         label.set_margin_bottom(8);
         item.set_child(Some(&label));
-        connect_pointer_activation(item, &label, &list_for_setup);
     });
     factory.connect_bind(|_, item| bind_string(item, false));
     list.set_factory(Some(&factory));
-    connect_keyboard_activation(&list, &selection);
     (selection, list)
 }
 
@@ -1539,10 +1709,8 @@ fn result_list(model: &gtk::StringList) -> (gtk::SingleSelection, gtk::ListView)
         .css_classes(["result-list"])
         .build();
     let factory = gtk::SignalListItemFactory::new();
-    let list_for_setup = list.downgrade();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
-        item.set_activatable(false);
         let label = gtk::Label::builder()
             .xalign(0.0)
             .wrap(true)
@@ -1555,11 +1723,9 @@ fn result_list(model: &gtk::StringList) -> (gtk::SingleSelection, gtk::ListView)
         label.set_margin_top(10);
         label.set_margin_bottom(10);
         item.set_child(Some(&label));
-        connect_pointer_activation(item, &label, &list_for_setup);
     });
     factory.connect_bind(|_, item| bind_string(item, true));
     list.set_factory(Some(&factory));
-    connect_keyboard_activation(&list, &selection);
     (selection, list)
 }
 
@@ -1831,28 +1997,6 @@ fn display_unparsed_timestamp(value: &str) -> String {
     let time = time.split('.').next().unwrap_or(time);
     let time = time.get(..5).unwrap_or(time);
     format!("{date}  {time}")
-}
-
-fn first_section(entries: &[NotebookEntry]) -> Option<&Section> {
-    entries.iter().find_map(|entry| match entry {
-        NotebookEntry::Section(section) => Some(section),
-        NotebookEntry::Group(group) => first_section(&group.entries),
-    })
-}
-
-fn find_section<'a>(entries: &'a [NotebookEntry], id: &SectionId) -> Option<&'a Section> {
-    for entry in entries {
-        match entry {
-            NotebookEntry::Section(section) if section.id == *id => return Some(section),
-            NotebookEntry::Section(_) => {}
-            NotebookEntry::Group(group) => {
-                if let Some(section) = find_section(&group.entries, id) {
-                    return Some(section);
-                }
-            }
-        }
-    }
-    None
 }
 
 #[derive(Clone, Copy)]
@@ -2188,26 +2332,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn first_section_follows_group_order() {
-        let section = Section {
-            id: SectionId::new("section"),
-            name: "Details".to_owned(),
-            color: None,
-            pages: Vec::new(),
-            diagnostics: Vec::new(),
-        };
-        let entries = vec![NotebookEntry::Group(onenote_core::SectionGroup {
-            id: SectionId::new("group"),
-            name: "Project".to_owned(),
-            entries: vec![NotebookEntry::Section(section)],
-        })];
-
-        let first = first_section(&entries).expect("nested section");
-
-        assert_eq!(first.name, "Details");
-    }
-
-    #[test]
     fn gtk_text_replaces_interior_nuls() {
         assert_eq!(gtk_text("One\0Note"), "One�Note");
         assert_eq!(gtk_text("OneNote"), "OneNote");
@@ -2254,9 +2378,10 @@ mod tests {
 
     #[test]
     fn collapsed_bands_reclaim_the_outer_pane_width() {
-        if gtk::init().is_err() {
-            return;
-        }
+        crate::test_support::run_gtk_test(collapsed_bands_reclaim_the_outer_pane_width_gtk);
+    }
+
+    fn collapsed_bands_reclaim_the_outer_pane_width_gtk() {
         let (_, notebook_list) = list_view(&gtk::StringList::new(&[]), "notebook-list");
         let (_, page_list) = list_view(&gtk::StringList::new(&[]), "page-list");
         assert!(!notebook_list.is_single_click_activate());

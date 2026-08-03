@@ -42,6 +42,25 @@ Navigation rows use selection as their only highlight. Pointer hover alone
 does not resemble selection; moving across sections or pages must not obscure
 which page is currently active.
 
+Selection is also the single source of navigation events. A section or page
+changes only when GTK changes the corresponding selection; the application
+must not add row-level click gestures, press-count filters, delayed activation,
+or a second activation signal that can diverge from the visible highlight.
+Programmatic selection changes use a reentrancy guard so one transition renders
+one page.
+
+The selected section and page always describe the page shown in the document
+area. Clicking a notebook restores its last valid section and page, or the
+first available section and page when it has no valid history. Clicking a
+notebook label does not expand or collapse it. Section-group expansion belongs
+only to `GtkTreeExpander`; group rows do not become content selections.
+
+Notebook and page targets use stable source, section, and page identifiers,
+never mutable row or vector positions. Loading or indexing another notebook
+must not clear, move, or replace the active selection. Reloading the active
+notebook preserves its last valid location and falls back deterministically if
+that content was removed.
+
 The freeform notebook page is document content rather than application chrome;
 its explicit colors continue to come from OneNote page data. Text stored with
 OneNote's automatic/default color uses a host-provided renderer fallback so it

@@ -5,7 +5,10 @@
 mod app;
 mod dialogs;
 mod navigation;
+mod navigation_state;
 mod settings;
+#[cfg(test)]
+mod test_support;
 mod worker;
 mod workspace;
 

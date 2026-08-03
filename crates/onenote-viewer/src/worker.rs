@@ -123,14 +123,19 @@ pub(crate) fn search(
     });
 }
 
-pub(crate) fn build_scene(generation: u64, page: onenote_core::Page, events: mpsc::Sender<Event>) {
+pub(crate) fn build_scene(
+    generation: u64,
+    page: onenote_core::Page,
+    cancel: Arc<AtomicBool>,
+    events: mpsc::Sender<Event>,
+) {
     std::thread::spawn(move || {
         let result = SceneBuilder::with_options(SceneOptions {
             include_page_title: false,
             crop_to_content: true,
             ..SceneOptions::default()
         })
-        .build(&page, &AtomicBool::new(false))
+        .build(&page, &cancel)
         .map(Arc::new)
         .map_err(|error| error.to_string());
         let _ignored = events.send(Event::Scene { generation, result });
