@@ -172,6 +172,13 @@ Visual regression tests use scene/layout snapshots plus cropped PNGs with
 tolerances for font rasterization. Semantic tests are primary; a screenshot
 alone cannot prove search or accessibility.
 
+The private `onepkg/Maths.onepkg` corpus contains the `mathx` regression page.
+Its three equations exercise display math, superscripts, scalable brackets,
+fractions, function application, subscripts, and an n-ary summation with both
+limits. Tests assert typed AST projection, absence of private structural
+markers in visible/indexed text, and non-empty native rasters from the bundled
+font backend. The user-supplied OneNote capture remains the visual oracle.
+
 ## Acceptance
 
 A corpus run records producer coverage, parsed/skipped pages, unknown JCIDs,

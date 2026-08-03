@@ -4,10 +4,12 @@
 
 mod builder;
 mod error;
+mod math;
 mod scene;
 
 pub use builder::{SceneBuilder, SceneOptions};
 pub use error::{Error, Result};
+pub use math::{to_typst_math, MathLayoutBackend, MathLayoutRequest, MathRaster};
 pub use scene::{
     AccessibilityRole, AccessibilitySemantics, HitAction, HitRegion, PageScene, SceneDiagnostic,
     SceneNode, SceneNodeId, ScenePrimitive,

@@ -1,17 +1,43 @@
+use crate::math_cache::{MathKey, MathSize};
 use gtk::pango;
 use num_traits::ToPrimitive;
-use onenote_core::{TextAlignment, TextBlock, TextStyle};
+use onenote_core::{MathSpan, TextAlignment, TextBlock, TextStyle};
 use std::borrow::Cow;
 
 const REPLACEMENT_CHARACTER: char = '\u{fffd}';
 
+#[cfg(test)]
 pub(crate) fn layout(
     context: &pango::Context,
     block: &TextBlock,
     marker: Option<&str>,
     width: f32,
 ) -> pango::Layout {
-    let (display, segments) = display_segments(block, marker);
+    layout_with_math(context, block, marker, width, |_, _| None).layout
+}
+
+pub(crate) struct TextLayout {
+    pub(crate) layout: pango::Layout,
+    pub(crate) math: Vec<MathPlacement>,
+}
+
+pub(crate) struct MathPlacement {
+    pub(crate) key: MathKey,
+    pub(crate) x: f32,
+    pub(crate) y: f32,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
+    pub(crate) fallback: String,
+}
+
+pub(crate) fn layout_with_math(
+    context: &pango::Context,
+    block: &TextBlock,
+    marker: Option<&str>,
+    width: f32,
+    mut math_shape: impl FnMut(&MathSpan, &TextStyle) -> Option<(MathKey, MathSize)>,
+) -> TextLayout {
+    let (display, segments, shapes) = display_segments_with_math(block, marker, &mut math_shape);
     let layout = pango::Layout::new(context);
     layout.set_text(&display);
     layout.set_width(to_pango_units(width));
@@ -34,8 +60,34 @@ pub(crate) fn layout(
     for segment in segments {
         apply_style(&attributes, &segment.style, segment.start, segment.end);
     }
+    for shape in &shapes {
+        let width = to_pango_units(shape.size.width.ceil());
+        let height = to_pango_units(shape.size.height.ceil());
+        let baseline = to_pango_units(shape.size.baseline.clamp(0.0, shape.size.height));
+        let rectangle = pango::Rectangle::new(0, -baseline, width, height);
+        insert(
+            &attributes,
+            pango::AttrShape::new(&rectangle, &rectangle),
+            shape.start,
+            shape.end,
+        );
+    }
     layout.set_attributes(Some(&attributes));
-    layout
+    let math = shapes
+        .into_iter()
+        .map(|shape| {
+            let position = layout.index_to_pos(i32::try_from(shape.start).unwrap_or(i32::MAX));
+            MathPlacement {
+                key: shape.key,
+                x: from_pango_units(position.x()),
+                y: from_pango_units(position.y()),
+                width: shape.size.width,
+                height: shape.size.height,
+                fallback: shape.fallback,
+            }
+        })
+        .collect();
+    TextLayout { layout, math }
 }
 
 struct StyleSegment {
@@ -44,7 +96,25 @@ struct StyleSegment {
     style: TextStyle,
 }
 
+struct MathShape {
+    start: u32,
+    end: u32,
+    key: MathKey,
+    size: MathSize,
+    fallback: String,
+}
+
+#[cfg(test)]
 fn display_segments(block: &TextBlock, marker: Option<&str>) -> (String, Vec<StyleSegment>) {
+    let (display, segments, _) = display_segments_with_math(block, marker, &mut |_, _| None);
+    (display, segments)
+}
+
+fn display_segments_with_math(
+    block: &TextBlock,
+    marker: Option<&str>,
+    math_shape: &mut impl FnMut(&MathSpan, &TextStyle) -> Option<(MathKey, MathSize)>,
+) -> (String, Vec<StyleSegment>, Vec<MathShape>) {
     let mut display = String::new();
     if let Some(marker) = marker.filter(|marker| !marker.is_empty()) {
         for character in marker.chars() {
@@ -53,11 +123,20 @@ fn display_segments(block: &TextBlock, marker: Option<&str>) -> (String, Vec<Sty
         display.push(' ');
     }
     let mut segments = Vec::new();
+    let mut shapes = Vec::new();
     let mut utf16_offset = 0_u32;
     let mut run_index = 0_usize;
+    let mut math_index = 0_usize;
     let mut active_run = None;
     let mut active_start = u32::try_from(display.len()).unwrap_or(u32::MAX);
     for character in block.text.chars() {
+        while block
+            .math
+            .get(math_index)
+            .is_some_and(|span| utf16_offset >= span.end_utf16)
+        {
+            math_index += 1;
+        }
         while block
             .runs
             .get(run_index)
@@ -70,6 +149,10 @@ fn display_segments(block: &TextBlock, marker: Option<&str>) -> (String, Vec<Sty
             .get(run_index)
             .filter(|run| utf16_offset >= run.start_utf16);
         let hidden = run.map_or(block.base_style.hidden, |run| run.style.hidden);
+        let math = block
+            .math
+            .get(math_index)
+            .filter(|span| utf16_offset >= span.start_utf16 && utf16_offset < span.end_utf16);
         if !hidden {
             let style_index = run.map(|_| run_index);
             if active_run != style_index {
@@ -84,7 +167,32 @@ fn display_segments(block: &TextBlock, marker: Option<&str>) -> (String, Vec<Sty
                 active_run = style_index;
                 active_start = end;
             }
-            push_display_character(&mut display, character);
+            if let Some(span) = math {
+                if utf16_offset == span.start_utf16 {
+                    let style = style_at(block, active_run);
+                    if let Some((key, size)) = math_shape(span, style) {
+                        let start = u32::try_from(display.len()).unwrap_or(u32::MAX);
+                        display.push('\u{fffc}');
+                        let end = u32::try_from(display.len()).unwrap_or(u32::MAX);
+                        shapes.push(MathShape {
+                            start,
+                            end,
+                            key,
+                            size,
+                            fallback: span.visible_text(),
+                        });
+                    } else {
+                        if span.diagnostic.is_some() {
+                            display.push_str("⚠ ");
+                        }
+                        for character in span.visible_text().chars() {
+                            push_display_character(&mut display, character);
+                        }
+                    }
+                }
+            } else {
+                push_display_character(&mut display, character);
+            }
         }
         utf16_offset += if character.len_utf16() == 1 { 1 } else { 2 };
     }
@@ -96,7 +204,7 @@ fn display_segments(block: &TextBlock, marker: Option<&str>) -> (String, Vec<Sty
             style: style_at(block, active_run).clone(),
         });
     }
-    (display, segments)
+    (display, segments, shapes)
 }
 
 pub(crate) fn glib_text(value: &str) -> Cow<'_, str> {
@@ -225,6 +333,10 @@ fn to_pango_units(value: f32) -> i32 {
     }
 }
 
+fn from_pango_units(value: i32) -> f32 {
+    value.to_f32().unwrap_or(0.0) / 1_024.0
+}
+
 #[cfg(test)]
 mod tests {
     use super::{display_segments, glib_text, layout};
@@ -260,6 +372,7 @@ mod tests {
                     style: visible,
                 },
             ],
+            math: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,
@@ -275,6 +388,7 @@ mod tests {
             text: "A\0B".to_owned(),
             base_style: TextStyle::default(),
             runs: Vec::new(),
+            math: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,
@@ -297,6 +411,7 @@ mod tests {
                 ..TextStyle::default()
             },
             runs: Vec::new(),
+            math: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,

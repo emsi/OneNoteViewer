@@ -51,6 +51,8 @@ install -m 0644 crates/onenote-viewer/resources/LUCIDE-LICENSE \
     "$directory/LUCIDE-LICENSE"
 install -m 0644 third_party/onenote.rs/LICENSE \
     "$directory/ONENOTE-PARSER-MPL-2.0.txt"
+install -m 0644 third_party/typst-assets/NOTICE \
+    "$directory/TYPST-ASSETS-NOTICE.txt"
 printf '%s\n' "$revision" >"$directory/BUILD-REVISION"
 ldd target/release/onenote-viewer |
     sed -E 's/ \(0x[[:xdigit:]]+\)//g' >"$directory/RUNTIME-LIBRARIES.txt"

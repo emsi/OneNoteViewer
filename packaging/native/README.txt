@@ -23,8 +23,8 @@ OneNote Viewer is free software licensed under GPL-3.0-or-later. LICENSE
 contains the complete project license. SOURCE-CODE.md identifies the exact
 source locations; BUILD-REVISION records the source revision used for this
 binary. THIRD-PARTY-NOTICES.md, THIRD-PARTY-LICENSES.html,
-ONENOTE-PARSER-MPL-2.0.txt, and LUCIDE-LICENSE preserve dependency licenses
-and attribution.
+ONENOTE-PARSER-MPL-2.0.txt, TYPST-ASSETS-NOTICE.txt, and LUCIDE-LICENSE
+preserve dependency licenses and attribution.
 
 The executable also exposes this information directly:
 

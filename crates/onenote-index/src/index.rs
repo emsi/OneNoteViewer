@@ -603,9 +603,9 @@ mod tests {
     use super::SearchIndex;
     use crate::{Error, SearchQuery};
     use onenote_core::{
-        Notebook, NotebookEntry, ObjectId, ObjectKind, Outline, OutlineElement, Page, PageId,
-        PageObject, PageObjectRole, Rect, Section, SectionId, SourceFingerprint, SourceId,
-        TextAlignment, TextBlock, TextStyle,
+        MathExpression, MathNode, MathSpan, Notebook, NotebookEntry, ObjectId, ObjectKind, Outline,
+        OutlineElement, Page, PageId, PageObject, PageObjectRole, Rect, Section, SectionId,
+        SourceFingerprint, SourceId, TextAlignment, TextBlock, TextStyle,
     };
     use std::sync::atomic::AtomicBool;
 
@@ -695,11 +695,64 @@ mod tests {
         assert_eq!(newer[0].section_id.as_str(), "duplicate-section");
     }
 
+    #[test]
+    fn indexes_linearized_math_instead_of_private_markers() {
+        let mut notebook = notebook("math-source", "math-fingerprint", "Math notebook");
+        let NotebookEntry::Section(section) = &mut notebook.entries[0] else {
+            unreachable!();
+        };
+        let ObjectKind::Outline(outline) = &mut section.pages[0].objects[0].kind else {
+            unreachable!();
+        };
+        let onenote_core::ElementContent::Text(text) = &mut outline.elements[0].content[0] else {
+            unreachable!();
+        };
+        text.text = "\u{fdd0}𝑥\u{fdee}2\u{fdef}".to_owned();
+        text.math = vec![MathSpan {
+            start_utf16: 0,
+            end_utf16: u32::try_from(text.text.encode_utf16().count()).unwrap(),
+            expression: Some(MathExpression {
+                nodes: vec![MathNode::Superscript {
+                    body: MathExpression {
+                        nodes: vec![MathNode::Text {
+                            value: "𝑥".to_owned(),
+                        }],
+                    },
+                    superscript: MathExpression {
+                        nodes: vec![MathNode::Text {
+                            value: "2".to_owned(),
+                        }],
+                    },
+                }],
+            }),
+            fallback_text: "𝑥2".to_owned(),
+            display: true,
+            diagnostic: None,
+        }];
+        let mut index = SearchIndex::open_in_memory().expect("index");
+        let cancel = AtomicBool::new(false);
+        index
+            .replace_source(&notebook, &cancel, |_| {})
+            .expect("index math notebook");
+
+        let hits = index
+            .search(&SearchQuery::simple("𝑥"), &cancel)
+            .expect("search math");
+
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].snippet.text.contains("𝑥^(2)"));
+        assert!(!hits[0]
+            .snippet
+            .text
+            .contains(['\u{fdd0}', '\u{fdee}', '\u{fdef}']));
+    }
+
     fn notebook(source: &str, fingerprint: &str, notebook_name: &str) -> Notebook {
         let text = TextBlock {
             text: "A searchable phrase in freeform content".to_owned(),
             base_style: TextStyle::default(),
             runs: Vec::new(),
+            math: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,

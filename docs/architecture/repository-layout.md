@@ -95,16 +95,20 @@ syntax are private implementation details.
 ### `onenote-render`
 
 Owns OneNote page layout, normalized geometry, retained `PageScene` values,
-stacking, hit regions, and accessibility semantics. It depends only on
-`onenote-core` and UI-neutral support libraries. It must run in headless tests
-and must not depend on GTK, GIO, SQLite, or viewer state.
+stacking, hit regions, accessibility semantics, the replaceable math-layout
+backend contract, and safe conversion from the canonical math AST to backend
+input. It depends only on `onenote-core` and UI-neutral support libraries. It
+must run in headless tests and must not depend on GTK, GIO, SQLite, or viewer
+state.
 
 ### `onenote-render-gtk`
 
 Owns Pango text layout, GSK snapshots, viewport culling, pan/zoom interaction,
-and the embeddable GTK page widget/controller. It depends on `onenote-render`
-and receives all host actions through explicit callbacks. It does not create
-windows, choose files, navigate notebooks, or persist a workspace.
+bounded asynchronous image and math rasterization, and the embeddable GTK page
+widget/controller. Its native Typst adapter has embedded fonts and no file,
+package, or network resolver. It depends on `onenote-render` and receives all
+host actions through explicit callbacks. It does not create windows, choose
+files, navigate notebooks, or persist a workspace.
 
 ### `onenote-viewer`
 

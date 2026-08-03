@@ -1,3 +1,4 @@
+use crate::math::{decode_span, MathSegment};
 use crate::model::{
     Attachment, Color, Diagnostic, DiagnosticSeverity, ElementContent, Image, Ink, InkPoint,
     InkStroke, ListMarker, Notebook, NotebookEntry, ObjectId, ObjectKind, Outline, OutlineElement,
@@ -677,37 +678,62 @@ impl Projector {
 
 fn project_text(text: &RichText) -> TextBlock {
     let base_style = project_text_style(text.paragraph_style());
-    let mut start = 0_u32;
     let total = u32::try_from(text.text().encode_utf16().count()).unwrap_or(u32::MAX);
-    let mut runs = Vec::new();
-    if text.text_run_indices().is_empty() {
-        for style in text.text_run_formatting() {
-            runs.push(TextRun {
-                start_utf16: 0,
-                end_utf16: total,
-                style: project_text_style(style),
-            });
+    let source_runs = source_text_runs(text, total);
+    let runs = source_runs
+        .iter()
+        .filter(|run| run.start_utf16 < run.end_utf16)
+        .map(|run| TextRun {
+            start_utf16: run.start_utf16,
+            end_utf16: run.end_utf16,
+            style: project_text_style(run.style),
+        })
+        .collect();
+    let mut math_objects = text.math_inline_objects().iter().copied();
+    let associated = source_runs
+        .iter()
+        .map(|run| {
+            let object = run
+                .style
+                .math_formatting()
+                .then(|| math_objects.next())
+                .flatten();
+            (run, object)
+        })
+        .collect::<Vec<_>>();
+    let mut math = Vec::new();
+    let mut index = 0;
+    while index < associated.len() {
+        if !associated[index].0.style.math_formatting() {
+            index += 1;
+            continue;
         }
-    } else {
-        for (end, style) in text
-            .text_run_indices()
+        let start = index;
+        while index < associated.len() && associated[index].0.style.math_formatting() {
+            index += 1;
+        }
+        let segments = associated[start..index]
             .iter()
-            .copied()
-            .zip(text.text_run_formatting())
-        {
-            let end = end.min(total).max(start);
-            runs.push(TextRun {
-                start_utf16: start,
-                end_utf16: end,
-                style: project_text_style(style),
-            });
-            start = end;
-        }
+            .map(|(run, object)| MathSegment {
+                start_utf16: run.start_utf16,
+                end_utf16: run.end_utf16,
+                text: run.text,
+                object: object.unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        let display = segments
+            .first()
+            .is_some_and(|segment| segment.start_utf16 == 0)
+            && segments
+                .last()
+                .is_some_and(|segment| segment.end_utf16 == total);
+        math.push(decode_span(&segments, display));
     }
     TextBlock {
         text: text.text().to_owned(),
         base_style,
         runs,
+        math,
         alignment: match text.paragraph_alignment() {
             ParagraphAlignment::Left => TextAlignment::Left,
             ParagraphAlignment::Center => TextAlignment::Center,
@@ -718,6 +744,48 @@ fn project_text(text: &RichText) -> TextBlock {
         space_after: half_inches(text.paragraph_space_after()),
         line_spacing: text.paragraph_line_spacing_exact().map(half_inches),
     }
+}
+
+struct SourceTextRun<'a> {
+    start_utf16: u32,
+    end_utf16: u32,
+    text: &'a str,
+    style: &'a ParagraphStyling,
+}
+
+fn source_text_runs(text: &RichText, total: u32) -> Vec<SourceTextRun<'_>> {
+    let mut runs = Vec::new();
+    let mut start = 0_u32;
+    for (index, style) in text.text_run_formatting().iter().enumerate() {
+        let end = text
+            .text_run_indices()
+            .get(index)
+            .copied()
+            .unwrap_or(total)
+            .min(total)
+            .max(start);
+        let start_byte = utf16_to_byte(text.text(), start);
+        let end_byte = utf16_to_byte(text.text(), end);
+        runs.push(SourceTextRun {
+            start_utf16: start,
+            end_utf16: end,
+            text: &text.text()[start_byte..end_byte],
+            style,
+        });
+        start = end;
+    }
+    runs
+}
+
+fn utf16_to_byte(text: &str, target: u32) -> usize {
+    let mut utf16 = 0_u32;
+    for (byte, character) in text.char_indices() {
+        if utf16 >= target {
+            return byte;
+        }
+        utf16 = utf16.saturating_add(u32::try_from(character.len_utf16()).unwrap_or(2));
+    }
+    text.len()
 }
 
 fn project_text_style(style: &ParagraphStyling) -> TextStyle {

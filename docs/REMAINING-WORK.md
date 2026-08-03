@@ -1,7 +1,7 @@
 # Remaining Work
 
 - **Status:** Active release-gap register
-- **Last reconciled:** 2026-07-27 UTC
+- **Last reconciled:** 2026-08-03 UTC
 
 This file records what the current implementation does **not** yet prove or
 complete. It is the dedicated bridge between the implemented baseline, the
@@ -137,6 +137,9 @@ The following are complete enough to build on, but remain pre-1.0:
   cancellation;
 - UI-neutral retained scenes with placeholders, culling, hit regions, and
   semantics;
+- typed OfficeMath projection, marker-free search/accessibility text, a public
+  replaceable math-layout contract, and bounded asynchronous native Typst
+  rendering with embedded fonts and visible fallback diagnostics;
 - embeddable GTK `PageView` with Pango/GSK/Cairo rendering, pan/zoom, and
   bounded asynchronous raster decode;
 - transactional multi-source FTS5 indexing and structured Rust/JSONL queries;

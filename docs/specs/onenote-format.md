@@ -468,9 +468,14 @@ limits, matrices, n-ary operators, radicals, stacks, sub/superscripts, and
 under/overbars.
 
 The domain model stores a typed math AST plus original text/run information.
-Rendering may use Pango fallback text initially and MathML/LaTeX conversion
-after validation. Unknown operators retain their arguments and show a warning;
-they must not drop adjacent prose.
+`onenote-render` exposes a replaceable native math-layout contract and a safe
+AST-to-Typst adapter. The GTK renderer typesets supported expressions off the
+UI thread with bundled fonts, places the resulting bounded RGBA raster through
+Pango shape attributes, and caches it by expression, style, theme color, and
+scale. Notebook text is never interpreted as Typst source. Unknown or malformed
+operators retain their arguments and render as marker-free fallback text with
+a visible warning; they must not drop adjacent prose. The same marker-free
+linear representation is used for search and accessibility.
 
 ### 6.13 Web Embeds and Other Extensions
 

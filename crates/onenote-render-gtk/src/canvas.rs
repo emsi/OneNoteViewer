@@ -1,4 +1,5 @@
 use crate::image_cache::{self, DecodedImage, MAX_TEXTURE_CACHE_BYTES};
+use crate::math_cache::{self, MathKey, MathSize, TypstMathBackend};
 use crate::text;
 use gtk::gdk;
 use gtk::glib;
@@ -6,8 +7,8 @@ use gtk::graphene;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use num_traits::ToPrimitive;
-use onenote_core::{Color, Rect, ResourceId, ResourceStore};
-use onenote_render::{HitAction, PageScene, SceneNode, ScenePrimitive};
+use onenote_core::{Color, MathSpan, Rect, ResourceId, ResourceStore, TextStyle};
+use onenote_render::{HitAction, MathLayoutBackend, PageScene, SceneNode, ScenePrimitive};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -19,8 +20,8 @@ type ActionHandler = Rc<dyn Fn(HitAction)>;
 
 mod imp {
     use super::{
-        gdk, glib, ActionHandler, Arc, Cell, HashMap, HashSet, PageScene, RefCell, ResourceId,
-        ResourceStore, CANVAS_MARGIN,
+        gdk, glib, ActionHandler, Arc, Cell, HashMap, HashSet, MathKey, MathLayoutBackend,
+        PageScene, RefCell, ResourceId, ResourceStore, TypstMathBackend, CANVAS_MARGIN,
     };
     use gtk::prelude::*;
     use gtk::subclass::prelude::*;
@@ -35,6 +36,12 @@ mod imp {
         pub(super) pending: RefCell<HashSet<ResourceId>>,
         pub(super) failed: RefCell<HashSet<ResourceId>>,
         pub(super) texture_bytes: Cell<usize>,
+        pub(super) math_textures: RefCell<HashMap<MathKey, CachedMathTexture>>,
+        pub(super) math_pending: RefCell<HashSet<MathKey>>,
+        pub(super) math_errors: RefCell<HashMap<MathKey, String>>,
+        pub(super) math_texture_bytes: Cell<usize>,
+        pub(super) math_backend: RefCell<Arc<dyn MathLayoutBackend>>,
+        pub(super) math_generation: Cell<u64>,
     }
 
     impl Default for PageCanvas {
@@ -49,6 +56,12 @@ mod imp {
                 pending: RefCell::default(),
                 failed: RefCell::default(),
                 texture_bytes: Cell::default(),
+                math_textures: RefCell::default(),
+                math_pending: RefCell::default(),
+                math_errors: RefCell::default(),
+                math_texture_bytes: Cell::default(),
+                math_backend: RefCell::new(Arc::new(TypstMathBackend::new())),
+                math_generation: Cell::default(),
             }
         }
     }
@@ -102,6 +115,12 @@ mod imp {
         pub(super) texture: gdk::Texture,
         pub(super) bytes: usize,
     }
+
+    pub(super) struct CachedMathTexture {
+        pub(super) texture: gdk::Texture,
+        pub(super) size: super::MathSize,
+        pub(super) bytes: usize,
+    }
 }
 
 glib::wrapper! {
@@ -125,6 +144,12 @@ impl PageCanvas {
         imp.pending.borrow_mut().clear();
         imp.failed.borrow_mut().clear();
         imp.texture_bytes.set(0);
+        imp.math_textures.borrow_mut().clear();
+        imp.math_pending.borrow_mut().clear();
+        imp.math_errors.borrow_mut().clear();
+        imp.math_texture_bytes.set(0);
+        imp.math_generation
+            .set(imp.math_generation.get().wrapping_add(1));
         self.queue_resize();
         self.queue_draw();
     }
@@ -149,6 +174,13 @@ impl PageCanvas {
         let zoom = zoom.clamp(0.25, 4.0);
         if (self.imp().zoom.get() - zoom).abs() > f32::EPSILON {
             self.imp().zoom.set(zoom);
+            self.imp().math_textures.borrow_mut().clear();
+            self.imp().math_pending.borrow_mut().clear();
+            self.imp().math_errors.borrow_mut().clear();
+            self.imp().math_texture_bytes.set(0);
+            self.imp()
+                .math_generation
+                .set(self.imp().math_generation.get().wrapping_add(1));
             self.queue_resize();
             self.queue_draw();
         }
@@ -165,12 +197,36 @@ impl PageCanvas {
     /// host-provided value.
     pub fn set_default_text_color(&self, color: &gdk::RGBA) {
         *self.imp().default_text_color.borrow_mut() = *color;
+        self.imp().math_textures.borrow_mut().clear();
+        self.imp().math_pending.borrow_mut().clear();
+        self.imp().math_errors.borrow_mut().clear();
+        self.imp().math_texture_bytes.set(0);
+        self.imp()
+            .math_generation
+            .set(self.imp().math_generation.get().wrapping_add(1));
         self.queue_draw();
     }
 
     /// Current fallback for text whose `OneNote` style uses automatic color.
     pub fn default_text_color(&self) -> gdk::RGBA {
         *self.imp().default_text_color.borrow()
+    }
+
+    /// Replace the native math backend used for future equations.
+    ///
+    /// Existing equation textures are discarded so the new backend takes
+    /// effect on the next snapshot. Rendering still occurs off the GTK thread.
+    pub fn set_math_backend(&self, backend: Arc<dyn MathLayoutBackend>) {
+        let imp = self.imp();
+        *imp.math_backend.borrow_mut() = backend;
+        imp.math_textures.borrow_mut().clear();
+        imp.math_pending.borrow_mut().clear();
+        imp.math_errors.borrow_mut().clear();
+        imp.math_texture_bytes.set(0);
+        imp.math_generation
+            .set(imp.math_generation.get().wrapping_add(1));
+        self.queue_resize();
+        self.queue_draw();
     }
 
     /// Set the host callback for link, attachment, and selection actions.
@@ -235,15 +291,45 @@ impl PageCanvas {
                 corner_radius: _,
             } => snapshot.append_color(&rgba(*color), &graphene_rect(node.bounds)),
             ScenePrimitive::Text { block, marker } => {
-                let layout = text::layout(
+                let layout = text::layout_with_math(
                     &self.pango_context(),
                     block,
                     marker.as_deref(),
                     node.bounds.width,
+                    |span, style| self.math_shape(span, style),
                 );
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(node.bounds.x, node.bounds.y));
-                snapshot.append_layout(&layout, &self.default_text_color());
+                snapshot.append_layout(&layout.layout, &self.default_text_color());
+                for math in &layout.math {
+                    let bounds = Rect {
+                        x: math.x,
+                        y: math.y,
+                        width: math.width,
+                        height: math.height,
+                    };
+                    if let Some(texture) = self.math_texture(&math.key) {
+                        snapshot.append_texture(&texture, &graphene_rect(bounds));
+                    } else if self.imp().math_errors.borrow().contains_key(&math.key) {
+                        snapshot.append_color(
+                            &gdk::RGBA::new(1.0, 0.92, 0.92, 0.72),
+                            &graphene_rect(bounds),
+                        );
+                        self.snapshot_label(
+                            snapshot,
+                            bounds,
+                            &format!("⚠ {}", math.fallback),
+                            gdk::RGBA::new(0.55, 0.08, 0.08, 1.0),
+                        );
+                    } else {
+                        self.snapshot_label(
+                            snapshot,
+                            bounds,
+                            &math.fallback,
+                            self.default_text_color(),
+                        );
+                    }
+                }
                 snapshot.restore();
             }
             ScenePrimitive::Image(image) => {
@@ -339,6 +425,115 @@ impl PageCanvas {
                 }
             });
         });
+    }
+
+    fn math_shape(&self, span: &MathSpan, style: &TextStyle) -> Option<(MathKey, MathSize)> {
+        if span.diagnostic.is_some() {
+            return None;
+        }
+        let default_color = color_from_rgba(self.default_text_color());
+        let key = MathKey::new(span, style, default_color, self.zoom())?;
+        if let Some(entry) = self.imp().math_textures.borrow().get(&key) {
+            return Some((key, entry.size));
+        }
+        let estimate = key.estimated_size();
+        if !self.imp().math_errors.borrow().contains_key(&key) {
+            self.request_math(key.clone(), span.expression.as_ref()?.clone());
+        }
+        Some((key, estimate))
+    }
+
+    fn math_texture(&self, key: &MathKey) -> Option<gdk::Texture> {
+        self.imp()
+            .math_textures
+            .borrow()
+            .get(key)
+            .map(|entry| entry.texture.clone())
+    }
+
+    fn request_math(&self, key: MathKey, expression: onenote_core::MathExpression) {
+        let imp = self.imp();
+        if imp.math_pending.borrow().contains(&key)
+            || imp.math_textures.borrow().contains_key(&key)
+            || imp.math_errors.borrow().contains_key(&key)
+        {
+            return;
+        }
+        imp.math_pending.borrow_mut().insert(key.clone());
+        let weak: glib::SendWeakRef<Self> = self.downgrade().into();
+        let backend = imp.math_backend.borrow().clone();
+        let generation = imp.math_generation.get();
+        math_cache::spawn_render(backend, key, expression, move |key, rendered| {
+            glib::MainContext::default().invoke(move || {
+                if let Some(canvas) = weak.upgrade() {
+                    canvas.finish_math(generation, key, rendered);
+                }
+            });
+        });
+    }
+
+    fn finish_math(
+        &self,
+        generation: u64,
+        key: MathKey,
+        rendered: Result<onenote_render::MathRaster, String>,
+    ) {
+        const MAX_MATH_TEXTURE_CACHE_BYTES: usize = 128 * 1024 * 1024;
+
+        let imp = self.imp();
+        if generation != imp.math_generation.get() {
+            return;
+        }
+        imp.math_pending.borrow_mut().remove(&key);
+        let raster = match rendered {
+            Ok(raster) => raster,
+            Err(error) => {
+                imp.math_errors.borrow_mut().insert(key, error);
+                self.queue_draw();
+                return;
+            }
+        };
+        let bytes = raster.rgba.len();
+        if bytes > MAX_MATH_TEXTURE_CACHE_BYTES {
+            imp.math_errors
+                .borrow_mut()
+                .insert(key, "math texture exceeds cache limit".to_owned());
+            self.queue_draw();
+            return;
+        }
+        if imp.math_texture_bytes.get().saturating_add(bytes) > MAX_MATH_TEXTURE_CACHE_BYTES {
+            imp.math_textures.borrow_mut().clear();
+            imp.math_texture_bytes.set(0);
+        }
+        let width = i32::try_from(raster.width).unwrap_or(i32::MAX);
+        let height = i32::try_from(raster.height).unwrap_or(i32::MAX);
+        let stride = usize::try_from(width).unwrap_or(0) * 4;
+        let owned = glib::Bytes::from_owned(raster.rgba);
+        let texture =
+            gdk::MemoryTexture::new(width, height, gdk::MemoryFormat::R8g8b8a8, &owned, stride)
+                .upcast();
+        let size = MathSize {
+            width: raster.logical_width,
+            height: raster.logical_height,
+            baseline: raster.baseline,
+        };
+        imp.math_textures.borrow_mut().insert(
+            key,
+            imp::CachedMathTexture {
+                texture,
+                size,
+                bytes,
+            },
+        );
+        imp.math_texture_bytes.set(
+            imp.math_textures
+                .borrow()
+                .values()
+                .map(|entry| entry.bytes)
+                .sum(),
+        );
+        self.queue_resize();
+        self.queue_draw();
     }
 
     fn finish_texture(&self, id: ResourceId, decoded: Option<DecodedImage>) {
@@ -460,6 +655,16 @@ fn rgba(color: Color) -> gdk::RGBA {
         f32::from(color.blue) / 255.0,
         f32::from(color.alpha) / 255.0,
     )
+}
+
+fn color_from_rgba(color: gdk::RGBA) -> Color {
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round().to_u8().unwrap_or(0);
+    Color {
+        red: channel(color.red()),
+        green: channel(color.green()),
+        blue: channel(color.blue()),
+        alpha: channel(color.alpha()),
+    }
 }
 
 fn graphene_rect(rect: Rect) -> graphene::Rect {

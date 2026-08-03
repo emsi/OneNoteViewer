@@ -51,7 +51,9 @@ authorize a broad compatibility claim.
 
 **Gate status:** the complete private desktop notebook loads without panic and
 projects page/title/text, images, attachments, tables, and ink. Producer breadth,
-tag/math-specific fixtures, malformed inputs, and measurements remain open.
+tag-specific fixtures, broader malformed inputs, and measurements remain open.
+The private Maths fixture covers typed OfficeMath projection, structured native
+rendering, fallback text, and search, but not every rare operator family.
 
 ### Canvas Spike
 
@@ -102,7 +104,8 @@ independent protocol fixtures pass. Recorded latency targets remain open.
   attachments, ink, placeholders, pan, and zoom.
 - [x] Viewer title/date chrome without duplicate native title-area rendering;
   reusable scene construction retains a full-page option.
-- [ ] Complete tags, basic math, confirmed links, and safe attachment extraction.
+- [ ] Complete tags, confirmed links, and safe attachment extraction.
+- [x] Project, render, and index basic OfficeMath with structured fallback.
 - [x] Global search with result navigation to matching object geometry.
 - [x] Persistent all-open-notebooks workspace and default global search scope.
 - [x] Standalone renderer and query consumers.

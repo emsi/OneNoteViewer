@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::math::MathSpan;
+
 macro_rules! string_id {
     ($name:ident) => {
         #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -428,6 +430,9 @@ pub struct TextBlock {
     pub base_style: TextStyle,
     /// Style runs whose offsets use `OneNote`'s UTF-16 code-unit indexing.
     pub runs: Vec<TextRun>,
+    /// Structured `OfficeMath` ranges in source order.
+    #[serde(default)]
+    pub math: Vec<MathSpan>,
     /// Paragraph alignment.
     pub alignment: TextAlignment,
     /// Top margin in logical pixels.
@@ -441,7 +446,7 @@ pub struct TextBlock {
 impl TextBlock {
     /// Return display text after excluding source runs marked hidden.
     pub fn visible_text(&self) -> String {
-        if self.runs.is_empty() {
+        if self.runs.is_empty() && self.math.is_empty() {
             return if self.base_style.hidden {
                 String::new()
             } else {
@@ -452,6 +457,7 @@ impl TextBlock {
         let mut output = String::with_capacity(self.text.len());
         let mut utf16_offset = 0_u32;
         let mut run_index = 0_usize;
+        let mut math_index = 0_usize;
         for character in self.text.chars() {
             while self
                 .runs
@@ -465,10 +471,28 @@ impl TextBlock {
                 .get(run_index)
                 .filter(|run| utf16_offset >= run.start_utf16)
                 .map_or(self.base_style.hidden, |run| run.style.hidden);
+            while self
+                .math
+                .get(math_index)
+                .is_some_and(|span| utf16_offset >= span.end_utf16)
+            {
+                math_index += 1;
+            }
+            if let Some(span) = self
+                .math
+                .get(math_index)
+                .filter(|span| utf16_offset >= span.start_utf16 && utf16_offset < span.end_utf16)
+            {
+                if !hidden && utf16_offset == span.start_utf16 {
+                    output.push_str(&span.visible_text());
+                }
+                utf16_offset += u32::try_from(character.len_utf16()).unwrap_or(2);
+                continue;
+            }
             if !hidden {
                 output.push(character);
             }
-            utf16_offset += if character.len_utf16() == 1 { 1 } else { 2 };
+            utf16_offset += u32::try_from(character.len_utf16()).unwrap_or(2);
         }
         output
     }
@@ -745,6 +769,7 @@ mod tests {
                     style: visible,
                 },
             ],
+            math: Vec::new(),
             alignment: super::TextAlignment::default(),
             space_before: 0.0,
             space_after: 0.0,
@@ -752,5 +777,48 @@ mod tests {
         };
 
         assert_eq!(text.visible_text(), "A😀 Z");
+    }
+
+    #[test]
+    fn visible_text_replaces_private_math_stream_with_linear_math() {
+        let source = "before \u{fdd0}𝑥\u{fdee}2\u{fdef} after";
+        let start = u32::try_from("before ".encode_utf16().count()).unwrap();
+        let end =
+            start + u32::try_from("\u{fdd0}𝑥\u{fdee}2\u{fdef}".encode_utf16().count()).unwrap();
+        let text = TextBlock {
+            text: source.to_owned(),
+            base_style: TextStyle::default(),
+            runs: Vec::new(),
+            math: vec![crate::MathSpan {
+                start_utf16: start,
+                end_utf16: end,
+                expression: Some(crate::MathExpression {
+                    nodes: vec![crate::MathNode::Superscript {
+                        body: crate::MathExpression {
+                            nodes: vec![crate::MathNode::Text {
+                                value: "𝑥".to_owned(),
+                            }],
+                        },
+                        superscript: crate::MathExpression {
+                            nodes: vec![crate::MathNode::Text {
+                                value: "2".to_owned(),
+                            }],
+                        },
+                    }],
+                }),
+                fallback_text: "𝑥2".to_owned(),
+                display: false,
+                diagnostic: None,
+            }],
+            alignment: super::TextAlignment::default(),
+            space_before: 0.0,
+            space_after: 0.0,
+            line_spacing: None,
+        };
+
+        assert_eq!(text.visible_text(), "before 𝑥^(2) after");
+        let mut hidden = text;
+        hidden.base_style.hidden = true;
+        assert!(hidden.visible_text().is_empty());
     }
 }

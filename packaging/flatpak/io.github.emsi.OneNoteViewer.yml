@@ -51,6 +51,7 @@ modules:
       - install -Dm0644 THIRD-PARTY-LICENSES.html /app/share/doc/io.github.emsi.OneNoteViewer/THIRD-PARTY-LICENSES.html
       - install -Dm0644 crates/onenote-viewer/resources/LUCIDE-LICENSE /app/share/licenses/io.github.emsi.OneNoteViewer/LUCIDE-LICENSE
       - install -Dm0644 third_party/onenote.rs/LICENSE /app/share/licenses/io.github.emsi.OneNoteViewer/ONENOTE-PARSER-MPL-2.0.txt
+      - install -Dm0644 third_party/typst-assets/NOTICE /app/share/licenses/io.github.emsi.OneNoteViewer/TYPST-ASSETS-NOTICE.txt
     sources:
       - type: dir
         path: ../..

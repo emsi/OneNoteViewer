@@ -1,6 +1,6 @@
 use onenote_core::{
-    ElementContent, Error, NotebookEntry, ObjectKind, OneNoteLoader, OnePkgExtractor,
-    PageObjectRole, ResourceRef, ResourceStatus,
+    ElementContent, Error, MathSpan, NotebookEntry, ObjectKind, OneNoteLoader, OnePkgExtractor,
+    OutlineElement, PageObjectRole, ResourceRef, ResourceStatus,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -229,6 +229,65 @@ fn supplied_package_extracts_on_disk_to_a_complete_native_tree() {
     assert!(report.destination.is_dir());
 }
 
+#[test]
+fn maths_package_projects_structured_office_math_without_private_markers() {
+    let Some(package) = maths_package_path() else {
+        return;
+    };
+    let Ok(extractor) = OnePkgExtractor::detect() else {
+        return;
+    };
+    let temporary = tempfile::tempdir().expect("temporary extraction parent");
+    let destination = temporary.path().join("maths");
+    extractor
+        .extract(&package, &destination, &AtomicBool::new(false))
+        .expect("Maths.onepkg must extract");
+    let section = native_files(&destination)
+        .into_iter()
+        .find(|path| has_extension(path, "one"))
+        .expect("Maths.onepkg must contain a section");
+    let loaded = OneNoteLoader::default()
+        .load(section)
+        .expect("the Maths section must project");
+    let page = loaded
+        .notebook
+        .pages()
+        .find(|page| page.title.eq_ignore_ascii_case("mathx"))
+        .expect("the mathx regression page");
+    let mut spans = Vec::new();
+    for object in &page.objects {
+        if let ObjectKind::Outline(outline) = &object.kind {
+            collect_math(&outline.elements, &mut spans);
+        }
+    }
+
+    assert_eq!(spans.len(), 3, "mathx must contain all three equations");
+    assert!(spans.iter().all(|span| span.expression.is_some()));
+    assert!(spans.iter().all(|span| span.diagnostic.is_none()));
+    let debug = format!("{spans:#?}");
+    assert!(debug.contains("Superscript"));
+    assert!(debug.contains("Fraction"));
+    assert!(debug.contains("Nary"));
+    let visible = spans
+        .iter()
+        .map(|span| span.visible_text())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(visible.contains('∑'));
+    assert!(!visible.contains(['\u{fdd0}', '\u{fdee}', '\u{fdef}']));
+}
+
+fn collect_math<'a>(elements: &'a [OutlineElement], spans: &mut Vec<&'a MathSpan>) {
+    for element in elements {
+        for content in &element.content {
+            if let ElementContent::Text(text) = content {
+                spans.extend(&text.math);
+            }
+        }
+        collect_math(&element.children, spans);
+    }
+}
+
 fn corpus_path() -> Option<PathBuf> {
     let path = std::env::var_os("ONENOTE_TEST_CORPUS").map_or_else(
         || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.extracted"),
@@ -239,6 +298,11 @@ fn corpus_path() -> Option<PathBuf> {
 
 fn package_path() -> Option<PathBuf> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.onepkg");
+    path.is_file().then_some(path)
+}
+
+fn maths_package_path() -> Option<PathBuf> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Maths.onepkg");
     path.is_file().then_some(path)
 }
 

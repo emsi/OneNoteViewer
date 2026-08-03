@@ -15,6 +15,13 @@ image.workspace = true
 num-traits.workspace = true
 onenote-core.workspace = true
 onenote-render.workspace = true
+typst.workspace = true
+typst-as-lib.workspace = true
+typst-assets.workspace = true
+typst-render.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

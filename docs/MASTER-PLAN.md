@@ -138,7 +138,9 @@ The detailed milestone sequence and exit gates are in the
 - `onenote-render` builds deterministic UI-neutral scenes, and
   `onenote-render-gtk` provides an independently runnable Pango/GSK page view
   with culling, pan, zoom, hit testing, bounded asynchronous image decoding,
-  and Cairo ink/line primitives.
+  Cairo ink/line primitives, and asynchronous native OfficeMath typesetting
+  through a replaceable UI-neutral backend contract. Math source remains a
+  typed domain AST and its marker-free linear form is indexed.
 - `onenote-index` provides transactional multi-source FTS5 indexing,
   structured result locators, snippets, filtering, integrity checks, and a
   versioned JSON Lines query adapter with an independent process test.
@@ -166,6 +168,10 @@ The detailed milestone sequence and exit gates are in the
   42 logical section paths. All 83 now parse independently after the documented
   compatibility patches. This proves per-file recovery only, not aggregate
   backup loading, unique-page counts, or complete rendering fidelity.
+- The private `Maths.onepkg` regression page projects and natively renders its
+  three OfficeMath expressions, including fractions, scripts, function
+  application, and an n-ary summation with limits. This does not yet prove all
+  rare OfficeMath operators or exact OneNote geometry.
 - Ten primary Microsoft reference PDFs are pinned and reproducibly verified.
 - Workspace tests, private-corpus tests, strict Clippy, formatting, and index
   integrity checks pass.

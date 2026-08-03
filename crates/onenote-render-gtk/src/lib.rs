@@ -4,10 +4,12 @@
 
 mod canvas;
 mod image_cache;
+mod math_cache;
 mod text;
 mod view;
 
 pub use canvas::PageCanvas;
+pub use math_cache::TypstMathBackend;
 pub use view::PageView;
 
 /// The crate API version during the pre-1.0 implementation phase.

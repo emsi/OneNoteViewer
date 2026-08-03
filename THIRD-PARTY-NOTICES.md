@@ -46,6 +46,15 @@ package metadata under its `usr/share/doc/` directory.
 SQLite is compiled through the `rusqlite` `bundled` feature. SQLite is in the
 public domain: <https://www.sqlite.org/copyright.html>.
 
+## Native Math Fonts
+
+The native OfficeMath renderer uses Typst 0.12 and embeds the unmodified fonts
+distributed by `typst-assets` 0.12.0: Libertinus Serif, New Computer Modern,
+and DejaVu Sans Mono. The applicable SIL Open Font License, GUST Font License,
+Bitstream Vera, DejaVu, and related attribution terms are reproduced verbatim
+in `third_party/typst-assets/NOTICE`. Release artifacts install the same file
+as `TYPST-ASSETS-NOTICE.txt`.
+
 ## Icons
 
 The icons under `crates/onenote-viewer/resources/icons/` are from Lucide or are

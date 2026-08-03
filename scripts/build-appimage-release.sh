@@ -103,6 +103,8 @@ install -m 0644 crates/onenote-viewer/resources/LUCIDE-LICENSE \
     "$appdir/usr/share/licenses/io.github.emsi.OneNoteViewer/LUCIDE-LICENSE"
 install -m 0644 third_party/onenote.rs/LICENSE \
     "$appdir/usr/share/licenses/io.github.emsi.OneNoteViewer/ONENOTE-PARSER-MPL-2.0.txt"
+install -m 0644 third_party/typst-assets/NOTICE \
+    "$appdir/usr/share/licenses/io.github.emsi.OneNoteViewer/TYPST-ASSETS-NOTICE.txt"
 
 APPIMAGE_EXTRACT_AND_RUN=1 "$linuxdeploy" \
     --appdir "$appdir" \

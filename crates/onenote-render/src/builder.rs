@@ -247,6 +247,15 @@ impl BuildState<'_> {
         z_index: i32,
         marker: Option<String>,
     ) -> Result<()> {
+        for span in &text.math {
+            if let Some(message) = &span.diagnostic {
+                self.diagnostics.push(SceneDiagnostic {
+                    code: "math_decode".to_owned(),
+                    message: bounded_label(message, 512),
+                    object_id: Some(object.id.clone()),
+                });
+            }
+        }
         let height = estimate_text_height(text, cursor.width, self.options);
         let bounds = Rect {
             x: cursor.x,
@@ -743,10 +752,18 @@ fn estimate_text_height(text: &TextBlock, width: f32, options: SceneOptions) -> 
     let visible_characters = text.visible_text().chars().count();
     let visible_characters = f32::from(u16::try_from(visible_characters).unwrap_or(u16::MAX));
     let lines = (visible_characters / characters_per_line).ceil().max(1.0);
-    text.line_spacing
+    let line_height = text
+        .line_spacing
         .unwrap_or(font_size * options.line_height)
-        .max(font_size)
-        * lines
+        .max(font_size);
+    let math_height = text.math.iter().fold(0.0_f32, |height, span| {
+        height.max(if span.display {
+            font_size * 2.8
+        } else {
+            font_size * 2.0
+        })
+    });
+    (line_height * lines).max(math_height)
 }
 
 fn ink_height(ink: &Ink) -> f32 {
