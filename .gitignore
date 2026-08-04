@@ -3,6 +3,7 @@
 /.flatpak-builder/
 /flatpak_app/
 /flatpak_repo/
+/docs/temp/
 /.idea/
 /.vscode/
 *.swp

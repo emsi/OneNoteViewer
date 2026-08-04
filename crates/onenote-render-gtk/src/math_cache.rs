@@ -466,8 +466,10 @@ mod tests {
     }
 
     #[test]
-    fn private_mathx_corpus_renders_every_equation() {
-        let package = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Maths.onepkg");
+    fn private_math_corpus_renders_every_equation() {
+        let Some(package) = std::env::var_os("ONENOTE_MATH_TEST_PACKAGE").map(PathBuf::from) else {
+            return;
+        };
         if !package.is_file() {
             return;
         }
@@ -475,23 +477,24 @@ mod tests {
             return;
         };
         let temporary = tempfile::tempdir().expect("temporary extraction parent");
-        let destination = temporary.path().join("maths");
+        let destination = temporary.path().join("notebook");
         extractor
             .extract(&package, &destination, &AtomicBool::new(false))
-            .expect("Maths.onepkg must extract");
-        let section = first_section(&destination).expect("Maths section");
+            .expect("private math package must extract");
+        let section = first_section(&destination).expect("private math section");
         let loaded = OneNoteLoader::default()
             .load(section)
-            .expect("Maths section must project");
-        let page = loaded
-            .notebook
-            .pages()
-            .find(|page| page.title.eq_ignore_ascii_case("mathx"))
-            .expect("mathx page");
+            .expect("private math section must project");
         let mut spans = Vec::new();
-        for object in &page.objects {
-            if let ObjectKind::Outline(outline) = &object.kind {
-                collect_math(&outline.elements, &mut spans);
+        for page in loaded.notebook.pages() {
+            let mut page_spans = Vec::new();
+            for object in &page.objects {
+                if let ObjectKind::Outline(outline) = &object.kind {
+                    collect_math(&outline.elements, &mut page_spans);
+                }
+            }
+            if page_spans.len() > spans.len() {
+                spans = page_spans;
             }
         }
         assert_eq!(spans.len(), 3);

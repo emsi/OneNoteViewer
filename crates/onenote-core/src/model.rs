@@ -452,7 +452,9 @@ impl ElementContent {
 /// A rich-text paragraph with UTF-16 source run boundaries.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TextBlock {
-    /// Original paragraph text.
+    /// Semantic paragraph text with source line-break controls normalized.
+    ///
+    /// UTF-16 length is preserved so source run and math offsets remain valid.
     pub text: String,
     /// Base paragraph style.
     pub base_style: TextStyle,
@@ -738,18 +740,18 @@ mod tests {
 
     #[test]
     fn section_path_includes_nested_group_ancestry() {
-        let section_id = SectionId::new("deep-learning");
+        let section_id = SectionId::new("nested-section");
         let notebook = Notebook {
             source_id: SourceId::new("source"),
             fingerprint: SourceFingerprint::new("fingerprint"),
-            name: "Machine Learning".to_owned(),
+            name: "Example Notebook".to_owned(),
             color: None,
             entries: vec![NotebookEntry::Group(SectionGroup {
-                id: SectionId::new("udacity"),
-                name: "Udacity".to_owned(),
+                id: SectionId::new("group"),
+                name: "Nested Group".to_owned(),
                 entries: vec![NotebookEntry::Section(Section {
                     id: section_id.clone(),
-                    name: "Deep Learning (Udacity)".to_owned(),
+                    name: "Nested Section".to_owned(),
                     color: None,
                     pages: Vec::new(),
                     diagnostics: Vec::new(),
@@ -762,11 +764,11 @@ mod tests {
             notebook
                 .section(&section_id)
                 .map(|section| section.name.as_str()),
-            Some("Deep Learning (Udacity)")
+            Some("Nested Section")
         );
         assert_eq!(
             notebook.section_path(&section_id),
-            Some(vec!["Udacity", "Deep Learning (Udacity)"])
+            Some(vec!["Nested Group", "Nested Section"])
         );
     }
 

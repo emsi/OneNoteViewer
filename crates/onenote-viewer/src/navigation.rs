@@ -397,22 +397,22 @@ mod tests {
     fn section_groups_remain_nested() {
         let section = Section {
             id: SectionId::new("section"),
-            name: "Install Log".to_owned(),
+            name: "Nested Section".to_owned(),
             color: None,
             pages: Vec::new(),
             diagnostics: Vec::new(),
         };
         let entries = vec![NotebookEntry::Group(SectionGroup {
             id: SectionId::new("group"),
-            name: "OpenStack".to_owned(),
+            name: "Example Group".to_owned(),
             entries: vec![NotebookEntry::Section(section)],
         })];
 
         let source_id = SourceId::new("source");
         let nodes = entry_nodes(&source_id, &entries);
 
-        assert_eq!(nodes[0].label, "OpenStack");
-        assert_eq!(nodes[0].children[0].label, "Install Log");
+        assert_eq!(nodes[0].label, "Example Group");
+        assert_eq!(nodes[0].children[0].label, "Nested Section");
         assert!(matches!(
             nodes[0].children[0].target,
             NavigationTarget::Section { source_id: ref row_source, .. }
