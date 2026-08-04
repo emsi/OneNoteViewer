@@ -77,6 +77,48 @@ fn viewer_scene_option_omits_only_native_title_objects() {
     );
 }
 
+#[test]
+fn documentation_lists_render_as_readable_nested_sequences() {
+    let section = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../onepkg/ML@Parasoft/Documentation.one");
+    if !section.is_file() {
+        return;
+    }
+    let loaded = OneNoteLoader::default()
+        .load(section)
+        .expect("Documentation.one must parse");
+    let page = loaded
+        .notebook
+        .pages()
+        .find(|page| page.title == "Java")
+        .expect("Java regression page");
+    let scene = SceneBuilder::with_options(SceneOptions {
+        include_page_title: false,
+        ..SceneOptions::default()
+    })
+    .build(page, &AtomicBool::new(false))
+    .expect("Java page scene");
+    let markers = scene
+        .nodes
+        .iter()
+        .filter_map(|node| match &node.primitive {
+            ScenePrimitive::Text {
+                marker: Some(marker),
+                ..
+            } => Some(marker.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(markers.contains(&"1."));
+    assert!(markers.contains(&"9."));
+    assert!(markers.contains(&"a."));
+    assert!(markers.contains(&"i."));
+    assert!(markers
+        .iter()
+        .all(|marker| !marker.contains(['\0', '\u{fffd}'])));
+}
+
 fn finite_rect(rect: onenote_core::Rect) -> bool {
     [rect.x, rect.y, rect.width, rect.height]
         .into_iter()

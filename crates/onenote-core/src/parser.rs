@@ -1,10 +1,10 @@
 use crate::math::{decode_span, MathSegment};
 use crate::model::{
     Attachment, Color, Diagnostic, DiagnosticSeverity, ElementContent, Image, Ink, InkPoint,
-    InkStroke, ListMarker, Notebook, NotebookEntry, ObjectId, ObjectKind, Outline, OutlineElement,
-    Page, PageId, PageObject, PageObjectRole, Rect, ResourceId, ResourceRef, Section, SectionGroup,
-    SectionId, SourceFingerprint, SourceId, Table, TableCell, TextAlignment, TextBlock, TextRun,
-    TextStyle,
+    InkStroke, ListMarker, ListMarkerPart, ListNumberFormat, Notebook, NotebookEntry, ObjectId,
+    ObjectKind, Outline, OutlineElement, Page, PageId, PageObject, PageObjectRole, Rect,
+    ResourceId, ResourceRef, Section, SectionGroup, SectionId, SourceFingerprint, SourceId, Table,
+    TableCell, TextAlignment, TextBlock, TextRun, TextStyle,
 };
 use crate::resource::{resource_status, ResourceLoader};
 use crate::{Error, ResourceStore, Result, PIXELS_PER_HALF_INCH};
@@ -360,20 +360,29 @@ impl Projector {
             child_level: outline.child_level(),
             indents: outline.indents().iter().copied().map(half_inches).collect(),
             user_sized: outline.is_layout_size_set_by_user(),
-            elements: self.outline_items(outline.items(), key)?,
+            elements: self.outline_items(outline.items(), key, outline.child_level())?,
         })
     }
 
-    fn outline_items(&mut self, items: &[OutlineItem], key: &str) -> Result<Vec<OutlineElement>> {
+    fn outline_items(
+        &mut self,
+        items: &[OutlineItem],
+        key: &str,
+        level: u8,
+    ) -> Result<Vec<OutlineElement>> {
         let mut elements = Vec::new();
         for (index, item) in items.iter().enumerate() {
             let item_key = format!("{key}/{index}");
             match item {
                 OutlineItem::Element(element) => {
-                    elements.push(self.outline_element(element, &item_key)?);
+                    elements.push(self.outline_element(element, &item_key, level)?);
                 }
                 OutlineItem::Group(group) => {
-                    elements.extend(self.outline_items(group.outlines(), &item_key)?);
+                    elements.extend(self.outline_items(
+                        group.outlines(),
+                        &item_key,
+                        level.saturating_add(group.child_level()),
+                    )?);
                 }
             }
         }
@@ -384,6 +393,7 @@ impl Projector {
         &mut self,
         element: &ParserOutlineElement,
         key: &str,
+        level: u8,
     ) -> Result<OutlineElement> {
         let content = element
             .contents()
@@ -393,10 +403,14 @@ impl Projector {
             .collect::<Result<Vec<_>>>()?;
         let list = element.list_contents().first().map(project_list);
         Ok(OutlineElement {
-            level: element.child_level(),
+            level,
             list,
             content,
-            children: self.outline_items(element.children(), &format!("{key}/children"))?,
+            children: self.outline_items(
+                element.children(),
+                &format!("{key}/children"),
+                level.saturating_add(element.child_level()),
+            )?,
         })
     }
 
@@ -429,7 +443,7 @@ impl Projector {
                             .iter()
                             .enumerate()
                             .map(|(index, element)| {
-                                self.outline_element(element, &format!("{cell_key}/{index}"))
+                                self.outline_element(element, &format!("{cell_key}/{index}"), 0)
                             })
                             .collect::<Result<Vec<_>>>()?;
                         Ok(TableCell {
@@ -809,9 +823,48 @@ fn project_text_style(style: &ParagraphStyling) -> TextStyle {
 
 fn project_list(list: &List) -> ListMarker {
     ListMarker {
-        format: list.list_format().iter().collect(),
+        template: project_list_template(list.list_format()),
         restart: list.list_restart(),
         font: list.list_font().or_else(|| list.font()).map(str::to_owned),
+    }
+}
+
+fn project_list_template(format: &[char]) -> Vec<ListMarkerPart> {
+    const AUTOMATIC_NUMBER: char = '\u{fffd}';
+
+    let mut template = Vec::new();
+    let mut literal = String::new();
+    let mut characters = format.iter().copied();
+    while let Some(character) = characters.next() {
+        if character == AUTOMATIC_NUMBER {
+            if !literal.is_empty() {
+                template.push(ListMarkerPart::Literal(std::mem::take(&mut literal)));
+            }
+            if let Some(format_code) = characters.next() {
+                template.push(ListMarkerPart::Number(project_number_format(format_code)));
+            } else {
+                template.push(ListMarkerPart::Number(ListNumberFormat::Unsupported(
+                    u32::MAX,
+                )));
+            }
+        } else {
+            literal.push(character);
+        }
+    }
+    if !literal.is_empty() {
+        template.push(ListMarkerPart::Literal(literal));
+    }
+    template
+}
+
+fn project_number_format(format: char) -> ListNumberFormat {
+    match u32::from(format) {
+        0 => ListNumberFormat::Decimal,
+        1 => ListNumberFormat::UpperRoman,
+        2 => ListNumberFormat::LowerRoman,
+        3 => ListNumberFormat::UpperLetter,
+        4 => ListNumberFormat::LowerLetter,
+        other => ListNumberFormat::Unsupported(other),
     }
 }
 
@@ -1103,8 +1156,8 @@ fn host_typed_path(path: &Path) -> TypedPath<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{stable_id, OneNoteLoader};
-    use crate::Error;
+    use super::{project_list_template, stable_id, OneNoteLoader};
+    use crate::{Error, ListMarkerPart, ListNumberFormat};
     use std::fs;
 
     #[test]
@@ -1125,5 +1178,32 @@ mod tests {
             .load(&path)
             .expect_err("must reject extension");
         assert!(matches!(error, Error::UnsupportedSource { .. }));
+    }
+
+    #[test]
+    fn decodes_automatic_number_templates_without_exposing_control_characters() {
+        assert_eq!(
+            project_list_template(&['\u{fffd}', '\0', '.']),
+            vec![
+                ListMarkerPart::Number(ListNumberFormat::Decimal),
+                ListMarkerPart::Literal(".".to_owned()),
+            ]
+        );
+        assert_eq!(
+            project_list_template(&['(', '\u{fffd}', '\u{2}', ')']),
+            vec![
+                ListMarkerPart::Literal("(".to_owned()),
+                ListMarkerPart::Number(ListNumberFormat::LowerRoman),
+                ListMarkerPart::Literal(")".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
+    fn preserves_literal_bullet_templates() {
+        assert_eq!(
+            project_list_template(&['•']),
+            vec![ListMarkerPart::Literal("•".to_owned())]
+        );
     }
 }

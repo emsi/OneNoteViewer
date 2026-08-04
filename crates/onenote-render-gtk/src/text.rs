@@ -434,17 +434,15 @@ mod tests {
         let builder = SceneBuilder::default();
         let cancel = AtomicBool::new(false);
         let context = gtk::pango::Context::new();
-        let mut malformed_markers = 0_usize;
+        let mut list_markers = 0_usize;
 
         for page in loaded.notebook.pages() {
             let scene = builder.build(page, &cancel).expect("page scene");
             for node in &scene.nodes {
                 if let ScenePrimitive::Text { block, marker } = &node.primitive {
-                    if marker
-                        .as_deref()
-                        .is_some_and(|marker| marker.contains('\0'))
-                    {
-                        malformed_markers += 1;
+                    if let Some(marker) = marker {
+                        list_markers += 1;
+                        assert!(!marker.contains(['\0', '\u{fffd}']));
                     }
                     let layout = layout(&context, block, marker.as_deref(), node.bounds.width);
                     assert!(!layout.text().contains('\0'));
@@ -453,8 +451,8 @@ mod tests {
         }
 
         assert!(
-            malformed_markers > 0,
-            "private corpus must exercise malformed list-marker strings"
+            list_markers > 0,
+            "private corpus must exercise semantic list markers"
         );
     }
 
