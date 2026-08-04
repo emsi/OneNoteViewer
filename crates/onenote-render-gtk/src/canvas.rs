@@ -13,15 +13,23 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 const CANVAS_MARGIN: f32 = 32.0;
 const VIEWPORT_OVERSCAN: f32 = 256.0;
+/// Default page zoom scale (100%).
+pub const DEFAULT_ZOOM: f32 = 1.0;
+/// Smallest supported page zoom scale (25%).
+pub const MIN_ZOOM: f32 = 0.25;
+/// Largest supported page zoom scale (400%).
+pub const MAX_ZOOM: f32 = 4.0;
 type ActionHandler = Rc<dyn Fn(HitAction)>;
 
 mod imp {
     use super::{
         gdk, glib, ActionHandler, Arc, Cell, HashMap, HashSet, MathKey, MathLayoutBackend,
-        PageScene, RefCell, ResourceId, ResourceStore, TypstMathBackend, CANVAS_MARGIN,
+        OnceLock, PageScene, RefCell, ResourceId, ResourceStore, TypstMathBackend, CANVAS_MARGIN,
+        DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
     };
     use gtk::prelude::*;
     use gtk::subclass::prelude::*;
@@ -49,7 +57,7 @@ mod imp {
             Self {
                 scene: RefCell::default(),
                 resources: RefCell::default(),
-                zoom: Cell::new(1.0),
+                zoom: Cell::new(DEFAULT_ZOOM),
                 default_text_color: RefCell::new(gdk::RGBA::BLACK),
                 action_handler: RefCell::default(),
                 textures: RefCell::default(),
@@ -74,6 +82,26 @@ mod imp {
     }
 
     impl ObjectImpl for PageCanvas {
+        fn properties() -> &'static [glib::ParamSpec] {
+            static PROPERTIES: OnceLock<Vec<glib::ParamSpec>> = OnceLock::new();
+            PROPERTIES.get_or_init(|| {
+                vec![glib::ParamSpecFloat::builder("zoom")
+                    .minimum(MIN_ZOOM)
+                    .maximum(MAX_ZOOM)
+                    .default_value(DEFAULT_ZOOM)
+                    .read_only()
+                    .explicit_notify()
+                    .build()]
+            })
+        }
+
+        fn property(&self, _id: usize, spec: &glib::ParamSpec) -> glib::Value {
+            match spec.name() {
+                "zoom" => self.zoom.get().to_value(),
+                _ => unimplemented!(),
+            }
+        }
+
         fn constructed(&self) {
             self.parent_constructed();
             let object = self.obj();
@@ -171,7 +199,7 @@ impl PageCanvas {
 
     /// Set canvas zoom, clamped to 25%-400%.
     pub fn set_zoom(&self, zoom: f32) {
-        let zoom = zoom.clamp(0.25, 4.0);
+        let zoom = normalize_zoom(zoom);
         if (self.imp().zoom.get() - zoom).abs() > f32::EPSILON {
             self.imp().zoom.set(zoom);
             self.imp().math_textures.borrow_mut().clear();
@@ -183,6 +211,7 @@ impl PageCanvas {
                 .set(self.imp().math_generation.get().wrapping_add(1));
             self.queue_resize();
             self.queue_draw();
+            self.notify("zoom");
         }
     }
 
@@ -568,6 +597,15 @@ impl PageCanvas {
     }
 }
 
+/// Return a finite zoom scale within the renderer's supported bounds.
+pub fn normalize_zoom(zoom: f32) -> f32 {
+    if zoom.is_finite() {
+        zoom.clamp(MIN_ZOOM, MAX_ZOOM)
+    } else {
+        DEFAULT_ZOOM
+    }
+}
+
 impl Default for PageCanvas {
     fn default() -> Self {
         Self::new()
@@ -692,5 +730,23 @@ fn f64_to_f32(value: f64) -> f32 {
         value.to_f32().unwrap_or(f32::MIN)
     } else {
         value.to_f32().unwrap_or(f32::MAX)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_zoom, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM};
+
+    #[test]
+    fn zoom_normalization_is_finite_and_bounded() {
+        assert_zoom_eq(normalize_zoom(0.1), MIN_ZOOM);
+        assert_zoom_eq(normalize_zoom(10.0), MAX_ZOOM);
+        assert_zoom_eq(normalize_zoom(f32::NAN), DEFAULT_ZOOM);
+        assert_zoom_eq(normalize_zoom(f32::INFINITY), DEFAULT_ZOOM);
+        assert_zoom_eq(normalize_zoom(1.21), 1.21);
+    }
+
+    fn assert_zoom_eq(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() <= f32::EPSILON);
     }
 }

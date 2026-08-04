@@ -1,4 +1,4 @@
-use crate::PageCanvas;
+use crate::{normalize_zoom, PageCanvas};
 use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
@@ -63,7 +63,7 @@ impl PageView {
     /// Set zoom while preserving the viewport center.
     pub fn set_zoom(&self, zoom: f32) {
         let old_zoom = self.canvas.zoom();
-        let zoom = zoom.clamp(0.25, 4.0);
+        let zoom = normalize_zoom(zoom);
         if (zoom - old_zoom).abs() <= f32::EPSILON {
             return;
         }
@@ -80,6 +80,15 @@ impl PageView {
     /// Current zoom.
     pub fn zoom(&self) -> f32 {
         self.canvas.zoom()
+    }
+
+    /// Connect a callback that runs after the effective zoom changes.
+    ///
+    /// The callback observes every zoom source, including the built-in
+    /// Ctrl+wheel gesture and host calls to [`Self::set_zoom`].
+    pub fn connect_zoom_changed(&self, callback: impl Fn(f32) + 'static) -> glib::SignalHandlerId {
+        self.canvas
+            .connect_notify_local(Some("zoom"), move |canvas, _| callback(canvas.zoom()))
     }
 
     /// Set the fallback for text whose `OneNote` style uses automatic color.

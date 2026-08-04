@@ -9,7 +9,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use onenote_core::{ExtractionPhase, LoadedNotebook, Page, PageId, Rect, SectionId, SourceId};
 use onenote_index::SearchHit;
-use onenote_render_gtk::PageView;
+use onenote_render_gtk::{PageView, DEFAULT_ZOOM};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -98,7 +98,9 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
 
     let status = application.run_with_args::<&str>(&[]);
     if let Some(viewer) = viewer.borrow().as_ref() {
+        let settings_result = viewer.flush_settings();
         let _ignored = viewer.commands.send(Command::Shutdown);
+        settings_result?;
     }
     if status == glib::ExitCode::SUCCESS {
         Ok(())
@@ -294,6 +296,7 @@ struct Viewer {
     events: mpsc::Sender<Event>,
     receiver: RefCell<mpsc::Receiver<Event>>,
     search_timer: RefCell<Option<glib::SourceId>>,
+    settings_save_timer: RefCell<Option<glib::SourceId>>,
 }
 
 impl Viewer {
@@ -314,6 +317,7 @@ impl Viewer {
         let result_model = gtk::StringList::new(&[]);
         let (result_selection, result_list) = result_list(&result_model);
         let page_view = PageView::new();
+        page_view.set_zoom(settings.zoom);
         page_view
             .set_default_text_color(&theme_default_text_color(effective_theme(settings.theme)));
         let search_entry = gtk::SearchEntry::builder()
@@ -447,7 +451,7 @@ impl Viewer {
         let zoom_out = icon_button("onenote-zoom-out-symbolic", "Zoom out");
         let zoom_in = icon_button("onenote-zoom-in-symbolic", "Zoom in");
         let zoom_reset = icon_button("onenote-zoom-reset-symbolic", "Reset zoom");
-        let zoom_label = gtk::Label::new(Some("100%"));
+        let zoom_label = gtk::Label::new(Some(&format_zoom(page_view.zoom())));
         zoom_label.set_width_chars(5);
         let status = gtk::Label::builder()
             .label("Ready")
@@ -586,6 +590,7 @@ impl Viewer {
             events: event_sender,
             receiver: RefCell::new(event_receiver),
             search_timer: RefCell::default(),
+            settings_save_timer: RefCell::default(),
         });
         viewer.connect_navigation();
         viewer.window.add_action(&open_file);
@@ -751,21 +756,27 @@ impl Viewer {
         zoom_reset: &gtk::Button,
     ) {
         let weak = Rc::downgrade(self);
+        self.page_view.connect_zoom_changed(move |zoom| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.zoom_changed(zoom);
+            }
+        });
+        let weak = Rc::downgrade(self);
         zoom_out.connect_clicked(move |_| {
             if let Some(viewer) = weak.upgrade() {
-                viewer.set_zoom(viewer.page_view.zoom() / 1.1);
+                viewer.page_view.set_zoom(viewer.page_view.zoom() / 1.1);
             }
         });
         let weak = Rc::downgrade(self);
         zoom_in.connect_clicked(move |_| {
             if let Some(viewer) = weak.upgrade() {
-                viewer.set_zoom(viewer.page_view.zoom() * 1.1);
+                viewer.page_view.set_zoom(viewer.page_view.zoom() * 1.1);
             }
         });
         let weak = Rc::downgrade(self);
         zoom_reset.connect_clicked(move |_| {
             if let Some(viewer) = weak.upgrade() {
-                viewer.set_zoom(1.0);
+                viewer.page_view.set_zoom(DEFAULT_ZOOM);
             }
         });
     }
@@ -1509,10 +1520,10 @@ impl Viewer {
             );
             return false;
         }
-        let updated = AppSettings {
-            notebooks_location: location.to_path_buf(),
-            theme,
-        };
+        let mut updated = self.settings.borrow().clone();
+        updated.notebooks_location = location.to_path_buf();
+        updated.theme = theme;
+        self.cancel_settings_save();
         if let Err(error) = settings::save(&self.settings_path, &updated) {
             self.show_error("Could not save settings", &error.to_string());
             return false;
@@ -1572,10 +1583,42 @@ impl Viewer {
         });
     }
 
-    fn set_zoom(&self, zoom: f32) {
-        self.page_view.set_zoom(zoom);
-        self.zoom_label
-            .set_label(&format!("{:.0}%", self.page_view.zoom() * 100.0));
+    fn zoom_changed(self: &Rc<Self>, zoom: f32) {
+        update_zoom_label(&self.zoom_label, zoom);
+        self.settings.borrow_mut().zoom = zoom;
+        self.schedule_settings_save();
+    }
+
+    fn schedule_settings_save(self: &Rc<Self>) {
+        self.cancel_settings_save();
+        let weak = Rc::downgrade(self);
+        *self.settings_save_timer.borrow_mut() = Some(glib::timeout_add_local_once(
+            Duration::from_millis(300),
+            move || {
+                let Some(viewer) = weak.upgrade() else {
+                    return;
+                };
+                viewer.settings_save_timer.borrow_mut().take();
+                if let Err(error) = viewer.write_settings() {
+                    viewer.show_error("Could not save zoom setting", &error.to_string());
+                }
+            },
+        ));
+    }
+
+    fn cancel_settings_save(&self) {
+        if let Some(timer) = self.settings_save_timer.borrow_mut().take() {
+            timer.remove();
+        }
+    }
+
+    fn write_settings(&self) -> Result<()> {
+        settings::save(&self.settings_path, &self.settings.borrow())
+    }
+
+    fn flush_settings(&self) -> Result<()> {
+        self.cancel_settings_save();
+        self.write_settings()
     }
 
     fn set_navigation_width(&self, width: i32) {
@@ -1903,6 +1946,14 @@ fn separator() -> gtk::Separator {
 
 fn separator_horizontal() -> gtk::Separator {
     gtk::Separator::new(gtk::Orientation::Horizontal)
+}
+
+fn format_zoom(zoom: f32) -> String {
+    format!("{:.0}%", zoom * 100.0)
+}
+
+fn update_zoom_label(label: &gtk::Label, zoom: f32) {
+    label.set_label(&format_zoom(zoom));
 }
 
 fn clear_model(model: &gtk::StringList) {
@@ -2335,6 +2386,34 @@ mod tests {
     fn gtk_text_replaces_interior_nuls() {
         assert_eq!(gtk_text("One\0Note"), "One�Note");
         assert_eq!(gtk_text("OneNote"), "OneNote");
+    }
+
+    #[test]
+    fn renderer_zoom_changes_update_the_footer_once() {
+        crate::test_support::run_gtk_test(renderer_zoom_changes_update_the_footer_once_gtk);
+    }
+
+    fn renderer_zoom_changes_update_the_footer_once_gtk() {
+        let view = PageView::new();
+        let label = gtk::Label::new(Some(&format_zoom(view.zoom())));
+        let notifications = Rc::new(Cell::new(0_u32));
+        let callback_label = label.clone();
+        let callback_notifications = Rc::clone(&notifications);
+        let _handler = view.connect_zoom_changed(move |zoom| {
+            update_zoom_label(&callback_label, zoom);
+            callback_notifications.set(callback_notifications.get() + 1);
+        });
+
+        view.set_zoom(1.21);
+        assert_eq!(label.label(), "121%");
+        assert_eq!(notifications.get(), 1);
+
+        view.set_zoom(1.21);
+        assert_eq!(notifications.get(), 1);
+
+        view.set_zoom(10.0);
+        assert_eq!(label.label(), "400%");
+        assert_eq!(notifications.get(), 2);
     }
 
     #[test]

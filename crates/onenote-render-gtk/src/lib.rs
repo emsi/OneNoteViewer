@@ -8,7 +8,7 @@ mod math_cache;
 mod text;
 mod view;
 
-pub use canvas::PageCanvas;
+pub use canvas::{normalize_zoom, PageCanvas, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM};
 pub use math_cache::TypstMathBackend;
 pub use view::PageView;
 

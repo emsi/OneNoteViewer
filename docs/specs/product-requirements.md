@@ -164,6 +164,7 @@ The primary window provides:
 - nested section-group and ordered section navigation;
 - an ordered, hierarchical page list;
 - a spatial canvas with pan and zoom;
+- restoration of the last application-wide zoom between launches;
 - a global search entry and result view spanning all open notebooks;
 - a compact single-row application header with native window controls and a
   menu for infrequent application commands;

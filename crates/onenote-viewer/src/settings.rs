@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use gtk::glib;
+use onenote_render_gtk::{DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -37,6 +38,8 @@ pub(crate) struct AppSettings {
     pub(crate) notebooks_location: PathBuf,
     #[serde(default)]
     pub(crate) theme: ThemePreference,
+    #[serde(default = "default_zoom")]
+    pub(crate) zoom: f32,
 }
 
 impl Default for AppSettings {
@@ -44,6 +47,7 @@ impl Default for AppSettings {
         Self {
             notebooks_location: default_notebooks_location(),
             theme: ThemePreference::default(),
+            zoom: DEFAULT_ZOOM,
         }
     }
 }
@@ -60,8 +64,12 @@ pub(crate) fn default_notebooks_location() -> PathBuf {
         .join("OneNoteViewer")
 }
 
+const fn default_zoom() -> f32 {
+    DEFAULT_ZOOM
+}
+
 pub(crate) fn load(path: &Path) -> Result<AppSettings> {
-    let settings = match fs::read(path) {
+    let mut settings = match fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .with_context(|| format!("invalid settings file {}", path.display()))?,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => AppSettings::default(),
@@ -69,6 +77,9 @@ pub(crate) fn load(path: &Path) -> Result<AppSettings> {
             return Err(error).with_context(|| format!("could not read {}", path.display()));
         }
     };
+    if !valid_zoom(settings.zoom) {
+        settings.zoom = DEFAULT_ZOOM;
+    }
     validate(&settings)?;
     Ok(settings)
 }
@@ -110,7 +121,14 @@ fn validate(settings: &AppSettings) -> Result<()> {
     if !settings.notebooks_location.is_absolute() {
         bail!("default notebooks location must be an absolute path");
     }
+    if !valid_zoom(settings.zoom) {
+        bail!("zoom must be between 25% and 400%");
+    }
     Ok(())
+}
+
+fn valid_zoom(zoom: f32) -> bool {
+    zoom.is_finite() && (MIN_ZOOM..=MAX_ZOOM).contains(&zoom)
 }
 
 #[cfg(unix)]
@@ -136,6 +154,7 @@ mod tests {
         let expected = AppSettings {
             notebooks_location: temporary.path().join("Documents/OneNoteViewer"),
             theme: ThemePreference::Dark,
+            zoom: 1.21,
         };
 
         save(&path, &expected).expect("save");
@@ -143,6 +162,7 @@ mod tests {
 
         assert_eq!(actual.notebooks_location, expected.notebooks_location);
         assert_eq!(actual.theme, ThemePreference::Dark);
+        assert_zoom_eq(actual.zoom, 1.21);
         assert!(!path.with_extension("json.new").exists());
     }
 
@@ -156,6 +176,41 @@ mod tests {
 
         assert_eq!(actual.notebooks_location, default_notebooks_location());
         assert_eq!(actual.theme, ThemePreference::System);
+        assert_zoom_eq(actual.zoom, DEFAULT_ZOOM);
+    }
+
+    #[test]
+    fn invalid_zoom_falls_back_without_losing_other_settings() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let path = temporary.path().join("settings.json");
+        let location = temporary.path().join("Notebooks");
+        let settings = serde_json::json!({
+            "notebooks_location": location,
+            "theme": "dark",
+            "zoom": 100.0,
+        });
+        fs::write(&path, serde_json::to_vec(&settings).expect("serialize")).expect("settings");
+
+        let actual = load(&path).expect("load");
+
+        assert_eq!(actual.notebooks_location, location);
+        assert_eq!(actual.theme, ThemePreference::Dark);
+        assert_zoom_eq(actual.zoom, DEFAULT_ZOOM);
+    }
+
+    #[test]
+    fn save_rejects_non_finite_zoom() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let settings = AppSettings {
+            notebooks_location: temporary.path().join("Notebooks"),
+            theme: ThemePreference::System,
+            zoom: f32::NAN,
+        };
+
+        let error = save(&temporary.path().join("settings.json"), &settings)
+            .expect_err("non-finite zoom must fail");
+
+        assert!(error.to_string().contains("zoom"));
     }
 
     #[test]
@@ -167,5 +222,9 @@ mod tests {
         let error = load(&path).expect_err("relative path must fail");
 
         assert!(error.to_string().contains("absolute"));
+    }
+
+    fn assert_zoom_eq(actual: f32, expected: f32) {
+        assert!((actual - expected).abs() <= f32::EPSILON);
     }
 }

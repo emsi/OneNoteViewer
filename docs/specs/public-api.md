@@ -94,6 +94,11 @@ does not own notebook navigation, search UI, window creation, recent files, or
 workspace persistence. The `standalone` example embeds it in a window without
 linking `onenote-viewer`.
 
+`PageView` exposes its effective bounded zoom and a change notification that
+covers built-in gestures as well as host-initiated changes. Hosts can therefore
+synchronize controls or persist a preference without duplicating zoom input
+handling; persistence remains a host responsibility.
+
 The first supported interface is a Rust crate. A GObject-introspectable wrapper
 for use from other GTK languages is a pre-1.0 integration goal; it must be
 versioned and tested rather than exposing unstable Rust symbols as a C ABI.
