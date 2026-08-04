@@ -4,9 +4,11 @@ use crate::scene::{
 };
 use crate::{Error, Result};
 use onenote_core::{
-    Attachment, Color, ElementContent, Image, Ink, ListMarker, ObjectKind, Outline, OutlineElement,
-    Page, PageObject, PageObjectRole, Rect, ResourceStatus, Table, TextBlock,
+    Attachment, Color, ElementContent, Image, Ink, ListMarker, ListMarkerPart, ListNumberFormat,
+    ObjectKind, Outline, OutlineElement, Page, PageObject, PageObjectRole, Rect, ResourceStatus,
+    Table, TextBlock,
 };
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -158,8 +160,16 @@ impl BuildState<'_> {
             y: object.bounds.y + self.options.content_padding,
             width: (object.bounds.width - self.options.content_padding * 2.0).max(40.0),
         };
+        let mut lists = ListState::default();
         for element in &outline.elements {
-            self.element(object, element, outline, &mut cursor, object_z(object, 0))?;
+            self.element(
+                object,
+                element,
+                outline,
+                &mut lists,
+                &mut cursor,
+                object_z(object, 0),
+            )?;
         }
         Ok(())
     }
@@ -169,6 +179,7 @@ impl BuildState<'_> {
         object: &PageObject,
         element: &OutlineElement,
         outline: &Outline,
+        lists: &mut ListState,
         cursor: &mut Cursor,
         z_index: i32,
     ) -> Result<()> {
@@ -178,12 +189,27 @@ impl BuildState<'_> {
         let original_width = cursor.width;
         cursor.x += indent;
         cursor.width = (cursor.width - indent).max(40.0);
-        let marker = element.list.as_ref().map(list_marker_text);
+        let mut marker = element.list.as_ref().map(|definition| {
+            let rendered = lists.render(definition, element.level);
+            for unsupported in rendered.unsupported_formats {
+                self.diagnostics.push(SceneDiagnostic {
+                    code: "list_number_format".to_owned(),
+                    message: format!(
+                        "Unsupported MSONFC list-number format {unsupported}; rendered as decimal"
+                    ),
+                    object_id: Some(object.id.clone()),
+                });
+            }
+            rendered.text
+        });
         for content in &element.content {
-            self.content(object, content, cursor, z_index, marker.clone())?;
+            let content_marker = matches!(content, ElementContent::Text(_))
+                .then(|| marker.take())
+                .flatten();
+            self.content(object, content, cursor, z_index, content_marker)?;
         }
         for child in &element.children {
-            self.element(object, child, outline, cursor, z_index)?;
+            self.element(object, child, outline, lists, cursor, z_index)?;
         }
         cursor.x = original_x;
         cursor.width = original_width;
@@ -345,11 +371,13 @@ impl BuildState<'_> {
                         user_sized: false,
                         elements: Vec::new(),
                     };
+                    let mut lists = ListState::default();
                     for element in &cell.elements {
                         self.element(
                             object,
                             element,
                             &synthetic_outline,
+                            &mut lists,
                             &mut cell_cursor,
                             z_index + 1,
                         )?;
@@ -673,16 +701,121 @@ fn outline_indent(outline: &Outline, level: u8) -> f32 {
         .indents
         .get(usize::from(level))
         .copied()
-        .unwrap_or_else(|| f32::from(level) * 20.0)
+        .unwrap_or(if level == 0 { 0.0 } else { 20.0 })
         .max(0.0)
 }
 
-fn list_marker_text(marker: &ListMarker) -> String {
-    if marker.format.is_empty() {
-        "•".to_owned()
-    } else {
-        marker.format.clone()
+#[derive(Default)]
+struct ListState {
+    counters: HashMap<(u8, Vec<ListMarkerPart>), i32>,
+    reported_unsupported: HashSet<u32>,
+}
+
+struct RenderedListMarker {
+    text: String,
+    unsupported_formats: Vec<u32>,
+}
+
+impl ListState {
+    fn render(&mut self, marker: &ListMarker, level: u8) -> RenderedListMarker {
+        if marker.template.is_empty() {
+            return RenderedListMarker {
+                text: "•".to_owned(),
+                unsupported_formats: Vec::new(),
+            };
+        }
+
+        let has_number = marker
+            .template
+            .iter()
+            .any(|part| matches!(part, ListMarkerPart::Number(_)));
+        let value = has_number.then(|| {
+            let counter = self
+                .counters
+                .entry((level, marker.template.clone()))
+                .or_insert(0);
+            *counter = marker.restart.unwrap_or_else(|| counter.saturating_add(1));
+            *counter
+        });
+        let mut text = String::new();
+        let mut unsupported_formats = Vec::new();
+        for part in &marker.template {
+            match part {
+                ListMarkerPart::Literal(literal) => text.push_str(literal),
+                ListMarkerPart::Number(format) => {
+                    let value = value.unwrap_or(1);
+                    if let ListNumberFormat::Unsupported(code) = format {
+                        if self.reported_unsupported.insert(*code) {
+                            unsupported_formats.push(*code);
+                        }
+                    }
+                    text.push_str(&format_list_number(value, *format));
+                }
+            }
+        }
+        RenderedListMarker {
+            text,
+            unsupported_formats,
+        }
     }
+}
+
+fn format_list_number(value: i32, format: ListNumberFormat) -> String {
+    match format {
+        ListNumberFormat::Decimal | ListNumberFormat::Unsupported(_) => value.to_string(),
+        ListNumberFormat::UpperRoman => roman(value).unwrap_or_else(|| value.to_string()),
+        ListNumberFormat::LowerRoman => {
+            roman(value).map_or_else(|| value.to_string(), |number| number.to_ascii_lowercase())
+        }
+        ListNumberFormat::UpperLetter => letters(value).unwrap_or_else(|| value.to_string()),
+        ListNumberFormat::LowerLetter => {
+            letters(value).map_or_else(|| value.to_string(), |number| number.to_ascii_lowercase())
+        }
+    }
+}
+
+fn letters(value: i32) -> Option<String> {
+    let mut value = u32::try_from(value).ok()?;
+    if value == 0 {
+        return None;
+    }
+    let mut output = Vec::new();
+    while value > 0 {
+        value -= 1;
+        output.push(char::from_u32(u32::from(b'A') + value % 26)?);
+        value /= 26;
+    }
+    output.reverse();
+    Some(output.into_iter().collect())
+}
+
+fn roman(value: i32) -> Option<String> {
+    let mut value = u32::try_from(value).ok()?;
+    if value == 0 || value > 3_999 {
+        return None;
+    }
+    let mut output = String::new();
+    for (number, symbol) in [
+        (1_000, "M"),
+        (900, "CM"),
+        (500, "D"),
+        (400, "CD"),
+        (100, "C"),
+        (90, "XC"),
+        (50, "L"),
+        (40, "XL"),
+        (10, "X"),
+        (9, "IX"),
+        (5, "V"),
+        (4, "IV"),
+        (1, "I"),
+    ] {
+        while value >= number {
+            output.push_str(symbol);
+            value -= number;
+        }
+    }
+    Some(output)
 }
 
 fn inline_bounds(
@@ -829,11 +962,11 @@ fn scene_bounds(page: &Page, nodes: &[SceneNode], options: SceneOptions) -> Rect
 
 #[cfg(test)]
 mod tests {
-    use super::{SceneBuilder, SceneOptions};
+    use super::{format_list_number, ListState, SceneBuilder, SceneOptions};
     use crate::{Error, ScenePrimitive};
     use onenote_core::{
-        Attachment, Image, ObjectId, ObjectKind, Page, PageId, PageObject, PageObjectRole, Rect,
-        ResourceId, ResourceRef, ResourceStatus,
+        Attachment, Image, ListMarker, ListMarkerPart, ListNumberFormat, ObjectId, ObjectKind,
+        Page, PageId, PageObject, PageObjectRole, Rect, ResourceId, ResourceRef, ResourceStatus,
     };
     use std::sync::atomic::AtomicBool;
 
@@ -1074,5 +1207,55 @@ mod tests {
                 .expect_err("cancelled"),
             Error::Cancelled
         );
+    }
+
+    #[test]
+    fn list_state_counts_by_level_and_template_and_honors_restart() {
+        let decimal = ListMarker {
+            template: vec![
+                ListMarkerPart::Number(ListNumberFormat::Decimal),
+                ListMarkerPart::Literal(".".to_owned()),
+            ],
+            restart: None,
+            font: None,
+        };
+        let mut state = ListState::default();
+
+        assert_eq!(state.render(&decimal, 1).text, "1.");
+        assert_eq!(state.render(&decimal, 1).text, "2.");
+        assert_eq!(state.render(&decimal, 2).text, "1.");
+
+        let restarted = ListMarker {
+            restart: Some(7),
+            ..decimal.clone()
+        };
+        assert_eq!(state.render(&restarted, 1).text, "7.");
+        assert_eq!(state.render(&decimal, 1).text, "8.");
+    }
+
+    #[test]
+    fn formats_common_msonfc_numbering_styles() {
+        assert_eq!(format_list_number(27, ListNumberFormat::UpperLetter), "AA");
+        assert_eq!(format_list_number(28, ListNumberFormat::LowerLetter), "ab");
+        assert_eq!(format_list_number(49, ListNumberFormat::UpperRoman), "XLIX");
+        assert_eq!(format_list_number(49, ListNumberFormat::LowerRoman), "xlix");
+    }
+
+    #[test]
+    fn unsupported_numbering_is_readable_and_reported_once() {
+        let marker = ListMarker {
+            template: vec![ListMarkerPart::Number(ListNumberFormat::Unsupported(42))],
+            restart: None,
+            font: None,
+        };
+        let mut state = ListState::default();
+
+        let first = state.render(&marker, 1);
+        let second = state.render(&marker, 1);
+
+        assert_eq!(first.text, "1");
+        assert_eq!(first.unsupported_formats, [42]);
+        assert_eq!(second.text, "2");
+        assert!(second.unsupported_formats.is_empty());
     }
 }

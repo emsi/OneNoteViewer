@@ -124,10 +124,15 @@ fn machine_learning_toc_uses_latest_complete_ordering_snapshot() {
             ("group", "Udacity"),
         ]
     );
+    let native_section_count = native_files(&corpus)
+        .iter()
+        .filter(|path| has_extension(path, "one"))
+        .count();
+    assert_eq!(native_section_count, 40, "unexpected corpus shape");
     assert_eq!(
         loaded.notebook.sections().count(),
-        39,
-        "every section referenced by the latest TOC snapshot must appear exactly once"
+        native_section_count,
+        "every native section must appear exactly once"
     );
     let deep_learning = loaded
         .notebook
@@ -138,6 +143,90 @@ fn machine_learning_toc_uses_latest_complete_ordering_snapshot() {
         loaded.notebook.section_path(&deep_learning.id),
         Some(vec!["Udacity", "Deep Larning (Udacity)"])
     );
+}
+
+#[test]
+fn documentation_section_uses_active_revision_and_semantic_lists() {
+    let Some(section) = documentation_section_path() else {
+        return;
+    };
+    let loaded = OneNoteLoader::default()
+        .load(section)
+        .expect("Documentation.one must project");
+    let java = loaded
+        .notebook
+        .pages()
+        .find(|page| page.title == "Java")
+        .expect("Java regression page");
+    let java_text = java.visible_text();
+    for expected in [
+        "Prepare java sources:",
+        "Extract function lines information:",
+        "Run jtest analysis",
+        "Build corpus:",
+        "Update CVE dataset",
+        "Train model:",
+    ] {
+        assert!(
+            java_text.contains(expected),
+            "active Java revision must retain {expected:?}"
+        );
+    }
+
+    let gentoo = loaded
+        .notebook
+        .pages()
+        .find(|page| page.title == "Gentoo build system")
+        .expect("Gentoo regression page");
+    let gentoo_text = gentoo.visible_text();
+    assert!(gentoo_text.contains("Downloading and building a package:"));
+    assert!(gentoo_text.contains("To create ccptestcli.sh script call"));
+    assert!(gentoo_text.contains("-NA cpptest"));
+
+    let mut lists = Vec::new();
+    for object in &java.objects {
+        if let ObjectKind::Outline(outline) = &object.kind {
+            collect_lists(&outline.elements, &mut lists);
+        }
+    }
+    assert!(lists.iter().any(|(level, marker)| {
+        *level == 1
+            && marker
+                .template
+                .contains(&onenote_core::ListMarkerPart::Number(
+                    onenote_core::ListNumberFormat::Decimal,
+                ))
+    }));
+    assert!(lists.iter().any(|(level, marker)| {
+        *level == 2
+            && marker
+                .template
+                .contains(&onenote_core::ListMarkerPart::Number(
+                    onenote_core::ListNumberFormat::LowerLetter,
+                ))
+    }));
+    assert!(lists.iter().any(|(level, marker)| {
+        *level == 3
+            && marker
+                .template
+                .contains(&onenote_core::ListMarkerPart::Number(
+                    onenote_core::ListNumberFormat::LowerRoman,
+                ))
+    }));
+    let encoded = serde_json::to_string(&java).expect("Java page must serialize");
+    assert!(!encoded.contains(['\0', '\u{fffd}']));
+}
+
+fn collect_lists<'a>(
+    elements: &'a [OutlineElement],
+    lists: &mut Vec<(u8, &'a onenote_core::ListMarker)>,
+) {
+    for element in elements {
+        if let Some(marker) = &element.list {
+            lists.push((element.level, marker));
+        }
+        collect_lists(&element.children, lists);
+    }
 }
 
 #[test]
@@ -309,6 +398,12 @@ fn maths_package_path() -> Option<PathBuf> {
 fn machine_learning_corpus_path() -> Option<PathBuf> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/MachineLearning");
     path.is_dir().then_some(path)
+}
+
+fn documentation_section_path() -> Option<PathBuf> {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../onepkg/ML@Parasoft/Documentation.one");
+    path.is_file().then_some(path)
 }
 
 fn backup_corpus_path() -> Option<PathBuf> {

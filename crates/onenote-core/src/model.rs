@@ -374,12 +374,40 @@ impl OutlineElement {
 /// Formatting for a bullet or numbered-list marker.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ListMarker {
-    /// `OneNote` list format expression.
-    pub format: String,
+    /// Semantic marker template in source order.
+    pub template: Vec<ListMarkerPart>,
     /// Optional numbering restart.
     pub restart: Option<i32>,
     /// Optional marker font.
     pub font: Option<String>,
+}
+
+/// One part of a list-marker template.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum ListMarkerPart {
+    /// Literal punctuation or a bullet glyph.
+    Literal(String),
+    /// An automatic number formatted according to `MSONFC`.
+    Number(ListNumberFormat),
+}
+
+/// Supported automatic list-number formats.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
+pub enum ListNumberFormat {
+    /// Decimal Arabic numerals.
+    Decimal,
+    /// Uppercase Roman numerals.
+    UpperRoman,
+    /// Lowercase Roman numerals.
+    LowerRoman,
+    /// Uppercase Latin letters.
+    UpperLetter,
+    /// Lowercase Latin letters.
+    LowerLetter,
+    /// A valid but not yet implemented `MSONFC` value.
+    Unsupported(u32),
 }
 
 /// Content inside an outline element or table cell.
