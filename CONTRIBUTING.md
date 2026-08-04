@@ -15,7 +15,10 @@ Before submitting implementation work:
    independent-consumer tests, versioned protocol fixtures, and migration
    notes.
 6. Never commit a personal notebook, user text, author identity, or an
-   unreviewed binary corpus.
+   unreviewed binary corpus. Private-corpus tests must use environment-provided
+   paths and aggregate structural assertions; do not copy private notebook,
+   section, page, author, or content strings into code, tests, comments,
+   snapshots, diagnostics, or documentation.
 7. Prefer a structured warning over silently dropping unknown content.
 8. Add resource-limit and malformed-input tests for new decoders.
 9. Update the feature matrix, limitation entry, and corpus matrix together.

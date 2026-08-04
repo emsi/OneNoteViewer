@@ -64,7 +64,7 @@ contains the user-facing behavior.
   and visual fixtures. The current OfficeMath path preserves a typed AST,
   renders through an offline embedded-font backend, indexes marker-free linear
   text, and visibly falls back on malformed or unsupported expressions. The
-  `Maths.onepkg` regression covers common structured operators only.
+  private math regression fixture covers common structured operators only.
 - **Release gate:** Every operator/stroke class claimed in release notes has an
   oracle-backed case.
 

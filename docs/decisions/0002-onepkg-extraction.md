@@ -126,11 +126,11 @@ work is tracked in [remaining work](../REMAINING-WORK.md).
 
 ## Evidence
 
-On 2026-07-26, `onepkg/Personal.onepkg` was identified as a CAB archive and
+On 2026-07-26, an ignored private `.onepkg` fixture was identified as a CAB archive and
 passed `7z 23.01`'s complete archive test: 37 entries and 306,633,759 declared
 expanded bytes. Its paths passed the initial traversal check. The source
 package was then extracted on disk in 1.465 seconds into
-`onepkg/Personal.extracted`: 32 `.one` files, one root `.onetoc2`, and four
+an ignored private directory: 32 `.one` files, one root `.onetoc2`, and four
 nested `.onetoc2` files, with no other files or non-regular entries. All files
 had the expected native OneNote header, the expanded total matched the listing,
 the destination root retained mode `0700`, and the source SHA-256 remained

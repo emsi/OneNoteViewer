@@ -1,6 +1,6 @@
 use onenote_core::{
     ElementContent, Error, MathSpan, NotebookEntry, ObjectKind, OneNoteLoader, OnePkgExtractor,
-    OutlineElement, PageObjectRole, ResourceRef, ResourceStatus,
+    OutlineElement, PageObjectRole, ResourceRef, ResourceStatus, TextBlock,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -43,6 +43,20 @@ fn extracted_private_notebook_projects_all_native_sections() {
         pages.iter().any(|page| !page.objects.is_empty()),
         "projected pages must expose positioned objects"
     );
+    let mut text_blocks = Vec::new();
+    for page in &pages {
+        collect_page_text_blocks(page, &mut text_blocks);
+    }
+    assert!(
+        text_blocks
+            .iter()
+            .all(|block| !block.text.contains('\u{000B}')),
+        "projected text must not expose source vertical tabs"
+    );
+    assert!(
+        text_blocks.iter().any(|block| block.text.contains('\n')),
+        "private corpus must exercise semantic source line breaks"
+    );
     assert!(
         pages
             .iter()
@@ -84,46 +98,34 @@ fn extracted_private_notebook_projects_all_native_sections() {
 }
 
 #[test]
-fn machine_learning_toc_uses_latest_complete_ordering_snapshot() {
+fn private_toc_uses_latest_complete_ordering_snapshot() {
     let Some(corpus) = machine_learning_corpus_path() else {
         return;
     };
+    let toc = native_files(&corpus)
+        .into_iter()
+        .find(|path| {
+            has_extension(path, "onetoc2") && path.parent().is_some_and(|parent| parent == corpus)
+        })
+        .expect("private TOC corpus must have a root .onetoc2");
     let loaded = OneNoteLoader::default()
-        .load(corpus.join("Open Notebook.onetoc2"))
-        .expect("the MachineLearning notebook must project");
+        .load(toc)
+        .expect("the private TOC notebook must project");
     let root_entries = loaded
         .notebook
         .entries
         .iter()
         .map(|entry| match entry {
-            NotebookEntry::Section(section) => ("section", section.name.as_str()),
-            NotebookEntry::Group(group) => ("group", group.name.as_str()),
+            NotebookEntry::Section(_) => false,
+            NotebookEntry::Group(_) => true,
         })
         .collect::<Vec<_>>();
-
-    assert_eq!(
-        root_entries,
-        [
-            ("section", "Notes"),
-            ("section", "Coursera"),
-            ("section", "Biometric Behavioral"),
-            ("section", "Courses links and tutorials"),
-            ("section", "Reinforcement Learning"),
-            ("section", "Tips"),
-            ("section", "Datasets"),
-            ("section", "LLMs"),
-            ("section", "Papers"),
-            ("group", "_Tensorflow"),
-            ("group", "Experiments"),
-            ("group", "fastai Part 1 v3"),
-            ("group", "md893 RL Nanodegree"),
-            ("group", "nd101 Deep Learning Fundation"),
-            ("group", "nd188 pytorch"),
-            ("group", "nd892 NLP Nanodegree"),
-            ("group", "ud012 deepracer"),
-            ("group", "Udacity"),
-        ]
-    );
+    let first_group = root_entries
+        .iter()
+        .position(|is_group| *is_group)
+        .expect("private TOC corpus must contain a root section group");
+    assert!(root_entries[..first_group].iter().all(|is_group| !is_group));
+    assert!(root_entries[first_group..].iter().all(|is_group| *is_group));
     let native_section_count = native_files(&corpus)
         .iter()
         .filter(|path| has_extension(path, "one"))
@@ -134,62 +136,74 @@ fn machine_learning_toc_uses_latest_complete_ordering_snapshot() {
         native_section_count,
         "every native section must appear exactly once"
     );
-    let deep_learning = loaded
+    let nested = loaded
         .notebook
         .sections()
-        .find(|section| section.name == "Deep Larning (Udacity)")
-        .expect("nested Udacity section");
-    assert_eq!(
-        loaded.notebook.section_path(&deep_learning.id),
-        Some(vec!["Udacity", "Deep Larning (Udacity)"])
-    );
+        .find(|section| {
+            loaded
+                .notebook
+                .section_path(&section.id)
+                .is_some_and(|path| path.len() > 1)
+        })
+        .expect("private TOC corpus must contain a nested section");
+    let nested_path = loaded
+        .notebook
+        .section_path(&nested.id)
+        .expect("nested section path");
+    assert_eq!(nested_path.last(), Some(&nested.name.as_str()));
 }
 
 #[test]
-fn documentation_section_uses_active_revision_and_semantic_lists() {
+fn private_revision_section_uses_active_revision_and_semantic_lists() {
     let Some(section) = documentation_section_path() else {
         return;
     };
     let loaded = OneNoteLoader::default()
         .load(section)
-        .expect("Documentation.one must project");
-    let java = loaded
+        .expect("private revision section must project");
+    assert!(
+        loaded
+            .notebook
+            .pages()
+            .all(|page| !page.visible_text().contains('\u{000B}')),
+        "projected private pages must not expose source vertical tabs"
+    );
+    let mut source_line_breaks = 0_usize;
+    let mut consecutive_line_break_blocks = 0_usize;
+    for page in loaded.notebook.pages() {
+        let mut blocks = Vec::new();
+        collect_page_text_blocks(page, &mut blocks);
+        source_line_breaks += blocks
+            .iter()
+            .map(|block| block.text.matches('\n').count())
+            .sum::<usize>();
+        consecutive_line_break_blocks += blocks
+            .iter()
+            .filter(|block| block.text.contains("\n\n"))
+            .count();
+    }
+    assert!(source_line_breaks > 0);
+    assert!(consecutive_line_break_blocks > 0);
+
+    let mut selected_lists = Vec::new();
+    let list_page = loaded
         .notebook
         .pages()
-        .find(|page| page.title == "Java")
-        .expect("Java regression page");
-    let java_text = java.visible_text();
-    for expected in [
-        "Prepare java sources:",
-        "Extract function lines information:",
-        "Run jtest analysis",
-        "Build corpus:",
-        "Update CVE dataset",
-        "Train model:",
-    ] {
-        assert!(
-            java_text.contains(expected),
-            "active Java revision must retain {expected:?}"
-        );
-    }
+        .find(|page| {
+            let mut lists = Vec::new();
+            collect_page_lists(page, &mut lists);
+            let has_nested_levels = [1, 2, 3]
+                .into_iter()
+                .all(|level| lists.iter().any(|(candidate, _)| *candidate == level));
+            if has_nested_levels {
+                selected_lists = lists;
+            }
+            has_nested_levels
+        })
+        .expect("private revision corpus must contain a deeply nested list page");
+    assert!(list_page.visible_text().lines().count() > 10);
 
-    let gentoo = loaded
-        .notebook
-        .pages()
-        .find(|page| page.title == "Gentoo build system")
-        .expect("Gentoo regression page");
-    let gentoo_text = gentoo.visible_text();
-    assert!(gentoo_text.contains("Downloading and building a package:"));
-    assert!(gentoo_text.contains("To create ccptestcli.sh script call"));
-    assert!(gentoo_text.contains("-NA cpptest"));
-
-    let mut lists = Vec::new();
-    for object in &java.objects {
-        if let ObjectKind::Outline(outline) = &object.kind {
-            collect_lists(&outline.elements, &mut lists);
-        }
-    }
-    assert!(lists.iter().any(|(level, marker)| {
+    assert!(selected_lists.iter().any(|(level, marker)| {
         *level == 1
             && marker
                 .template
@@ -197,7 +211,7 @@ fn documentation_section_uses_active_revision_and_semantic_lists() {
                     onenote_core::ListNumberFormat::Decimal,
                 ))
     }));
-    assert!(lists.iter().any(|(level, marker)| {
+    assert!(selected_lists.iter().any(|(level, marker)| {
         *level == 2
             && marker
                 .template
@@ -205,7 +219,7 @@ fn documentation_section_uses_active_revision_and_semantic_lists() {
                     onenote_core::ListNumberFormat::LowerLetter,
                 ))
     }));
-    assert!(lists.iter().any(|(level, marker)| {
+    assert!(selected_lists.iter().any(|(level, marker)| {
         *level == 3
             && marker
                 .template
@@ -213,8 +227,8 @@ fn documentation_section_uses_active_revision_and_semantic_lists() {
                     onenote_core::ListNumberFormat::LowerRoman,
                 ))
     }));
-    let encoded = serde_json::to_string(&java).expect("Java page must serialize");
-    assert!(!encoded.contains(['\0', '\u{fffd}']));
+    let encoded = serde_json::to_string(&list_page).expect("private page must serialize");
+    assert!(!encoded.contains(['\0', '\u{000B}']));
 }
 
 fn collect_lists<'a>(
@@ -226,6 +240,36 @@ fn collect_lists<'a>(
             lists.push((element.level, marker));
         }
         collect_lists(&element.children, lists);
+    }
+}
+
+fn collect_text_blocks<'a>(elements: &'a [OutlineElement], blocks: &mut Vec<&'a TextBlock>) {
+    for element in elements {
+        for content in &element.content {
+            if let ElementContent::Text(text) = content {
+                blocks.push(text);
+            }
+        }
+        collect_text_blocks(&element.children, blocks);
+    }
+}
+
+fn collect_page_lists<'a>(
+    page: &'a onenote_core::Page,
+    lists: &mut Vec<(u8, &'a onenote_core::ListMarker)>,
+) {
+    for object in &page.objects {
+        if let ObjectKind::Outline(outline) = &object.kind {
+            collect_lists(&outline.elements, lists);
+        }
+    }
+}
+
+fn collect_page_text_blocks<'a>(page: &'a onenote_core::Page, blocks: &mut Vec<&'a TextBlock>) {
+    for object in &page.objects {
+        if let ObjectKind::Outline(outline) = &object.kind {
+            collect_text_blocks(&outline.elements, blocks);
+        }
     }
 }
 
@@ -319,38 +363,39 @@ fn supplied_package_extracts_on_disk_to_a_complete_native_tree() {
 }
 
 #[test]
-fn maths_package_projects_structured_office_math_without_private_markers() {
-    let Some(package) = maths_package_path() else {
+fn private_math_package_projects_structured_office_math_without_private_markers() {
+    let Some(package) = math_package_path() else {
         return;
     };
     let Ok(extractor) = OnePkgExtractor::detect() else {
         return;
     };
     let temporary = tempfile::tempdir().expect("temporary extraction parent");
-    let destination = temporary.path().join("maths");
+    let destination = temporary.path().join("notebook");
     extractor
         .extract(&package, &destination, &AtomicBool::new(false))
-        .expect("Maths.onepkg must extract");
+        .expect("private math package must extract");
     let section = native_files(&destination)
         .into_iter()
         .find(|path| has_extension(path, "one"))
-        .expect("Maths.onepkg must contain a section");
+        .expect("private math package must contain a section");
     let loaded = OneNoteLoader::default()
         .load(section)
-        .expect("the Maths section must project");
-    let page = loaded
-        .notebook
-        .pages()
-        .find(|page| page.title.eq_ignore_ascii_case("mathx"))
-        .expect("the mathx regression page");
+        .expect("the private math section must project");
     let mut spans = Vec::new();
-    for object in &page.objects {
-        if let ObjectKind::Outline(outline) = &object.kind {
-            collect_math(&outline.elements, &mut spans);
+    for page in loaded.notebook.pages() {
+        let mut page_spans = Vec::new();
+        collect_page_math(page, &mut page_spans);
+        if page_spans.len() > spans.len() {
+            spans = page_spans;
         }
     }
 
-    assert_eq!(spans.len(), 3, "mathx must contain all three equations");
+    assert_eq!(
+        spans.len(),
+        3,
+        "private fixture must contain three equations"
+    );
     assert!(spans.iter().all(|span| span.expression.is_some()));
     assert!(spans.iter().all(|span| span.diagnostic.is_none()));
     let debug = format!("{spans:#?}");
@@ -377,32 +422,36 @@ fn collect_math<'a>(elements: &'a [OutlineElement], spans: &mut Vec<&'a MathSpan
     }
 }
 
+fn collect_page_math<'a>(page: &'a onenote_core::Page, spans: &mut Vec<&'a MathSpan>) {
+    for object in &page.objects {
+        if let ObjectKind::Outline(outline) = &object.kind {
+            collect_math(&outline.elements, spans);
+        }
+    }
+}
+
 fn corpus_path() -> Option<PathBuf> {
-    let path = std::env::var_os("ONENOTE_TEST_CORPUS").map_or_else(
-        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.extracted"),
-        PathBuf::from,
-    );
+    let path = std::env::var_os("ONENOTE_TEST_CORPUS").map(PathBuf::from)?;
     path.is_dir().then_some(path)
 }
 
 fn package_path() -> Option<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.onepkg");
+    let path = std::env::var_os("ONENOTE_TEST_PACKAGE").map(PathBuf::from)?;
     path.is_file().then_some(path)
 }
 
-fn maths_package_path() -> Option<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Maths.onepkg");
+fn math_package_path() -> Option<PathBuf> {
+    let path = std::env::var_os("ONENOTE_MATH_TEST_PACKAGE").map(PathBuf::from)?;
     path.is_file().then_some(path)
 }
 
 fn machine_learning_corpus_path() -> Option<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/MachineLearning");
+    let path = std::env::var_os("ONENOTE_TOC_TEST_CORPUS").map(PathBuf::from)?;
     path.is_dir().then_some(path)
 }
 
 fn documentation_section_path() -> Option<PathBuf> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../onepkg/ML@Parasoft/Documentation.one");
+    let path = std::env::var_os("ONENOTE_REVISION_TEST_SECTION").map(PathBuf::from)?;
     path.is_file().then_some(path)
 }
 

@@ -52,7 +52,7 @@ authorize a broad compatibility claim.
 **Gate status:** the complete private desktop notebook loads without panic and
 projects page/title/text, images, attachments, tables, and ink. Producer breadth,
 tag-specific fixtures, broader malformed inputs, and measurements remain open.
-The private Maths fixture covers typed OfficeMath projection, structured native
+The private math fixture covers typed OfficeMath projection, structured native
 rendering, fallback text, and search, but not every rare operator family.
 
 ### Canvas Spike

@@ -232,7 +232,7 @@ mod tests {
     #[test]
     fn library_discovers_sibling_notebooks_without_nested_group_manifests() {
         let temporary = tempfile::tempdir().expect("temporary directory");
-        for name in ["Personal", "Work"] {
+        for name in ["Notebook A", "Notebook B"] {
             let notebook = temporary.path().join(name);
             let group = notebook.join("Group");
             fs::create_dir_all(&group).expect("group");
@@ -246,8 +246,8 @@ mod tests {
         assert_eq!(
             discovered,
             vec![
-                temporary.path().join("Personal/Open Notebook.onetoc2"),
-                temporary.path().join("Work/Open Notebook.onetoc2"),
+                temporary.path().join("Notebook A/Open Notebook.onetoc2"),
+                temporary.path().join("Notebook B/Open Notebook.onetoc2"),
             ]
         );
     }

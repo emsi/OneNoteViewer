@@ -61,10 +61,7 @@ fn complete_private_notebook_is_indexed_and_searchable() {
 }
 
 fn notebook_root() -> Option<PathBuf> {
-    let corpus = std::env::var_os("ONENOTE_TEST_CORPUS").map_or_else(
-        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.extracted"),
-        PathBuf::from,
-    );
+    let corpus = std::env::var_os("ONENOTE_TEST_CORPUS").map(PathBuf::from)?;
     let mut roots: Vec<_> = std::fs::read_dir(corpus)
         .ok()?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))

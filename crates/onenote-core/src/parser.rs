@@ -24,6 +24,7 @@ use onenote_parser::section::{
 };
 use onenote_parser::warn::Report;
 use onenote_parser::Parser;
+use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 use typed_path::{PathType, TypedPath};
 use uuid::Uuid;
@@ -693,6 +694,12 @@ impl Projector {
 fn project_text(text: &RichText) -> TextBlock {
     let base_style = project_text_style(text.paragraph_style());
     let total = u32::try_from(text.text().encode_utf16().count()).unwrap_or(u32::MAX);
+    let projected_text = normalize_rich_text_controls(text.text());
+    debug_assert_eq!(
+        text.text().encode_utf16().count(),
+        projected_text.encode_utf16().count(),
+        "rich-text normalization must preserve UTF-16 run offsets"
+    );
     let source_runs = source_text_runs(text, total);
     let runs = source_runs
         .iter()
@@ -744,7 +751,7 @@ fn project_text(text: &RichText) -> TextBlock {
         math.push(decode_span(&segments, display));
     }
     TextBlock {
-        text: text.text().to_owned(),
+        text: projected_text.into_owned(),
         base_style,
         runs,
         math,
@@ -758,6 +765,22 @@ fn project_text(text: &RichText) -> TextBlock {
         space_after: half_inches(text.paragraph_space_after()),
         line_spacing: text.paragraph_line_spacing_exact().map(half_inches),
     }
+}
+
+fn normalize_rich_text_controls(text: &str) -> Cow<'_, str> {
+    if !text.contains(['\0', '\u{000B}']) {
+        return Cow::Borrowed(text);
+    }
+
+    Cow::Owned(
+        text.chars()
+            .map(|character| match character {
+                '\0' => '\u{fffd}',
+                '\u{000B}' => '\n',
+                _ => character,
+            })
+            .collect(),
+    )
 }
 
 struct SourceTextRun<'a> {
@@ -1156,7 +1179,7 @@ fn host_typed_path(path: &Path) -> TypedPath<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{project_list_template, stable_id, OneNoteLoader};
+    use super::{normalize_rich_text_controls, project_list_template, stable_id, OneNoteLoader};
     use crate::{Error, ListMarkerPart, ListNumberFormat};
     use std::fs;
 
@@ -1204,6 +1227,18 @@ mod tests {
         assert_eq!(
             project_list_template(&['•']),
             vec![ListMarkerPart::Literal("•".to_owned())]
+        );
+    }
+
+    #[test]
+    fn normalizes_rich_text_controls_without_changing_utf16_offsets() {
+        let source = "A😀\u{000B}\u{000B}B\0C";
+        let normalized = normalize_rich_text_controls(source);
+
+        assert_eq!(normalized, "A😀\n\nB�C");
+        assert_eq!(
+            source.encode_utf16().count(),
+            normalized.encode_utf16().count()
         );
     }
 }

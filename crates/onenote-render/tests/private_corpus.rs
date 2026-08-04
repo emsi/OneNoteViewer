@@ -78,26 +78,42 @@ fn viewer_scene_option_omits_only_native_title_objects() {
 }
 
 #[test]
-fn documentation_lists_render_as_readable_nested_sequences() {
-    let section = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../onepkg/ML@Parasoft/Documentation.one");
+fn private_nested_lists_render_as_readable_sequences() {
+    let Some(section) = std::env::var_os("ONENOTE_REVISION_TEST_SECTION").map(PathBuf::from) else {
+        return;
+    };
     if !section.is_file() {
         return;
     }
     let loaded = OneNoteLoader::default()
         .load(section)
-        .expect("Documentation.one must parse");
+        .expect("private revision section must parse");
+    let builder = SceneBuilder::with_options(SceneOptions {
+        include_page_title: false,
+        ..SceneOptions::default()
+    });
+    let cancel = AtomicBool::new(false);
     let page = loaded
         .notebook
         .pages()
-        .find(|page| page.title == "Java")
-        .expect("Java regression page");
-    let scene = SceneBuilder::with_options(SceneOptions {
-        include_page_title: false,
-        ..SceneOptions::default()
-    })
-    .build(page, &AtomicBool::new(false))
-    .expect("Java page scene");
+        .find(|page| {
+            let scene = builder.build(page, &cancel).expect("private page scene");
+            let markers = scene.nodes.iter().filter_map(|node| match &node.primitive {
+                ScenePrimitive::Text {
+                    marker: Some(marker),
+                    ..
+                } => Some(marker.as_str()),
+                _ => None,
+            });
+            let markers = markers.collect::<Vec<_>>();
+            ["1.", "9.", "a.", "i."]
+                .iter()
+                .all(|expected| markers.contains(expected))
+        })
+        .expect("private revision corpus must contain nested list sequences");
+    let scene = builder
+        .build(page, &cancel)
+        .expect("private list page scene");
     let markers = scene
         .nodes
         .iter()
@@ -128,10 +144,7 @@ fn finite_rect(rect: onenote_core::Rect) -> bool {
 }
 
 fn notebook_root() -> Option<PathBuf> {
-    let corpus = std::env::var_os("ONENOTE_TEST_CORPUS").map_or_else(
-        || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.extracted"),
-        PathBuf::from,
-    );
+    let corpus = std::env::var_os("ONENOTE_TEST_CORPUS").map(PathBuf::from)?;
     let mut roots: Vec<_> = std::fs::read_dir(corpus)
         .ok()?
         .filter_map(|entry| entry.ok().map(|entry| entry.path()))

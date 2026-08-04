@@ -28,6 +28,17 @@ Real notebooks supplied locally through `ONENOTE_TEST_CORPUS`; never committed.
 Tests report hashed case IDs and feature counts, not notebook text, filenames,
 authors, or screenshots.
 
+Optional private fixture roles use separate environment variables:
+
+- `ONENOTE_TEST_PACKAGE` for package extraction;
+- `ONENOTE_MATH_TEST_PACKAGE` for structured math;
+- `ONENOTE_TOC_TEST_CORPUS` for section ordering and nesting;
+- `ONENOTE_REVISION_TEST_SECTION` for revision and list behavior.
+
+Tests using these fixtures select data by structural properties and assert only
+aggregate behavior. They must never embed notebook, section, page, author, or
+content strings in source code, snapshots, diagnostics, or documentation.
+
 Manifest-free backup-folder snapshots use the separate
 `ONENOTE_BACKUP_TEST_CORPUS` path so their per-file parser regression can run
 without changing the manifest-backed package corpus.
@@ -172,8 +183,8 @@ Visual regression tests use scene/layout snapshots plus cropped PNGs with
 tolerances for font rasterization. Semantic tests are primary; a screenshot
 alone cannot prove search or accessibility.
 
-The private `onepkg/Maths.onepkg` corpus contains the `mathx` regression page.
-Its three equations exercise display math, superscripts, scalable brackets,
+An ignored private math corpus contains a three-equation regression page. Its
+equations exercise display math, superscripts, scalable brackets,
 fractions, function application, subscripts, and an n-ary summation with both
 limits. Tests assert typed AST projection, absence of private structural
 markers in visible/indexed text, and non-empty native rasters from the bundled

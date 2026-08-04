@@ -208,19 +208,27 @@ fn display_segments_with_math(
 }
 
 pub(crate) fn glib_text(value: &str) -> Cow<'_, str> {
-    if value.contains('\0') {
-        Cow::Owned(value.replace('\0', "\u{fffd}"))
-    } else {
-        Cow::Borrowed(value)
+    if value
+        .chars()
+        .all(|character| display_character(character) == character)
+    {
+        return Cow::Borrowed(value);
     }
+
+    Cow::Owned(value.chars().map(display_character).collect())
 }
 
 fn push_display_character(display: &mut String, character: char) {
-    display.push(if character == '\0' {
-        REPLACEMENT_CHARACTER
-    } else {
-        character
-    });
+    display.push(display_character(character));
+}
+
+fn display_character(character: char) -> char {
+    match character {
+        '\u{000B}' => '\n',
+        '\n' | '\r' | '\t' => character,
+        character if character.is_control() => REPLACEMENT_CHARACTER,
+        _ => character,
+    }
 }
 
 fn style_at(block: &TextBlock, run: Option<usize>) -> &TextStyle {
@@ -403,6 +411,25 @@ mod tests {
     }
 
     #[test]
+    fn display_mapping_normalizes_source_line_breaks_and_unknown_controls() {
+        let block = TextBlock {
+            text: "first\u{000B}\u{000B}second\u{0004}\tvalue".to_owned(),
+            base_style: TextStyle::default(),
+            runs: Vec::new(),
+            math: Vec::new(),
+            alignment: TextAlignment::Left,
+            space_before: 0.0,
+            space_after: 0.0,
+            line_spacing: None,
+        };
+
+        let (display, _) = display_segments(&block, None);
+
+        assert_eq!(display, "first\n\nsecond�\tvalue");
+        assert_eq!(glib_text("first\u{000B}second\u{0004}"), "first\nsecond�");
+    }
+
+    #[test]
     fn pango_layout_accepts_sanitized_source_strings() {
         let block = TextBlock {
             text: "A\0B".to_owned(),
@@ -421,6 +448,24 @@ mod tests {
         let layout = layout(&gtk::pango::Context::new(), &block, Some("�\0."), 200.0);
 
         assert_eq!(layout.text(), "��. A�B");
+    }
+
+    #[test]
+    fn pango_layout_preserves_normalized_source_lines() {
+        let block = TextBlock {
+            text: "first\u{000B}\u{000B}third".to_owned(),
+            base_style: TextStyle::default(),
+            runs: Vec::new(),
+            math: Vec::new(),
+            alignment: TextAlignment::Left,
+            space_before: 0.0,
+            space_after: 0.0,
+            line_spacing: None,
+        };
+
+        let layout = layout(&gtk::pango::Context::new(), &block, None, 200.0);
+
+        assert_eq!(layout.text(), "first\n\nthird");
     }
 
     #[test]
@@ -445,7 +490,7 @@ mod tests {
                         assert!(!marker.contains(['\0', '\u{fffd}']));
                     }
                     let layout = layout(&context, block, marker.as_deref(), node.bounds.width);
-                    assert!(!layout.text().contains('\0'));
+                    assert!(!layout.text().contains(['\0', '\u{000B}']));
                 }
             }
         }
@@ -457,10 +502,7 @@ mod tests {
     }
 
     fn private_notebook_root() -> Option<PathBuf> {
-        let corpus = std::env::var_os("ONENOTE_TEST_CORPUS").map_or_else(
-            || PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../onepkg/Personal.extracted"),
-            PathBuf::from,
-        );
+        let corpus = std::env::var_os("ONENOTE_TEST_CORPUS").map(PathBuf::from)?;
         let mut roots: Vec<_> = std::fs::read_dir(corpus)
             .ok()?
             .filter_map(|entry| entry.ok().map(|entry| entry.path()))

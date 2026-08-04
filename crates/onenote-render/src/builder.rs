@@ -882,9 +882,15 @@ fn estimate_text_height(text: &TextBlock, width: f32, options: SceneOptions) -> 
         .fold(options.default_font_size, f32::max);
     let average_character_width = font_size * 0.55;
     let characters_per_line = (width / average_character_width).floor().max(1.0);
-    let visible_characters = text.visible_text().chars().count();
-    let visible_characters = f32::from(u16::try_from(visible_characters).unwrap_or(u16::MAX));
-    let lines = (visible_characters / characters_per_line).ceil().max(1.0);
+    let visible = text.visible_text();
+    let lines = visible
+        .split('\n')
+        .map(|line| {
+            let characters = f32::from(u16::try_from(line.chars().count()).unwrap_or(u16::MAX));
+            (characters / characters_per_line).ceil().max(1.0)
+        })
+        .sum::<f32>()
+        .max(1.0);
     let line_height = text
         .line_spacing
         .unwrap_or(font_size * options.line_height)
@@ -962,13 +968,33 @@ fn scene_bounds(page: &Page, nodes: &[SceneNode], options: SceneOptions) -> Rect
 
 #[cfg(test)]
 mod tests {
-    use super::{format_list_number, ListState, SceneBuilder, SceneOptions};
+    use super::{estimate_text_height, format_list_number, ListState, SceneBuilder, SceneOptions};
     use crate::{Error, ScenePrimitive};
     use onenote_core::{
         Attachment, Image, ListMarker, ListMarkerPart, ListNumberFormat, ObjectId, ObjectKind,
         Page, PageId, PageObject, PageObjectRole, Rect, ResourceId, ResourceRef, ResourceStatus,
+        TextAlignment, TextBlock, TextStyle,
     };
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn text_height_counts_explicit_and_empty_lines() {
+        let block = |text: &str| TextBlock {
+            text: text.to_owned(),
+            base_style: TextStyle::default(),
+            runs: Vec::new(),
+            math: Vec::new(),
+            alignment: TextAlignment::Left,
+            space_before: 0.0,
+            space_after: 0.0,
+            line_spacing: None,
+        };
+        let options = SceneOptions::default();
+        let one_line = estimate_text_height(&block("first"), 1_000.0, options);
+        let three_lines = estimate_text_height(&block("first\n\nthird"), 1_000.0, options);
+
+        assert!((three_lines - one_line * 3.0).abs() < f32::EPSILON);
+    }
 
     #[test]
     fn preserves_freeform_bounds_stacking_and_unknown_placeholders() {

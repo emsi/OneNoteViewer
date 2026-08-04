@@ -168,7 +168,7 @@ The detailed milestone sequence and exit gates are in the
   42 logical section paths. All 83 now parse independently after the documented
   compatibility patches. This proves per-file recovery only, not aggregate
   backup loading, unique-page counts, or complete rendering fidelity.
-- The private `Maths.onepkg` regression page projects and natively renders its
+- The private math regression fixture projects and natively renders its
   three OfficeMath expressions, including fractions, scripts, function
   application, and an n-ary summation with limits. This does not yet prove all
   rare OfficeMath operators or exact OneNote geometry.
