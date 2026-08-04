@@ -441,9 +441,10 @@ Desktop rich text can store the target in hidden `HYPERLINK` marker runs while
 the adjacent visible run carries the hyperlink style. The parser exposes each
 relationship as a target plus an inclusive-start/exclusive-end UTF-16 range.
 Projection retains those source offsets and marks conservatively recognized
-plain URLs or email addresses with separate provenance. Malformed or
-incomplete marker/style pairs remain ordinary visible text and must not panic
-the parser.
+plain URLs or email addresses with separate provenance only when the caller
+enables that loader option. Explicit OneNote links do not depend on the
+heuristic. Malformed or incomplete marker/style pairs remain ordinary visible
+text and must not panic the parser.
 
 ### 6.11 Ink and Handwriting Recognition
 

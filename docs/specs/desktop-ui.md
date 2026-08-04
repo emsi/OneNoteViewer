@@ -73,12 +73,14 @@ inventories.
 
 ## Link Interaction
 
-Explicit OneNote hyperlinks and conservatively recognized plain URLs or email
-addresses are underlined. Pointer hover changes only the pointer affordance;
-it does not select content, activate navigation, or alter the current page.
-A primary-button click activates only the linked glyph range, including when
-hidden OneNote marker text, list prefixes, math, or non-BMP characters affect
-the source-to-display offset mapping.
+Explicit OneNote hyperlinks are always underlined. The persisted **Detect
+links in plain text** setting additionally recognizes visible URLs and email
+addresses and is enabled by default. Changing it reloads and reindexes every
+open source so one workspace never mixes policies. Pointer hover changes only
+the pointer affordance; it does not select content, activate navigation, or
+alter the current page. A primary-button click activates only the linked glyph
+range, including when hidden OneNote marker text, list prefixes, math, or
+non-BMP characters affect the source-to-display offset mapping.
 
 `http`, `https`, `mailto`, `ftp`, `tel`, and `sms` targets open through GTK's
 portal-aware URI launcher after the click. File paths/URIs and unfamiliar

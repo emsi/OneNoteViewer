@@ -40,6 +40,8 @@ pub(crate) struct AppSettings {
     pub(crate) theme: ThemePreference,
     #[serde(default = "default_zoom")]
     pub(crate) zoom: f32,
+    #[serde(default = "default_detect_plain_text_links")]
+    pub(crate) detect_plain_text_links: bool,
 }
 
 impl Default for AppSettings {
@@ -48,6 +50,7 @@ impl Default for AppSettings {
             notebooks_location: default_notebooks_location(),
             theme: ThemePreference::default(),
             zoom: DEFAULT_ZOOM,
+            detect_plain_text_links: default_detect_plain_text_links(),
         }
     }
 }
@@ -66,6 +69,10 @@ pub(crate) fn default_notebooks_location() -> PathBuf {
 
 const fn default_zoom() -> f32 {
     DEFAULT_ZOOM
+}
+
+const fn default_detect_plain_text_links() -> bool {
+    true
 }
 
 pub(crate) fn load(path: &Path) -> Result<AppSettings> {
@@ -155,6 +162,7 @@ mod tests {
             notebooks_location: temporary.path().join("Documents/OneNoteViewer"),
             theme: ThemePreference::Dark,
             zoom: 1.21,
+            detect_plain_text_links: false,
         };
 
         save(&path, &expected).expect("save");
@@ -163,6 +171,7 @@ mod tests {
         assert_eq!(actual.notebooks_location, expected.notebooks_location);
         assert_eq!(actual.theme, ThemePreference::Dark);
         assert_zoom_eq(actual.zoom, 1.21);
+        assert!(!actual.detect_plain_text_links);
         assert!(!path.with_extension("json.new").exists());
     }
 
@@ -177,6 +186,7 @@ mod tests {
         assert_eq!(actual.notebooks_location, default_notebooks_location());
         assert_eq!(actual.theme, ThemePreference::System);
         assert_zoom_eq(actual.zoom, DEFAULT_ZOOM);
+        assert!(actual.detect_plain_text_links);
     }
 
     #[test]
@@ -196,6 +206,7 @@ mod tests {
         assert_eq!(actual.notebooks_location, location);
         assert_eq!(actual.theme, ThemePreference::Dark);
         assert_zoom_eq(actual.zoom, DEFAULT_ZOOM);
+        assert!(actual.detect_plain_text_links);
     }
 
     #[test]
@@ -205,6 +216,7 @@ mod tests {
             notebooks_location: temporary.path().join("Notebooks"),
             theme: ThemePreference::System,
             zoom: f32::NAN,
+            detect_plain_text_links: true,
         };
 
         let error = save(&temporary.path().join("settings.json"), &settings)

@@ -60,6 +60,12 @@ Upstream parser types, filesystem implementations, and internal revision-store
 objects do not cross this boundary. Callers must be able to use the core API
 without linking GTK or SQLite.
 
+`OneNoteLoader` preserves source-authored hyperlinks by default. Its
+`LoadOptions::detect_plain_text_links` enrichment is explicitly opt-in for
+library consumers; when enabled, visible URL and email text may additionally
+produce `TextLinkOrigin::Detected` ranges. This heuristic never replaces or
+overlaps explicit OneNote metadata.
+
 ## Rendering APIs
 
 ### UI-Neutral Scene

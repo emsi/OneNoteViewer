@@ -1,4 +1,6 @@
-use onenote_core::{ExtractionPhase, LoadedNotebook, OneNoteLoader, OnePkgExtractor, SourceId};
+use onenote_core::{
+    ExtractionPhase, LoadOptions, LoadedNotebook, OneNoteLoader, OnePkgExtractor, SourceId,
+};
 use onenote_index::{SearchHit, SearchIndex, SearchQuery};
 use onenote_render::{PageScene, SceneBuilder, SceneOptions};
 use std::path::PathBuf;
@@ -8,7 +10,7 @@ use std::sync::{mpsc, Arc};
 pub(crate) enum Command {
     Discover(PathBuf),
     DiscoverLibrary(PathBuf),
-    Load(PathBuf),
+    Load { path: PathBuf, options: LoadOptions },
     Remove(SourceId),
     Shutdown,
 }
@@ -75,8 +77,8 @@ pub(crate) fn start_index_worker(
                         return;
                     }
                 }
-                Command::Load(path) => {
-                    let result = OneNoteLoader::default()
+                Command::Load { path, options } => {
+                    let result = OneNoteLoader::with_options(options)
                         .load(&path)
                         .map(Arc::new)
                         .map_err(|error| error.to_string());

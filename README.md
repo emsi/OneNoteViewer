@@ -72,8 +72,9 @@ The initial product:
   packaged files, without contacting OneDrive;
 - renders source-native OneNote pages as a spatial, freeform canvas, preserving
   coordinates, overlap, sizes, backgrounds, ink, and object relationships;
-- preserves explicit OneNote hyperlinks, recognizes plain visible URLs and
-  email addresses, and resolves OneNote page links across open notebooks;
+- preserves explicit OneNote hyperlinks, optionally recognizes plain visible
+  URLs and email addresses, and resolves OneNote page links across open
+  notebooks;
 - searches titles, text, tags, image alternative text, handwriting recognition
   text, link targets, and attachment names across all open notebooks;
 - extracts attachments only after an explicit user action and opens them with

@@ -7,7 +7,9 @@ use anyhow::Result;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use onenote_core::{ExtractionPhase, LoadedNotebook, Page, PageId, Rect, SectionId, SourceId};
+use onenote_core::{
+    ExtractionPhase, LoadOptions, LoadedNotebook, Page, PageId, Rect, SectionId, SourceId,
+};
 use onenote_index::SearchHit;
 use onenote_render::HitAction;
 use onenote_render_gtk::{PageView, DEFAULT_ZOOM};
@@ -991,7 +993,7 @@ impl Viewer {
             Event::Discovered { requested, result } => match result {
                 Ok(paths) => {
                     for path in paths {
-                        let _ignored = self.commands.send(Command::Load(path));
+                        self.load_source(path);
                     }
                     self.set_busy(&format!("Opening {}", requested.display()));
                 }
@@ -1008,7 +1010,7 @@ impl Viewer {
                 Ok(paths) => {
                     let count = paths.len();
                     for path in paths {
-                        let _ignored = self.commands.send(Command::Load(path));
+                        self.load_source(path);
                     }
                     self.set_busy(&format!(
                         "Opening {count} notebook{} from the default location",
@@ -1092,6 +1094,11 @@ impl Viewer {
     fn discover(&self, path: PathBuf) {
         self.set_busy(&format!("Discovering {}", path.display()));
         let _ignored = self.commands.send(Command::Discover(path));
+    }
+
+    fn load_source(&self, path: PathBuf) {
+        let options = load_options(&self.settings.borrow());
+        let _ignored = self.commands.send(Command::Load { path, options });
     }
 
     fn open_notebooks_location(&self) {
@@ -1688,10 +1695,11 @@ impl Viewer {
             current_settings.notebooks_location,
             default,
             current_settings.theme,
-            move |location, theme| {
-                weak_save
-                    .upgrade()
-                    .is_some_and(|viewer| viewer.set_preferences(location, theme))
+            current_settings.detect_plain_text_links,
+            move |location, theme, detect_plain_text_links| {
+                weak_save.upgrade().is_some_and(|viewer| {
+                    viewer.set_preferences(location, theme, detect_plain_text_links)
+                })
             },
             move |title, detail| {
                 if let Some(viewer) = weak_error.upgrade() {
@@ -1701,7 +1709,12 @@ impl Viewer {
         );
     }
 
-    fn set_preferences(&self, location: &std::path::Path, theme: ThemePreference) -> bool {
+    fn set_preferences(
+        &self,
+        location: &std::path::Path,
+        theme: ThemePreference,
+        detect_plain_text_links: bool,
+    ) -> bool {
         if let Err(error) = settings::ensure_notebooks_location(location) {
             self.show_error(
                 "Could not use default notebooks location",
@@ -1710,8 +1723,11 @@ impl Viewer {
             return false;
         }
         let mut updated = self.settings.borrow().clone();
+        let location_changed = updated.notebooks_location != location;
+        let link_detection_changed = updated.detect_plain_text_links != detect_plain_text_links;
         updated.notebooks_location = location.to_path_buf();
         updated.theme = theme;
+        updated.detect_plain_text_links = detect_plain_text_links;
         self.cancel_settings_save();
         if let Err(error) = settings::save(&self.settings_path, &updated) {
             self.show_error("Could not save settings", &error.to_string());
@@ -1720,8 +1736,30 @@ impl Viewer {
         *self.settings.borrow_mut() = updated;
         self.apply_theme(theme);
         self.persist_workspace();
-        self.open_notebooks_location();
+        if link_detection_changed {
+            self.reload_sources_for_link_detection();
+        }
+        if location_changed {
+            self.open_notebooks_location();
+        }
         true
+    }
+
+    fn reload_sources_for_link_detection(&self) {
+        let paths = self
+            .state
+            .borrow()
+            .sources
+            .iter()
+            .map(|source| source.path.clone())
+            .collect::<Vec<_>>();
+        if paths.is_empty() {
+            return;
+        }
+        self.set_busy("Applying link detection setting");
+        for path in paths {
+            self.load_source(path);
+        }
     }
 
     fn apply_theme(&self, preference: ThemePreference) {
@@ -2597,6 +2635,12 @@ fn native_ids_equal(left: &str, right: &str) -> bool {
         .eq_ignore_ascii_case(right.trim().trim_matches(['{', '}']))
 }
 
+fn load_options(settings: &AppSettings) -> LoadOptions {
+    LoadOptions {
+        detect_plain_text_links: settings.detect_plain_text_links,
+    }
+}
+
 fn install_resources(theme: ThemePreference) -> gtk::CssProvider {
     let display = gdk_display();
     gtk::IconTheme::for_display(&display).add_resource_path("/io/github/emsi/OneNoteViewer/icons");
@@ -2645,6 +2689,15 @@ mod tests {
         );
         assert!(native_ids_equal("{abc-123}", "ABC-123"));
         assert_eq!(onenote_page_id("onenote:#Page&section-id={abc}"), None);
+    }
+
+    #[test]
+    fn viewer_link_detection_preference_controls_loader_enrichment() {
+        let mut settings = AppSettings::default();
+        assert!(load_options(&settings).detect_plain_text_links);
+
+        settings.detect_plain_text_links = false;
+        assert!(!load_options(&settings).detect_plain_text_links);
     }
 
     #[test]
