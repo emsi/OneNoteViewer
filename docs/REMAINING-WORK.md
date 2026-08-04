@@ -40,7 +40,7 @@ record Orca tests under GNOME and KDE on Wayland and X11.
 yet implement confirmed external links, attachment extraction/opening,
 operation cancellation/progress, per-source diagnostics, manual refresh, or
 automatic source-change refresh. Package cancellation exists in the core API
-but is not wired to the UI. Active page, zoom, and pane state are not restored.
+but is not wired to the UI. Active page and pane state are not restored.
 
 **Completion:** Add explicit host policies for renderer actions; bounded,
 sanitized attachment extraction; cancellable operations with progress; source
