@@ -50,6 +50,8 @@ The public model includes:
 - notebook and section-group hierarchy;
 - ordered sections, pages, and subpages;
 - semantic page objects, including title/body roles, and source geometry;
+- structured rich-text hyperlinks with exact targets, UTF-16 source ranges,
+  and explicit-versus-detected provenance;
 - lazy handles for bounded image and attachment payload access;
 - unknown-object placeholders and stable diagnostic codes;
 - stable locators that namespace OneNote GUIDs by source identity.
@@ -86,6 +88,13 @@ page widget/controller. A host application supplies the page, viewport,
 theme/font context, automatic-text fallback color, and callbacks for link,
 attachment, selection, and navigation actions. Explicit OneNote foreground
 colors remain source-controlled.
+
+Text layout maps source UTF-16 link ranges through hidden-run suppression,
+list-marker insertion, math replacement, and UTF-8 display layout. Pointer hit
+testing returns `HitAction::OpenLink` only over the resulting linked glyphs.
+The component underlines links and provides pointer affordance, but never
+launches a URI; the embedding host owns internal navigation, scheme policy,
+confirmation, and failure UI.
 
 The component owns pan, zoom, viewport culling, hit testing, bounded lazy image
 decode, and retention of scene accessibility semantics. Mapping each scene

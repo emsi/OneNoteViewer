@@ -18,7 +18,7 @@ The application depends on `onenote_parser` and
 `onenote_parser-macros` from:
 
 - source: <https://github.com/emsi/onenote.rs>
-- revision: `8454acf2dd8217236ec17e883cbf225bd11563cd`
+- revision: `98ee9c80b4f85c1886ec54886ad4aadb43c68582`
 - license: Mozilla Public License 2.0 (`MPL-2.0`)
 
 That revision contains local compatibility changes described in

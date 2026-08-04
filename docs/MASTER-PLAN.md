@@ -184,9 +184,10 @@ The detailed milestone sequence and exit gates are in the
 1. Implement the reusable manifest-free backup-folder loader and integrate its
    single synthetic notebook, reconstructed section groups, snapshot policy,
    workspace migration, and aggregate index generation.
-2. Complete viewer workflows: explicit link/attachment handling, package and
-   long-operation cancellation/progress, diagnostics, source refresh, and
-   fuller workspace restoration.
+2. Complete viewer workflows: attachment handling, package and long-operation
+   cancellation/progress, diagnostics, source refresh, and fuller workspace
+   restoration. Pointer-activated inline link handling is implemented;
+   keyboard access remains part of the accessibility work.
 3. Establish visual oracles and measured tolerances for rich text, tables,
    images/printouts, ink, negative coordinates, overlap, and large pages.
 4. Map scene semantics into GTK accessibility, add keyboard navigation, and
@@ -195,7 +196,7 @@ The detailed milestone sequence and exit gates are in the
    allocation, path, and process-lifecycle risks with repeatable evidence.
 6. Benchmark and optimize cold parse/index, warm search, pan/zoom, image cache,
    and large workspace memory.
-7. Upstream or retire the five local parser compatibility patches, publish API
+7. Upstream or retire the documented parser compatibility patches, publish API
    documentation, and complete stable Flatpak packaging. GPL-3.0-or-later and
    third-party/corresponding-source packaging are already established.
 

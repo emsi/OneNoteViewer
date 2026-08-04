@@ -3,7 +3,7 @@
 The active application dependency is the public
 [`emsi/onenote.rs`](https://github.com/emsi/onenote.rs) fork, pinned in the
 workspace manifest to revision
-`8454acf2dd8217236ec17e883cbf225bd11563cd`. That revision starts from upstream
+`98ee9c80b4f85c1886ec54886ad4aadb43c68582`. That revision starts from upstream
 `f9cdc59f984bc1f7f096b54100cefaaebc892573` (version 1.1.1) and contains the
 compatibility patches below.
 
@@ -41,6 +41,12 @@ only through `onenote-core`.
    reference to a section or section-group filename taking precedence. This
    prevents stale ordering snapshots retained by OneNote Desktop from
    duplicating sections or interleaving section groups in an obsolete order.
+8. Desktop revision materialization follows all dependency revisions from the
+   active root before collecting objects. This prevents active pages from
+   losing inherited rich-text or child objects after collaborative edits.
+9. `RichText` exposes structured hyperlinks as exact targets plus UTF-16 source
+   ranges. Hidden `HYPERLINK` marker runs are associated with adjacent visible
+   hyperlink runs without changing the existing raw text or style APIs.
 
 The supplied private corpus has one section requiring patch 1 and two sections
 that reach a wider numeric property requiring patches 2 and 3. All 32 native
@@ -69,7 +75,11 @@ requests:
 The `GlobalIdTableEntry3FNDX` implementation is currently carried only by the
 fork and has not yet been submitted upstream. The TOC ordering fix is tracked
 by [msiemens/onenote.rs#40](https://github.com/msiemens/onenote.rs/pull/40) and
-fixes [issue #5](https://github.com/msiemens/onenote.rs/issues/5).
+fixes [issue #5](https://github.com/msiemens/onenote.rs/issues/5). Active
+revision materialization is tracked by
+[msiemens/onenote.rs#41](https://github.com/msiemens/onenote.rs/pull/41).
+Structured rich-text hyperlinks are tracked by
+[msiemens/onenote.rs#42](https://github.com/msiemens/onenote.rs/pull/42).
 
 Until those changes are accepted in an upstream release, update the pinned
 fork revision deliberately and review the corresponding lockfile change.

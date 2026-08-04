@@ -9,6 +9,7 @@ use gtk::glib;
 use gtk::prelude::*;
 use onenote_core::{ExtractionPhase, LoadedNotebook, Page, PageId, Rect, SectionId, SourceId};
 use onenote_index::SearchHit;
+use onenote_render::HitAction;
 use onenote_render_gtk::{PageView, DEFAULT_ZOOM};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -614,6 +615,7 @@ impl Viewer {
         viewer.connect_system_theme();
         viewer.connect_import_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
+        viewer.connect_page_actions();
         viewer.poll_events();
         viewer
     }
@@ -779,6 +781,193 @@ impl Viewer {
                 viewer.page_view.set_zoom(DEFAULT_ZOOM);
             }
         });
+    }
+
+    fn connect_page_actions(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        self.page_view.set_action_handler(Some(move |action| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.handle_page_action(action);
+            }
+        }));
+    }
+
+    fn handle_page_action(self: &Rc<Self>, action: HitAction) {
+        match action {
+            HitAction::OpenLink(target) => self.open_link(&target),
+            HitAction::OpenAttachment(_) => {
+                self.status
+                    .set_label("Opening attachments is not implemented yet");
+            }
+            HitAction::SelectObject(_) => {}
+        }
+    }
+
+    fn open_link(self: &Rc<Self>, target: &str) {
+        let target = target.trim();
+        if target.is_empty() || target.contains('\0') {
+            self.show_error(
+                "Could not open link",
+                "The note contains an invalid empty link.",
+            );
+            return;
+        }
+        match uri_scheme(target).as_deref() {
+            Some("onenote") => self.open_internal_onenote_link(target),
+            Some("http" | "https" | "mailto" | "ftp" | "tel" | "sms") => {
+                self.launch_uri(target);
+            }
+            Some(_) | None if is_local_link(target) => {
+                self.confirm_link(target, "Open local file link?");
+            }
+            Some(_) => self.confirm_link(target, "Open external link?"),
+            None => self.show_error(
+                "Could not open link",
+                &format!("The link has no recognized URI scheme:\n\n{target}"),
+            ),
+        }
+    }
+
+    fn open_internal_onenote_link(&self, target: &str) {
+        let Some(native_page_id) = onenote_page_id(target) else {
+            self.show_error(
+                "Could not open OneNote link",
+                &format!("The link does not contain a page target:\n\n{target}"),
+            );
+            return;
+        };
+        let destination = {
+            let state = self.state.borrow();
+            let active = state.active.as_ref().map(|active| &active.source);
+            state
+                .sources
+                .iter()
+                .filter(|source| active == Some(&source.loaded.notebook.source_id))
+                .chain(
+                    state
+                        .sources
+                        .iter()
+                        .filter(|source| active != Some(&source.loaded.notebook.source_id)),
+                )
+                .find_map(|source| {
+                    source.loaded.notebook.sections().find_map(|section| {
+                        section
+                            .pages
+                            .iter()
+                            .find(|page| native_ids_equal(&page.native_id, &native_page_id))
+                            .map(|page| {
+                                (
+                                    source.loaded.notebook.source_id.clone(),
+                                    SectionLocation {
+                                        section_id: section.id.clone(),
+                                        page_id: Some(page.id.clone()),
+                                    },
+                                )
+                            })
+                    })
+                })
+        };
+        if let Some((source_id, location)) = destination {
+            self.activate_location(&source_id, &location, None);
+        } else {
+            self.show_error(
+                "OneNote page is not available",
+                &format!(
+                    "The linked page is not present in any open notebook.\n\nPage ID: {native_page_id}"
+                ),
+            );
+        }
+    }
+
+    fn confirm_link(self: &Rc<Self>, target: &str, title: &str) {
+        let target = target.to_owned();
+        let dialog = gtk::Window::builder()
+            .title(title)
+            .transient_for(&self.window)
+            .modal(true)
+            .resizable(false)
+            .default_width(620)
+            .build();
+        dialog.add_css_class("link-dialog");
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        content.set_margin_start(18);
+        content.set_margin_end(18);
+        content.set_margin_top(18);
+        content.set_margin_bottom(18);
+        let explanation = gtk::Label::builder()
+            .label("This note requests opening a link with another application.")
+            .wrap(true)
+            .xalign(0.0)
+            .selectable(true)
+            .build();
+        content.append(&explanation);
+        let destination = gtk::Label::builder()
+            .label(&target)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::Char)
+            .xalign(0.0)
+            .selectable(true)
+            .build();
+        destination.add_css_class("link-destination");
+        content.append(&destination);
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        actions.set_halign(gtk::Align::End);
+        let cancel = gtk::Button::with_label("Cancel");
+        let open = gtk::Button::with_label("Open Link");
+        open.add_css_class("suggested-action");
+        actions.append(&cancel);
+        actions.append(&open);
+        content.append(&actions);
+        let close_dialog = dialog.clone();
+        cancel.connect_clicked(move |_| close_dialog.close());
+        let close_dialog = dialog.clone();
+        let weak = Rc::downgrade(self);
+        open.connect_clicked(move |_| {
+            close_dialog.close();
+            if let Some(viewer) = weak.upgrade() {
+                viewer.launch_link_target(&target);
+            }
+        });
+        dialog.set_child(Some(&content));
+        cancel.grab_focus();
+        dialog.present();
+    }
+
+    fn launch_link_target(self: &Rc<Self>, target: &str) {
+        if is_plain_local_path(target) {
+            self.launch_local_path(target);
+        } else {
+            self.launch_uri(target);
+        }
+    }
+
+    fn launch_local_path(self: &Rc<Self>, target: &str) {
+        let file = gio::File::for_path(target);
+        let launcher = gtk::FileLauncher::new(Some(&file));
+        let weak = Rc::downgrade(self);
+        launcher.launch(
+            Some(&self.window),
+            None::<&gio::Cancellable>,
+            move |result| {
+                if let (Err(error), Some(viewer)) = (result, weak.upgrade()) {
+                    viewer.show_error("Could not open local file", &error.to_string());
+                }
+            },
+        );
+    }
+
+    fn launch_uri(self: &Rc<Self>, target: &str) {
+        let launcher = gtk::UriLauncher::new(target);
+        let weak = Rc::downgrade(self);
+        launcher.launch(
+            Some(&self.window),
+            None::<&gio::Cancellable>,
+            move |result| {
+                if let (Err(error), Some(viewer)) = (result, weak.upgrade()) {
+                    viewer.show_error("Could not open link", &error.to_string());
+                }
+            },
+        );
     }
 
     fn poll_events(self: &Rc<Self>) {
@@ -2308,7 +2497,8 @@ fn theme_css(theme: EffectiveTheme) -> String {
             color: @text;
         }}
         .settings-dialog label, .settings-dialog label:backdrop,
-        .error-dialog label, .error-dialog label:backdrop {{
+        .error-dialog label, .error-dialog label:backdrop,
+        .link-dialog label, .link-dialog label:backdrop {{
             color: @text;
         }}
         .dialog-title, .dialog-title:backdrop,
@@ -2326,6 +2516,13 @@ fn theme_css(theme: EffectiveTheme) -> String {
             color: @muted;
         }}
         .path-value, .path-value:backdrop {{
+            background: @surface;
+            color: @text;
+            border: 1px solid @border;
+            border-radius: 4px;
+            padding: 10px;
+        }}
+        .link-destination, .link-destination:backdrop {{
             background: @surface;
             color: @text;
             border: 1px solid @border;
@@ -2360,6 +2557,46 @@ fn theme_css(theme: EffectiveTheme) -> String {
     )
 }
 
+fn uri_scheme(target: &str) -> Option<String> {
+    let (scheme, _) = target.split_once(':')?;
+    let mut characters = scheme.chars();
+    let valid = characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+        });
+    valid.then(|| scheme.to_ascii_lowercase())
+}
+
+fn is_local_link(target: &str) -> bool {
+    uri_scheme(target).as_deref() == Some("file") || is_plain_local_path(target)
+}
+
+fn is_plain_local_path(target: &str) -> bool {
+    target.starts_with('/')
+        || target.starts_with('\\')
+        || target
+            .as_bytes()
+            .get(1)
+            .is_some_and(|character| *character == b':')
+}
+
+fn onenote_page_id(target: &str) -> Option<String> {
+    let lower = target.to_ascii_lowercase();
+    let start = lower.find("page-id=")? + "page-id=".len();
+    let raw = target[start..].split('&').next()?.trim();
+    let decoded = glib::uri_unescape_string(raw, None::<&str>)?;
+    let value = decoded.trim().trim_matches(['{', '}']);
+    (!value.is_empty()).then(|| value.to_owned())
+}
+
+fn native_ids_equal(left: &str, right: &str) -> bool {
+    left.trim()
+        .trim_matches(['{', '}'])
+        .eq_ignore_ascii_case(right.trim().trim_matches(['{', '}']))
+}
+
 fn install_resources(theme: ThemePreference) -> gtk::CssProvider {
     let display = gdk_display();
     gtk::IconTheme::for_display(&display).add_resource_path("/io/github/emsi/OneNoteViewer/icons");
@@ -2386,6 +2623,28 @@ mod tests {
     fn gtk_text_replaces_interior_nuls() {
         assert_eq!(gtk_text("One\0Note"), "One�Note");
         assert_eq!(gtk_text("OneNote"), "OneNote");
+    }
+
+    #[test]
+    fn classifies_link_schemes_and_local_targets() {
+        assert_eq!(uri_scheme("HTTPS://example.test"), Some("https".to_owned()));
+        assert_eq!(uri_scheme("not a link"), None);
+        assert!(is_local_link("file:///tmp/note.txt"));
+        assert!(is_local_link("FILE:///tmp/note.txt"));
+        assert!(is_plain_local_path("/tmp/note.txt"));
+        assert!(is_local_link("C:\\Notes\\note.txt"));
+        assert!(!is_plain_local_path("file:///tmp/note.txt"));
+        assert!(!is_local_link("https://example.test"));
+    }
+
+    #[test]
+    fn extracts_percent_encoded_onenote_page_ids() {
+        assert_eq!(
+            onenote_page_id("onenote:#Page&page-id=%7BABC-123%7D&end"),
+            Some("ABC-123".to_owned())
+        );
+        assert!(native_ids_equal("{abc-123}", "ABC-123"));
+        assert_eq!(onenote_page_id("onenote:#Page&section-id={abc}"), None);
     }
 
     #[test]

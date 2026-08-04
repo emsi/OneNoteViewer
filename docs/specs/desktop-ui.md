@@ -71,6 +71,26 @@ Standard window-control fallbacks and the application icon are bundled so the
 native, AppImage, and Flatpak headers do not depend on different host icon
 inventories.
 
+## Link Interaction
+
+Explicit OneNote hyperlinks and conservatively recognized plain URLs or email
+addresses are underlined. Pointer hover changes only the pointer affordance;
+it does not select content, activate navigation, or alter the current page.
+A primary-button click activates only the linked glyph range, including when
+hidden OneNote marker text, list prefixes, math, or non-BMP characters affect
+the source-to-display offset mapping.
+
+`http`, `https`, `mailto`, `ftp`, `tel`, and `sms` targets open through GTK's
+portal-aware URI launcher after the click. File paths/URIs and unfamiliar
+schemes show a selectable confirmation containing the exact target before the
+desktop is asked to open them. OneNote page links resolve by native page ID
+across all currently open notebooks, preferring the active source; unresolved
+targets produce a selectable diagnostic. The renderer emits inert actions and
+does not own any of these application policies.
+
+Pointer activation does not satisfy keyboard access or general document text
+selection. Those remain separate accessibility and selection work.
+
 ## Selectable Diagnostics
 
 Every error dialog exposes its full diagnostic text in a non-editable,

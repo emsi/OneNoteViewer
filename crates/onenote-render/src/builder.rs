@@ -984,6 +984,7 @@ mod tests {
             base_style: TextStyle::default(),
             runs: Vec::new(),
             math: Vec::new(),
+            links: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,

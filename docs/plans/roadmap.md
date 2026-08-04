@@ -104,7 +104,9 @@ independent protocol fixtures pass. Recorded latency targets remain open.
   attachments, ink, placeholders, pan, and zoom.
 - [x] Viewer title/date chrome without duplicate native title-area rendering;
   reusable scene construction retains a full-page option.
-- [ ] Complete tags, confirmed links, and safe attachment extraction.
+- [x] Preserve and pointer-activate inline web, mail, file, and OneNote page
+  links through host-owned policy.
+- [ ] Complete tags and safe attachment extraction.
 - [x] Project, render, and index basic OfficeMath with structured fallback.
 - [x] Global search with result navigation to matching object geometry.
 - [x] Persistent all-open-notebooks workspace and default global search scope.
@@ -135,7 +137,8 @@ Current implementation and evidence gaps are itemized in
 - Improve title/list/table geometry and font fallback diagnostics.
 - Complete tested OfficeMath operators.
 - Improve nested ink and stored handwriting recognition.
-- Internal cross-notebook/object link resolution.
+- Complete internal section/object-anchor link resolution beyond the current
+  cross-notebook page-ID path.
 - History/conflict indicators and optional separate views.
 - Incremental refresh at section granularity.
 

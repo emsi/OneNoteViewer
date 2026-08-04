@@ -463,6 +463,9 @@ pub struct TextBlock {
     /// Structured `OfficeMath` ranges in source order.
     #[serde(default)]
     pub math: Vec<MathSpan>,
+    /// Hyperlinks attached to visible source ranges.
+    #[serde(default)]
+    pub links: Vec<TextLink>,
     /// Paragraph alignment.
     pub alignment: TextAlignment,
     /// Top margin in logical pixels.
@@ -471,6 +474,29 @@ pub struct TextBlock {
     pub space_after: f32,
     /// Exact line spacing in logical pixels when recorded.
     pub line_spacing: Option<f32>,
+}
+
+/// A hyperlink attached to a visible range of rich text.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct TextLink {
+    /// Inclusive UTF-16 start offset in [`TextBlock::text`].
+    pub start_utf16: u32,
+    /// Exclusive UTF-16 end offset in [`TextBlock::text`].
+    pub end_utf16: u32,
+    /// URI or `OneNote` link target.
+    pub target: String,
+    /// How the link relationship was obtained.
+    pub origin: TextLinkOrigin,
+}
+
+/// Provenance of a projected hyperlink.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextLinkOrigin {
+    /// Explicit `OneNote` hyperlink metadata.
+    OneNote,
+    /// Conservatively recognized plain URL or email address.
+    Detected,
 }
 
 impl TextBlock {
@@ -800,6 +826,7 @@ mod tests {
                 },
             ],
             math: Vec::new(),
+            links: Vec::new(),
             alignment: super::TextAlignment::default(),
             space_before: 0.0,
             space_after: 0.0,
@@ -840,6 +867,7 @@ mod tests {
                 display: false,
                 diagnostic: None,
             }],
+            links: Vec::new(),
             alignment: super::TextAlignment::default(),
             space_before: 0.0,
             space_after: 0.0,

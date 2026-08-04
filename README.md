@@ -72,6 +72,8 @@ The initial product:
   packaged files, without contacting OneDrive;
 - renders source-native OneNote pages as a spatial, freeform canvas, preserving
   coordinates, overlap, sizes, backgrounds, ink, and object relationships;
+- preserves explicit OneNote hyperlinks, recognizes plain visible URLs and
+  email addresses, and resolves OneNote page links across open notebooks;
 - searches titles, text, tags, image alternative text, handwriting recognition
   text, link targets, and attachment names across all open notebooks;
 - extracts attachments only after an explicit user action and opens them with
@@ -120,7 +122,9 @@ renderer, and full viewer Xvfb tests.
 The viewer navigation keeps notebooks, nested section groups, and sections in
 one collapsible tree, with a separately collapsible page list. Page title and
 creation time are shown once above the freeform body. Bundled symbolic action
-icons avoid a dependency on a particular host icon theme.
+icons avoid a dependency on a particular host icon theme. Inline links are
+underlined, pointer-activated, and opened through host-owned link policy rather
+than by the reusable renderer itself.
 
 The tested corpus is still one private desktop package. Accessibility, measured
 layout fidelity, hostile-input coverage, several user actions, refresh, and

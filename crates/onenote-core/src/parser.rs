@@ -4,10 +4,11 @@ use crate::model::{
     InkStroke, ListMarker, ListMarkerPart, ListNumberFormat, Notebook, NotebookEntry, ObjectId,
     ObjectKind, Outline, OutlineElement, Page, PageId, PageObject, PageObjectRole, Rect,
     ResourceId, ResourceRef, Section, SectionGroup, SectionId, SourceFingerprint, SourceId, Table,
-    TableCell, TextAlignment, TextBlock, TextRun, TextStyle,
+    TableCell, TextAlignment, TextBlock, TextLink, TextLinkOrigin, TextRun, TextStyle,
 };
 use crate::resource::{resource_status, ResourceLoader};
 use crate::{Error, ResourceStore, Result, PIXELS_PER_HALF_INCH};
+use linkify::{LinkFinder, LinkKind};
 use onenote_parser::contents::{
     Content, EmbeddedFile, Image as ParserImage, Ink as ParserInk, List, Outline as ParserOutline,
     OutlineElement as ParserOutlineElement, OutlineItem, ParagraphStyling, RichText,
@@ -710,6 +711,18 @@ fn project_text(text: &RichText) -> TextBlock {
             style: project_text_style(run.style),
         })
         .collect();
+    let mut links = text
+        .hyperlinks()
+        .into_iter()
+        .map(|link| TextLink {
+            start_utf16: link.start(),
+            end_utf16: link.end(),
+            target: link.target().to_owned(),
+            origin: TextLinkOrigin::OneNote,
+        })
+        .collect::<Vec<_>>();
+    links.extend(detect_plain_links(text, &source_runs, &links));
+    links.sort_by_key(|link| (link.start_utf16, link.end_utf16));
     let mut math_objects = text.math_inline_objects().iter().copied();
     let associated = source_runs
         .iter()
@@ -755,6 +768,7 @@ fn project_text(text: &RichText) -> TextBlock {
         base_style,
         runs,
         math,
+        links,
         alignment: match text.paragraph_alignment() {
             ParagraphAlignment::Left => TextAlignment::Left,
             ParagraphAlignment::Center => TextAlignment::Center,
@@ -765,6 +779,88 @@ fn project_text(text: &RichText) -> TextBlock {
         space_after: half_inches(text.paragraph_space_after()),
         line_spacing: text.paragraph_line_spacing_exact().map(half_inches),
     }
+}
+
+fn detect_plain_links(
+    text: &RichText,
+    source_runs: &[SourceTextRun<'_>],
+    explicit: &[TextLink],
+) -> Vec<TextLink> {
+    let mut finder = LinkFinder::new();
+    finder.kinds(&[LinkKind::Url, LinkKind::Email]);
+    finder.url_must_have_scheme(false);
+    if source_runs.is_empty() {
+        let style = text.paragraph_style();
+        return if style.hidden() || style.hyperlink() || style.math_formatting() {
+            Vec::new()
+        } else {
+            detect_links_in_run(&finder, text.text(), 0, explicit)
+        };
+    }
+    let mut links = Vec::new();
+    for run in source_runs {
+        if run.style.hidden() || run.style.hyperlink() || run.style.math_formatting() {
+            continue;
+        }
+        links.extend(detect_links_in_run(
+            &finder,
+            run.text,
+            run.start_utf16,
+            explicit,
+        ));
+    }
+    links
+}
+
+fn detect_links_in_run(
+    finder: &LinkFinder,
+    text: &str,
+    run_start_utf16: u32,
+    explicit: &[TextLink],
+) -> Vec<TextLink> {
+    finder
+        .links(text)
+        .filter_map(|found| {
+            let start_utf16 = run_start_utf16.saturating_add(byte_to_utf16(text, found.start()));
+            let end_utf16 = run_start_utf16.saturating_add(byte_to_utf16(text, found.end()));
+            if start_utf16 >= end_utf16
+                || explicit
+                    .iter()
+                    .any(|link| start_utf16 < link.end_utf16 && end_utf16 > link.start_utf16)
+            {
+                return None;
+            }
+            let target = match found.kind() {
+                LinkKind::Email => format!("mailto:{}", found.as_str()),
+                LinkKind::Url if has_uri_scheme(found.as_str()) => found.as_str().to_owned(),
+                LinkKind::Url => format!("https://{}", found.as_str()),
+                _ => return None,
+            };
+            Some(TextLink {
+                start_utf16,
+                end_utf16,
+                target,
+                origin: TextLinkOrigin::Detected,
+            })
+        })
+        .collect()
+}
+
+fn byte_to_utf16(text: &str, byte: usize) -> u32 {
+    u32::try_from(text[..byte].encode_utf16().count()).unwrap_or(u32::MAX)
+}
+
+fn has_uri_scheme(value: &str) -> bool {
+    let Some((scheme, _)) = value.split_once(':') else {
+        return false;
+    };
+    let mut characters = scheme.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+        })
 }
 
 fn normalize_rich_text_controls(text: &str) -> Cow<'_, str> {
@@ -1179,8 +1275,12 @@ fn host_typed_path(path: &Path) -> TypedPath<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_rich_text_controls, project_list_template, stable_id, OneNoteLoader};
-    use crate::{Error, ListMarkerPart, ListNumberFormat};
+    use super::{
+        detect_links_in_run, normalize_rich_text_controls, project_list_template, stable_id,
+        OneNoteLoader,
+    };
+    use crate::{Error, ListMarkerPart, ListNumberFormat, TextLink, TextLinkOrigin};
+    use linkify::{LinkFinder, LinkKind};
     use std::fs;
 
     #[test]
@@ -1240,5 +1340,36 @@ mod tests {
             source.encode_utf16().count(),
             normalized.encode_utf16().count()
         );
+    }
+
+    #[test]
+    fn detects_plain_urls_and_emails_with_utf16_offsets() {
+        let mut finder = LinkFinder::new();
+        finder.kinds(&[LinkKind::Url, LinkKind::Email]);
+        finder.url_must_have_scheme(false);
+        let text = "😀 example.com and user@example.com";
+
+        let links = detect_links_in_run(&finder, text, 7, &[]);
+
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].target, "https://example.com");
+        assert_eq!(links[0].origin, TextLinkOrigin::Detected);
+        assert_eq!(links[0].start_utf16, 10);
+        assert_eq!(links[1].target, "mailto:user@example.com");
+    }
+
+    #[test]
+    fn explicit_link_ranges_take_precedence_over_detection() {
+        let mut finder = LinkFinder::new();
+        finder.kinds(&[LinkKind::Url, LinkKind::Email]);
+        finder.url_must_have_scheme(false);
+        let explicit = TextLink {
+            start_utf16: 0,
+            end_utf16: 12,
+            target: "onenote:#page-id={abc}".to_owned(),
+            origin: TextLinkOrigin::OneNote,
+        };
+
+        assert!(detect_links_in_run(&finder, "example.com", 0, &[explicit]).is_empty());
     }
 }
