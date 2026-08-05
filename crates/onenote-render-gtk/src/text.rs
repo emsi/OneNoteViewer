@@ -23,6 +23,15 @@ pub(crate) struct TextLayout {
 }
 
 impl TextLayout {
+    pub(crate) fn measured_height(&self) -> f32 {
+        let layout_height = self.layout.pixel_size().1.to_f32().unwrap_or(0.0);
+        self.math
+            .iter()
+            .map(|math| math.y + math.height)
+            .fold(layout_height, f32::max)
+            .max(1.0)
+    }
+
     pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<&str> {
         let (inside, index, _) = self
             .layout

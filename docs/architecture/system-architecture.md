@@ -104,14 +104,17 @@ index boundaries.
 renders that scene rather than creating one GTK child per text run:
 
 - scene construction owns OneNote geometry, stacking, object bounds, hit
-  regions, and accessibility semantics;
+  regions, accessibility semantics, and explicit nested flow ordering;
 - Pango lays out rich text with font fallback and bidirectional text in the GTK
   adapter;
+- the GTK adapter resolves exact Pango and asynchronous math heights into one
+  generation-cached geometry map, preserving source gaps within each flow;
 - GSK snapshots draw backgrounds, text, images, table lines, tags, and ink.
 - Interactive objects such as links and attachments expose hit regions and
   accessibility nodes.
 - A spatial index identifies visible and clickable objects.
-- Zoom changes the scene transform. It does not mutate source geometry.
+- Zoom changes the scene transform and invalidates adapter measurements. It does
+  not mutate source geometry.
 - Large pages render only objects intersecting the viewport plus an overscan
   margin.
 

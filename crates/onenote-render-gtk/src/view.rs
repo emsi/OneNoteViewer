@@ -2,7 +2,7 @@ use crate::{normalize_zoom, PageCanvas};
 use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
-use onenote_core::{Rect, ResourceStore};
+use onenote_core::{ObjectId, Rect, ResourceStore};
 use onenote_render::{HitAction, PageScene};
 use std::cell::Cell;
 use std::rc::Rc;
@@ -109,11 +109,21 @@ impl PageView {
         let Some(scene) = self.canvas.scene() else {
             return;
         };
+        let scene_bounds = self.canvas.resolved_scene_bounds().unwrap_or(scene.bounds);
         let zoom = f64::from(self.zoom());
-        let x = f64::from(bounds.x - scene.bounds.x + 32.0) * zoom;
-        let y = f64::from(bounds.y - scene.bounds.y + 32.0) * zoom;
+        let x = f64::from(bounds.x - scene_bounds.x + 32.0) * zoom;
+        let y = f64::from(bounds.y - scene_bounds.y + 32.0) * zoom;
         reveal_adjustment(&self.root.hadjustment(), x, f64::from(bounds.width) * zoom);
         reveal_adjustment(&self.root.vadjustment(), y, f64::from(bounds.height) * zoom);
+    }
+
+    /// Scroll a source object into view using its adapter-resolved geometry.
+    pub fn reveal_source_object(&self, source: &ObjectId, fallback: Rect) {
+        let bounds = self
+            .canvas
+            .resolved_source_bounds(source)
+            .unwrap_or(fallback);
+        self.reveal(bounds);
     }
 }
 

@@ -75,6 +75,14 @@ overlaps explicit OneNote metadata.
 layout inputs, stacking order, hit regions, accessibility semantics, resource
 handles, and source locators.
 
+Each scene node can also carry an outer-to-inner `flow_path`. Every
+`SceneFlowPosition` identifies the node's authored order in one independently
+reflowable sequence. Separate freeform outlines use separate groups, and nested
+content such as table cells adds a child group without losing its parent
+position. Measuring backends use this metadata to preserve authored gaps while
+moving only later nodes in the affected flow; they must not infer reading order
+from stacking order or source object identity.
+
 Scene construction is deterministic for the same model and render options. It
 supports cancellation and returns diagnostics for unsupported or approximated
 content. `SceneOptions` lets an embedding host retain the complete native page
@@ -101,6 +109,14 @@ testing returns `HitAction::OpenLink` only over the resulting linked glyphs.
 The component underlines links and provides pointer affordance, but never
 launches a URI; the embedding host owns internal navigation, scheme policy,
 confirmation, and failure UI.
+
+Pango's exact text and math measurements are resolved into adapter-local node
+bounds. The resulting geometry is cached by layout generation and invalidated
+when the scene, font context, zoom, or asynchronous math measurements change.
+Drawing, canvas sizing, viewport culling, hit testing, and reveal operations all
+consume the same resolved bounds. The immutable `PageScene` continues to retain
+the source-authored anchors and approximate fallback geometry for other
+backends.
 
 The component owns pan, zoom, viewport culling, hit testing, bounded lazy image
 decode, and retention of scene accessibility semantics. Mapping each scene
