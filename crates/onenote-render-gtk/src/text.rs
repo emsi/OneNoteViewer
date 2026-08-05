@@ -94,10 +94,7 @@ pub(crate) fn layout_with_math(
         apply_style(&attributes, &segment.style, segment.start, segment.end);
     }
     for shape in &shapes {
-        let width = to_pango_units(shape.size.width.ceil());
-        let height = to_pango_units(shape.size.height.ceil());
-        let baseline = to_pango_units(shape.size.baseline.clamp(0.0, shape.size.height));
-        let rectangle = pango::Rectangle::new(0, -baseline, width, height);
+        let rectangle = math_shape_rectangle(shape.size);
         insert(
             &attributes,
             pango::AttrShape::new(&rectangle, &rectangle),
@@ -146,6 +143,13 @@ pub(crate) fn layout_with_math(
         math,
         links,
     }
+}
+
+fn math_shape_rectangle(size: MathSize) -> pango::Rectangle {
+    let width = to_pango_units(size.width.ceil());
+    let height = to_pango_units(size.height.ceil());
+    let baseline = to_pango_units(size.baseline.clamp(0.0, size.height));
+    pango::Rectangle::new(0, -baseline, width, height)
 }
 
 struct StyleSegment {
@@ -420,7 +424,8 @@ fn from_pango_units(value: i32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_segments, glib_text, layout, layout_with_math};
+    use super::{display_segments, glib_text, layout, layout_with_math, math_shape_rectangle};
+    use crate::math_cache::MathSize;
     use onenote_core::{
         OneNoteLoader, TextAlignment, TextBlock, TextLink, TextLinkOrigin, TextRun, TextStyle,
     };
@@ -598,6 +603,22 @@ mod tests {
         let layout = layout(&gtk::pango::Context::new(), &block, None, 200.0);
 
         assert_eq!(layout.text(), "first\n\nthird");
+    }
+
+    #[test]
+    fn pango_shape_uses_measured_math_extents_and_baseline() {
+        let measured = MathSize {
+            width: 31.25,
+            height: 40.25,
+            baseline: 25.5,
+        };
+
+        let rectangle = math_shape_rectangle(measured);
+
+        assert_eq!(rectangle.x(), 0);
+        assert_eq!(rectangle.y(), -25 * 1_024 - 512);
+        assert_eq!(rectangle.width(), 32 * 1_024);
+        assert_eq!(rectangle.height(), 41 * 1_024);
     }
 
     #[test]
