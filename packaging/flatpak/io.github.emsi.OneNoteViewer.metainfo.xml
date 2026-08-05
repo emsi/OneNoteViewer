@@ -36,6 +36,16 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.3" date="2026-08-05">
+      <description>
+        <p>
+          Activate explicit OneNote hyperlinks and optionally recognize plain
+          visible links. This release also restores revisioned list content,
+          corrects rich-text line breaks, and persists synchronized page zoom.
+        </p>
+      </description>
+      <url type="details">https://github.com/emsi/OneNoteViewer/releases/tag/v0.1.3</url>
+    </release>
     <release version="0.1.2" date="2026-08-03">
       <description>
         <p>
