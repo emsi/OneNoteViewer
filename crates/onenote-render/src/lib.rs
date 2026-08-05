@@ -12,7 +12,7 @@ pub use error::{Error, Result};
 pub use math::{to_typst_math, MathLayoutBackend, MathLayoutRequest, MathRaster};
 pub use scene::{
     AccessibilityRole, AccessibilitySemantics, HitAction, HitRegion, PageScene, SceneDiagnostic,
-    SceneNode, SceneNodeId, ScenePrimitive,
+    SceneFlowId, SceneFlowPosition, SceneNode, SceneNodeId, ScenePrimitive,
 };
 
 /// The crate API version during the pre-1.0 implementation phase.

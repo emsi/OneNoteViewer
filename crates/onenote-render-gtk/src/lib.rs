@@ -5,6 +5,7 @@
 mod canvas;
 mod image_cache;
 mod math_cache;
+mod resolved_layout;
 mod text;
 mod view;
 

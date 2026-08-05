@@ -1,5 +1,6 @@
 use crate::image_cache::{self, DecodedImage, MAX_TEXTURE_CACHE_BYTES};
 use crate::math_cache::{self, MathKey, MathSize, TypstMathBackend};
+use crate::resolved_layout::ResolvedLayout;
 use crate::text;
 use gtk::gdk;
 use gtk::glib;
@@ -30,8 +31,8 @@ type ActionHandler = Rc<dyn Fn(HitAction)>;
 mod imp {
     use super::{
         gdk, glib, ActionHandler, Arc, Cell, HashMap, HashSet, MathKey, MathLayoutBackend,
-        OnceLock, PageScene, Rc, RefCell, ResourceId, ResourceStore, SceneNodeId, TypstMathBackend,
-        CANVAS_MARGIN, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
+        OnceLock, PageScene, Rc, RefCell, ResolvedLayout, ResourceId, ResourceStore, SceneNodeId,
+        TypstMathBackend, CANVAS_MARGIN, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
     };
     use gtk::prelude::*;
     use gtk::subclass::prelude::*;
@@ -43,6 +44,8 @@ mod imp {
         pub(super) default_text_color: RefCell<gdk::RGBA>,
         pub(super) action_handler: RefCell<Option<ActionHandler>>,
         pub(super) text_layouts: RefCell<HashMap<SceneNodeId, Rc<crate::text::TextLayout>>>,
+        pub(super) resolved_layout: RefCell<Option<CachedResolvedLayout>>,
+        pub(super) layout_generation: Cell<u64>,
         pub(super) textures: RefCell<HashMap<ResourceId, CachedTexture>>,
         pub(super) pending: RefCell<HashSet<ResourceId>>,
         pub(super) failed: RefCell<HashSet<ResourceId>>,
@@ -64,6 +67,8 @@ mod imp {
                 default_text_color: RefCell::new(gdk::RGBA::BLACK),
                 action_handler: RefCell::default(),
                 text_layouts: RefCell::default(),
+                resolved_layout: RefCell::default(),
+                layout_generation: Cell::default(),
                 textures: RefCell::default(),
                 pending: RefCell::default(),
                 failed: RefCell::default(),
@@ -143,9 +148,10 @@ mod imp {
             let Some(scene) = self.scene.borrow().clone() else {
                 return (1, 1, -1, -1);
             };
+            let resolved = self.obj().resolved_layout(&scene);
             let logical = match orientation {
-                gtk::Orientation::Horizontal => scene.bounds.width + CANVAS_MARGIN * 2.0,
-                gtk::Orientation::Vertical => scene.bounds.height + CANVAS_MARGIN * 2.0,
+                gtk::Orientation::Horizontal => resolved.bounds.width + CANVAS_MARGIN * 2.0,
+                gtk::Orientation::Vertical => resolved.bounds.height + CANVAS_MARGIN * 2.0,
                 _ => 1.0,
             };
             let size = logical * self.zoom.get();
@@ -169,6 +175,11 @@ mod imp {
         pub(super) size: super::MathSize,
         pub(super) bytes: usize,
     }
+
+    pub(super) struct CachedResolvedLayout {
+        pub(super) generation: u64,
+        pub(super) layout: Rc<ResolvedLayout>,
+    }
 }
 
 glib::wrapper! {
@@ -188,7 +199,7 @@ impl PageCanvas {
     pub fn set_scene(&self, scene: Option<Arc<PageScene>>) {
         let imp = self.imp();
         *imp.scene.borrow_mut() = scene;
-        imp.text_layouts.borrow_mut().clear();
+        self.invalidate_text_geometry();
         imp.textures.borrow_mut().clear();
         imp.pending.borrow_mut().clear();
         imp.failed.borrow_mut().clear();
@@ -223,7 +234,7 @@ impl PageCanvas {
         let zoom = normalize_zoom(zoom);
         if (self.imp().zoom.get() - zoom).abs() > f32::EPSILON {
             self.imp().zoom.set(zoom);
-            self.imp().text_layouts.borrow_mut().clear();
+            self.invalidate_text_geometry();
             self.imp().math_textures.borrow_mut().clear();
             self.imp().math_pending.borrow_mut().clear();
             self.imp().math_errors.borrow_mut().clear();
@@ -248,7 +259,7 @@ impl PageCanvas {
     /// host-provided value.
     pub fn set_default_text_color(&self, color: &gdk::RGBA) {
         *self.imp().default_text_color.borrow_mut() = *color;
-        self.imp().text_layouts.borrow_mut().clear();
+        self.invalidate_text_geometry();
         self.imp().math_textures.borrow_mut().clear();
         self.imp().math_pending.borrow_mut().clear();
         self.imp().math_errors.borrow_mut().clear();
@@ -256,6 +267,7 @@ impl PageCanvas {
         self.imp()
             .math_generation
             .set(self.imp().math_generation.get().wrapping_add(1));
+        self.queue_resize();
         self.queue_draw();
     }
 
@@ -271,7 +283,7 @@ impl PageCanvas {
     pub fn set_math_backend(&self, backend: Arc<dyn MathLayoutBackend>) {
         let imp = self.imp();
         *imp.math_backend.borrow_mut() = backend;
-        imp.text_layouts.borrow_mut().clear();
+        self.invalidate_text_geometry();
         imp.math_textures.borrow_mut().clear();
         imp.math_pending.borrow_mut().clear();
         imp.math_errors.borrow_mut().clear();
@@ -308,23 +320,30 @@ impl PageCanvas {
 
     fn action_at(&self, x: f64, y: f64) -> Option<HitAction> {
         let scene = self.scene()?;
+        let resolved = self.resolved_layout(&scene);
         let zoom = f64::from(self.zoom());
-        let logical_x = f64_to_f32(x / zoom) + scene.bounds.x - CANVAS_MARGIN;
-        let logical_y = f64_to_f32(y / zoom) + scene.bounds.y - CANVAS_MARGIN;
+        let logical_x = f64_to_f32(x / zoom) + resolved.bounds.x - CANVAS_MARGIN;
+        let logical_y = f64_to_f32(y / zoom) + resolved.bounds.y - CANVAS_MARGIN;
         for node in scene.nodes.iter().rev() {
-            if !contains(node.bounds, logical_x, logical_y) {
+            let node_bounds = resolved.node_bounds(node);
+            if !contains(node_bounds, logical_x, logical_y) {
                 continue;
             }
             if let ScenePrimitive::Text { block, marker } = &node.primitive {
                 let layout = self.text_layout(node, block, marker.as_deref());
                 if let Some(target) =
-                    layout.link_at(logical_x - node.bounds.x, logical_y - node.bounds.y)
+                    layout.link_at(logical_x - node_bounds.x, logical_y - node_bounds.y)
                 {
                     return Some(HitAction::OpenLink(target.to_owned()));
                 }
             }
             if let Some(region) = scene.hit_regions.iter().rev().find(|region| {
-                region.node_id == node.id && contains(region.bounds, logical_x, logical_y)
+                region.node_id == node.id
+                    && contains(
+                        resolved.hit_region_bounds(node, region),
+                        logical_x,
+                        logical_y,
+                    )
             }) {
                 return Some(region.action.clone());
             }
@@ -355,49 +374,96 @@ impl PageCanvas {
         layout
     }
 
+    fn resolved_layout(&self, scene: &PageScene) -> Rc<ResolvedLayout> {
+        let generation = self.imp().layout_generation.get();
+        if let Some(cached) = self.imp().resolved_layout.borrow().as_ref() {
+            if cached.generation == generation {
+                return Rc::clone(&cached.layout);
+            }
+        }
+
+        let measured_heights = scene
+            .nodes
+            .iter()
+            .filter_map(|node| match &node.primitive {
+                ScenePrimitive::Text { block, marker } => Some((
+                    node.id.clone(),
+                    self.text_layout(node, block, marker.as_deref())
+                        .measured_height(),
+                )),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let layout = Rc::new(ResolvedLayout::new(scene, &measured_heights));
+        *self.imp().resolved_layout.borrow_mut() = Some(imp::CachedResolvedLayout {
+            generation,
+            layout: Rc::clone(&layout),
+        });
+        layout
+    }
+
+    fn invalidate_text_geometry(&self) {
+        let imp = self.imp();
+        imp.text_layouts.borrow_mut().clear();
+        imp.resolved_layout.borrow_mut().take();
+        imp.layout_generation
+            .set(imp.layout_generation.get().wrapping_add(1));
+    }
+
+    pub(crate) fn resolved_scene_bounds(&self) -> Option<Rect> {
+        let scene = self.scene()?;
+        Some(self.resolved_layout(&scene).bounds)
+    }
+
+    pub(crate) fn resolved_source_bounds(&self, source: &onenote_core::ObjectId) -> Option<Rect> {
+        let scene = self.scene()?;
+        self.resolved_layout(&scene).source_bounds(&scene, source)
+    }
+
     fn snapshot_scene(&self, snapshot: &gtk::Snapshot) {
         let Some(scene) = self.scene() else {
             return;
         };
-        let viewport = self.logical_viewport(&scene);
+        let resolved = self.resolved_layout(&scene);
+        let viewport = self.logical_viewport(resolved.bounds);
         snapshot.save();
         snapshot.scale(self.zoom(), self.zoom());
         snapshot.translate(&graphene::Point::new(
-            CANVAS_MARGIN - scene.bounds.x,
-            CANVAS_MARGIN - scene.bounds.y,
+            CANVAS_MARGIN - resolved.bounds.x,
+            CANVAS_MARGIN - resolved.bounds.y,
         ));
-        for node in scene.visible_nodes(viewport, VIEWPORT_OVERSCAN) {
-            self.snapshot_node(snapshot, node);
+        for node in resolved.visible_nodes(&scene, viewport, VIEWPORT_OVERSCAN) {
+            self.snapshot_node(snapshot, node, resolved.node_bounds(node));
         }
         snapshot.restore();
     }
 
-    fn logical_viewport(&self, scene: &PageScene) -> Rect {
+    fn logical_viewport(&self, scene_bounds: Rect) -> Rect {
         let Some(scrolled) = self
             .ancestor(gtk::ScrolledWindow::static_type())
             .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
         else {
-            return scene.bounds;
+            return scene_bounds;
         };
         let zoom = f64::from(self.zoom());
         Rect {
-            x: f64_to_f32(scrolled.hadjustment().value() / zoom) + scene.bounds.x - CANVAS_MARGIN,
-            y: f64_to_f32(scrolled.vadjustment().value() / zoom) + scene.bounds.y - CANVAS_MARGIN,
+            x: f64_to_f32(scrolled.hadjustment().value() / zoom) + scene_bounds.x - CANVAS_MARGIN,
+            y: f64_to_f32(scrolled.vadjustment().value() / zoom) + scene_bounds.y - CANVAS_MARGIN,
             width: scrolled.width().to_f32().unwrap_or(0.0) / self.zoom(),
             height: scrolled.height().to_f32().unwrap_or(0.0) / self.zoom(),
         }
     }
 
-    fn snapshot_node(&self, snapshot: &gtk::Snapshot, node: &SceneNode) {
+    fn snapshot_node(&self, snapshot: &gtk::Snapshot, node: &SceneNode, node_bounds: Rect) {
         match &node.primitive {
             ScenePrimitive::Fill {
                 color,
                 corner_radius: _,
-            } => snapshot.append_color(&rgba(*color), &graphene_rect(node.bounds)),
+            } => snapshot.append_color(&rgba(*color), &graphene_rect(node_bounds)),
             ScenePrimitive::Text { block, marker } => {
                 let layout = self.text_layout(node, block, marker.as_deref());
                 snapshot.save();
-                snapshot.translate(&graphene::Point::new(node.bounds.x, node.bounds.y));
+                snapshot.translate(&graphene::Point::new(node_bounds.x, node_bounds.y));
                 snapshot.append_layout(&layout.layout, &self.default_text_color());
                 for math in &layout.math {
                     let bounds = Rect {
@@ -432,22 +498,22 @@ impl PageCanvas {
             }
             ScenePrimitive::Image(image) => {
                 if let Some(texture) = self.texture(&image.resource.id) {
-                    snapshot.append_texture(&texture, &graphene_rect(node.bounds));
+                    snapshot.append_texture(&texture, &graphene_rect(node_bounds));
                 } else if self.imp().failed.borrow().contains(&image.resource.id) {
                     snapshot.append_color(
                         &gdk::RGBA::new(1.0, 0.92, 0.92, 1.0),
-                        &graphene_rect(node.bounds),
+                        &graphene_rect(node_bounds),
                     );
                     self.snapshot_label(
                         snapshot,
-                        node.bounds,
+                        node_bounds,
                         "Image unavailable",
                         gdk::RGBA::new(0.55, 0.08, 0.08, 1.0),
                     );
                 } else {
                     snapshot.append_color(
                         &gdk::RGBA::new(0.94, 0.94, 0.94, 1.0),
-                        &graphene_rect(node.bounds),
+                        &graphene_rect(node_bounds),
                     );
                     self.request_texture(image.resource.id.clone());
                 }
@@ -455,24 +521,32 @@ impl PageCanvas {
             ScenePrimitive::Attachment(attachment) => {
                 snapshot.append_color(
                     &gdk::RGBA::new(0.95, 0.96, 0.98, 1.0),
-                    &graphene_rect(node.bounds),
+                    &graphene_rect(node_bounds),
                 );
                 self.snapshot_label(
                     snapshot,
-                    node.bounds,
+                    node_bounds,
                     &attachment.resource.name,
                     gdk::RGBA::new(0.12, 0.25, 0.45, 1.0),
                 );
             }
-            ScenePrimitive::Ink { strokes } => snapshot_ink(snapshot, node.bounds, strokes),
+            ScenePrimitive::Ink { strokes } => snapshot_ink(snapshot, node_bounds, strokes),
             ScenePrimitive::Line {
                 color,
                 width,
                 to_x,
                 to_y,
-            } => snapshot_line(snapshot, node.bounds, *to_x, *to_y, *color, *width),
+            } => snapshot_line(
+                snapshot,
+                node.bounds,
+                node_bounds,
+                *to_x,
+                *to_y,
+                *color,
+                *width,
+            ),
             ScenePrimitive::Placeholder { label } => {
-                self.snapshot_label(snapshot, node.bounds, label, self.default_text_color());
+                self.snapshot_label(snapshot, node_bounds, label, self.default_text_color());
             }
         }
     }
@@ -587,7 +661,8 @@ impl PageCanvas {
             Ok(raster) => raster,
             Err(error) => {
                 imp.math_errors.borrow_mut().insert(key, error);
-                imp.text_layouts.borrow_mut().clear();
+                self.invalidate_text_geometry();
+                self.queue_resize();
                 self.queue_draw();
                 return;
             }
@@ -597,7 +672,8 @@ impl PageCanvas {
             imp.math_errors
                 .borrow_mut()
                 .insert(key, "math texture exceeds cache limit".to_owned());
-            imp.text_layouts.borrow_mut().clear();
+            self.invalidate_text_geometry();
+            self.queue_resize();
             self.queue_draw();
             return;
         }
@@ -625,7 +701,7 @@ impl PageCanvas {
                 bytes,
             },
         );
-        imp.text_layouts.borrow_mut().clear();
+        self.invalidate_text_geometry();
         imp.math_texture_bytes.set(
             imp.math_textures
                 .borrow()
@@ -726,13 +802,14 @@ fn snapshot_ink(snapshot: &gtk::Snapshot, bounds: Rect, strokes: &[onenote_core:
 
 fn snapshot_line(
     snapshot: &gtk::Snapshot,
-    bounds: Rect,
+    authored_bounds: Rect,
+    resolved_bounds: Rect,
     to_x: f32,
     to_y: f32,
     color: Color,
     width: f32,
 ) {
-    let cairo = snapshot.append_cairo(&graphene_rect(bounds));
+    let cairo = snapshot.append_cairo(&graphene_rect(resolved_bounds));
     cairo.set_source_rgba(
         f64::from(color.red) / 255.0,
         f64::from(color.green) / 255.0,
@@ -741,7 +818,10 @@ fn snapshot_line(
     );
     cairo.set_line_width(f64::from(width.max(1.0)));
     cairo.move_to(0.0, 0.0);
-    cairo.line_to(f64::from(to_x - bounds.x), f64::from(to_y - bounds.y));
+    cairo.line_to(
+        f64::from(to_x - authored_bounds.x),
+        f64::from(to_y - authored_bounds.y),
+    );
     let _ignored = cairo.stroke();
 }
 

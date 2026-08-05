@@ -1,6 +1,6 @@
 use crate::scene::{
     AccessibilityRole, AccessibilitySemantics, HitAction, HitRegion, PageScene, SceneDiagnostic,
-    SceneNode, SceneNodeId, ScenePrimitive,
+    SceneFlowId, SceneFlowPosition, SceneNode, SceneNodeId, ScenePrimitive,
 };
 use crate::{Error, Result};
 use onenote_core::{
@@ -99,6 +99,7 @@ impl SceneBuilder {
             hit_regions: Vec::new(),
             diagnostics: Vec::new(),
             sequence: 0,
+            flow_sequence: 0,
         };
         state.check_cancelled()?;
         for object in &page.objects {
@@ -134,31 +135,43 @@ struct BuildState<'a> {
     hit_regions: Vec<HitRegion>,
     diagnostics: Vec<SceneDiagnostic>,
     sequence: u64,
+    flow_sequence: u64,
 }
 
 impl BuildState<'_> {
     fn object(&mut self, object: &PageObject) -> Result<()> {
         match &object.kind {
             ObjectKind::Outline(outline) => self.outline(object, outline),
-            ObjectKind::Image(image) => {
-                self.image(object, object.bounds, image.clone(), object_z(object, 0))
-            }
+            ObjectKind::Image(image) => self.image(
+                object,
+                object.bounds,
+                image.clone(),
+                object_z(object, 0),
+                &[],
+            ),
             ObjectKind::Attachment(attachment) => self.attachment(
                 object,
                 object.bounds,
                 attachment.clone(),
                 object_z(object, 0),
+                &[],
             ),
-            ObjectKind::Ink(ink) => self.ink(object, object.bounds, ink, object_z(object, 0)),
-            ObjectKind::Unknown => self.placeholder(object, object.bounds, object_z(object, 0)),
+            ObjectKind::Ink(ink) => self.ink(object, object.bounds, ink, object_z(object, 0), &[]),
+            ObjectKind::Unknown => {
+                self.placeholder(object, object.bounds, object_z(object, 0), &[])
+            }
         }
     }
 
     fn outline(&mut self, object: &PageObject, outline: &Outline) -> Result<()> {
+        let flow_group = self.next_flow_group(object);
         let mut cursor = Cursor {
             x: object.bounds.x + self.options.content_padding,
             y: object.bounds.y + self.options.content_padding,
             width: (object.bounds.width - self.options.content_padding * 2.0).max(40.0),
+            flow_group,
+            flow_ancestors: Vec::new(),
+            next_flow_order: 0,
         };
         let mut lists = ListState::default();
         for element in &outline.elements {
@@ -224,19 +237,22 @@ impl BuildState<'_> {
         z_index: i32,
         marker: Option<String>,
     ) -> Result<()> {
+        let flow_path = cursor.next_flow_path();
         match content {
-            ElementContent::Text(text) => self.text(object, text, cursor, z_index, marker),
-            ElementContent::Table(table) => self.table(object, table, cursor, z_index),
+            ElementContent::Text(text) => {
+                self.text(object, text, cursor, z_index, marker, &flow_path)
+            }
+            ElementContent::Table(table) => self.table(object, table, cursor, z_index, &flow_path),
             ElementContent::Image(image) => {
                 let bounds = inline_bounds(cursor, image.width, image.height, 240.0, 180.0);
-                self.image(object, bounds, image.clone(), z_index)?;
+                self.image(object, bounds, image.clone(), z_index, &flow_path)?;
                 cursor.y += bounds.height + self.options.content_padding;
                 Ok(())
             }
             ElementContent::Attachment(attachment) => {
                 let bounds =
                     inline_bounds(cursor, attachment.width, attachment.height, 220.0, 44.0);
-                self.attachment(object, bounds, attachment.clone(), z_index)?;
+                self.attachment(object, bounds, attachment.clone(), z_index, &flow_path)?;
                 cursor.y += bounds.height + self.options.content_padding;
                 Ok(())
             }
@@ -247,7 +263,7 @@ impl BuildState<'_> {
                     width: cursor.width,
                     height: ink_height(ink).max(32.0),
                 };
-                self.ink(object, bounds, ink, z_index)?;
+                self.ink(object, bounds, ink, z_index, &flow_path)?;
                 cursor.y += bounds.height + self.options.content_padding;
                 Ok(())
             }
@@ -258,7 +274,7 @@ impl BuildState<'_> {
                     width: cursor.width.min(240.0),
                     height: 44.0,
                 };
-                self.placeholder(object, bounds, z_index)?;
+                self.placeholder(object, bounds, z_index, &flow_path)?;
                 cursor.y += bounds.height + self.options.content_padding;
                 Ok(())
             }
@@ -272,6 +288,7 @@ impl BuildState<'_> {
         cursor: &mut Cursor,
         z_index: i32,
         marker: Option<String>,
+        flow_path: &[SceneFlowPosition],
     ) -> Result<()> {
         for span in &text.math {
             if let Some(message) = &span.diagnostic {
@@ -290,7 +307,7 @@ impl BuildState<'_> {
             height,
         };
         let visible = text.visible_text();
-        self.push_node(
+        self.push_node_in_flow(
             object,
             bounds,
             z_index,
@@ -303,6 +320,7 @@ impl BuildState<'_> {
                 label: bounded_label(&visible, 256),
                 description: None,
             },
+            flow_path,
         )?;
         cursor.y = bounds.y + bounds.height + text.space_after;
         Ok(())
@@ -314,6 +332,7 @@ impl BuildState<'_> {
         table: &Table,
         cursor: &mut Cursor,
         z_index: i32,
+        flow_path: &[SceneFlowPosition],
     ) -> Result<()> {
         let column_count = table
             .rows
@@ -347,45 +366,14 @@ impl BuildState<'_> {
                     width,
                     height: row_height,
                 };
-                if let Some(cell) = row.get(column) {
-                    if let Some(background) = cell.background {
-                        self.push_node(
-                            object,
-                            cell_bounds,
-                            z_index,
-                            ScenePrimitive::Fill {
-                                color: background,
-                                corner_radius: 0.0,
-                            },
-                            AccessibilitySemantics::decoration(),
-                        )?;
-                    }
-                    let mut cell_cursor = Cursor {
-                        x: x + self.options.content_padding,
-                        y: y + self.options.content_padding,
-                        width: (width - self.options.content_padding * 2.0).max(20.0),
-                    };
-                    let synthetic_outline = Outline {
-                        child_level: 0,
-                        indents: Vec::new(),
-                        user_sized: false,
-                        elements: Vec::new(),
-                    };
-                    let mut lists = ListState::default();
-                    for element in &cell.elements {
-                        self.element(
-                            object,
-                            element,
-                            &synthetic_outline,
-                            &mut lists,
-                            &mut cell_cursor,
-                            z_index + 1,
-                        )?;
-                    }
-                }
-                if table.borders_visible {
-                    self.table_cell_lines(object, cell_bounds, z_index + 2)?;
-                }
+                self.table_cell(
+                    object,
+                    row.get(column),
+                    cell_bounds,
+                    z_index,
+                    table.borders_visible,
+                    flow_path,
+                )?;
                 x += width;
             }
             y += row_height;
@@ -396,7 +384,7 @@ impl BuildState<'_> {
             width: widths.iter().sum(),
             height: (y - table_y).max(1.0),
         };
-        self.push_node(
+        self.push_node_in_flow(
             object,
             bounds,
             z_index - 1,
@@ -412,12 +400,75 @@ impl BuildState<'_> {
                 label: format!("Table, {} rows, {column_count} columns", table.rows.len()),
                 description: None,
             },
+            flow_path,
         )?;
         cursor.y = y + self.options.content_padding;
         Ok(())
     }
 
-    fn table_cell_lines(&mut self, object: &PageObject, bounds: Rect, z_index: i32) -> Result<()> {
+    fn table_cell(
+        &mut self,
+        object: &PageObject,
+        cell: Option<&onenote_core::TableCell>,
+        bounds: Rect,
+        z_index: i32,
+        borders_visible: bool,
+        flow_path: &[SceneFlowPosition],
+    ) -> Result<()> {
+        if let Some(cell) = cell {
+            if let Some(background) = cell.background {
+                self.push_node_in_flow(
+                    object,
+                    bounds,
+                    z_index,
+                    ScenePrimitive::Fill {
+                        color: background,
+                        corner_radius: 0.0,
+                    },
+                    AccessibilitySemantics::decoration(),
+                    flow_path,
+                )?;
+            }
+            let cell_flow_group = self.next_flow_group(object);
+            let mut cell_cursor = Cursor {
+                x: bounds.x + self.options.content_padding,
+                y: bounds.y + self.options.content_padding,
+                width: (bounds.width - self.options.content_padding * 2.0).max(20.0),
+                flow_group: cell_flow_group,
+                flow_ancestors: flow_path.to_vec(),
+                next_flow_order: 0,
+            };
+            let synthetic_outline = Outline {
+                child_level: 0,
+                indents: Vec::new(),
+                user_sized: false,
+                elements: Vec::new(),
+            };
+            let mut lists = ListState::default();
+            for element in &cell.elements {
+                self.element(
+                    object,
+                    element,
+                    &synthetic_outline,
+                    &mut lists,
+                    &mut cell_cursor,
+                    z_index + 1,
+                )?;
+            }
+        }
+        if borders_visible {
+            self.table_cell_lines(object, bounds, z_index + 2, flow_path)?;
+        }
+        Ok(())
+    }
+
+    fn table_cell_lines(
+        &mut self,
+        object: &PageObject,
+        bounds: Rect,
+        z_index: i32,
+        flow_path: &[SceneFlowPosition],
+    ) -> Result<()> {
         for (start, end) in [
             ((bounds.x, bounds.y), (bounds.x + bounds.width, bounds.y)),
             ((bounds.x, bounds.y), (bounds.x, bounds.y + bounds.height)),
@@ -430,7 +481,7 @@ impl BuildState<'_> {
                 (bounds.x + bounds.width, bounds.y + bounds.height),
             ),
         ] {
-            self.push_node(
+            self.push_node_in_flow(
                 object,
                 Rect {
                     x: start.0,
@@ -446,6 +497,7 @@ impl BuildState<'_> {
                     to_y: end.1,
                 },
                 AccessibilitySemantics::decoration(),
+                flow_path,
             )?;
         }
         Ok(())
@@ -457,6 +509,7 @@ impl BuildState<'_> {
         bounds: Rect,
         image: Image,
         z_index: i32,
+        flow_path: &[SceneFlowPosition],
     ) -> Result<()> {
         if image.resource.status != ResourceStatus::Available {
             let label = if image.resource.status == ResourceStatus::Missing {
@@ -468,9 +521,12 @@ impl BuildState<'_> {
                 object,
                 bounds,
                 z_index,
-                label.to_owned(),
-                AccessibilityRole::Image,
-                image.resource.status,
+                UnavailableResource {
+                    label: label.to_owned(),
+                    role: AccessibilityRole::Image,
+                    status: image.resource.status,
+                },
+                flow_path,
             );
         }
         let hyperlink = image.hyperlink.clone();
@@ -479,7 +535,7 @@ impl BuildState<'_> {
             .clone()
             .filter(|text| !text.trim().is_empty())
             .unwrap_or_else(|| image.resource.name.clone());
-        let node_id = self.push_node(
+        let node_id = self.push_node_in_flow(
             object,
             bounds,
             if image.is_background {
@@ -493,6 +549,7 @@ impl BuildState<'_> {
                 label,
                 description: None,
             },
+            flow_path,
         )?;
         if let Some(hyperlink) = hyperlink {
             self.hit_regions.push(HitRegion {
@@ -511,6 +568,7 @@ impl BuildState<'_> {
         bounds: Rect,
         attachment: Attachment,
         z_index: i32,
+        flow_path: &[SceneFlowPosition],
     ) -> Result<()> {
         if attachment.resource.status != ResourceStatus::Available {
             let name = bounded_label(&attachment.resource.name, 128);
@@ -523,14 +581,17 @@ impl BuildState<'_> {
                 object,
                 bounds,
                 z_index,
-                label,
-                AccessibilityRole::Attachment,
-                attachment.resource.status,
+                UnavailableResource {
+                    label,
+                    role: AccessibilityRole::Attachment,
+                    status: attachment.resource.status,
+                },
+                flow_path,
             );
         }
         let resource_id = attachment.resource.id.clone();
         let label = attachment.resource.name.clone();
-        let node_id = self.push_node(
+        let node_id = self.push_node_in_flow(
             object,
             bounds,
             z_index,
@@ -540,6 +601,7 @@ impl BuildState<'_> {
                 label,
                 description: Some("Embedded file".to_owned()),
             },
+            flow_path,
         )?;
         self.hit_regions.push(HitRegion {
             node_id,
@@ -555,11 +617,15 @@ impl BuildState<'_> {
         object: &PageObject,
         bounds: Rect,
         z_index: i32,
-        label: String,
-        role: AccessibilityRole,
-        status: ResourceStatus,
+        unavailable: UnavailableResource,
+        flow_path: &[SceneFlowPosition],
     ) -> Result<()> {
-        self.push_node(
+        let UnavailableResource {
+            label,
+            role,
+            status,
+        } = unavailable;
+        self.push_node_in_flow(
             object,
             bounds,
             z_index,
@@ -568,8 +634,9 @@ impl BuildState<'_> {
                 corner_radius: 3.0,
             },
             AccessibilitySemantics::decoration(),
+            flow_path,
         )?;
-        self.push_node(
+        self.push_node_in_flow(
             object,
             bounds,
             z_index + 1,
@@ -583,6 +650,7 @@ impl BuildState<'_> {
                     "The OneNote source marks this resource as {status:?}"
                 )),
             },
+            flow_path,
         )?;
         self.diagnostics.push(SceneDiagnostic {
             code: "resource_unavailable".to_owned(),
@@ -592,8 +660,15 @@ impl BuildState<'_> {
         Ok(())
     }
 
-    fn ink(&mut self, object: &PageObject, bounds: Rect, ink: &Ink, z_index: i32) -> Result<()> {
-        self.push_node(
+    fn ink(
+        &mut self,
+        object: &PageObject,
+        bounds: Rect,
+        ink: &Ink,
+        z_index: i32,
+        flow_path: &[SceneFlowPosition],
+    ) -> Result<()> {
+        self.push_node_in_flow(
             object,
             bounds,
             z_index,
@@ -608,12 +683,19 @@ impl BuildState<'_> {
                     .unwrap_or_else(|| "Ink drawing".to_owned()),
                 description: ink.recognized_text.clone(),
             },
+            flow_path,
         )?;
         Ok(())
     }
 
-    fn placeholder(&mut self, object: &PageObject, bounds: Rect, z_index: i32) -> Result<()> {
-        self.push_node(
+    fn placeholder(
+        &mut self,
+        object: &PageObject,
+        bounds: Rect,
+        z_index: i32,
+        flow_path: &[SceneFlowPosition],
+    ) -> Result<()> {
+        self.push_node_in_flow(
             object,
             bounds,
             z_index,
@@ -622,8 +704,9 @@ impl BuildState<'_> {
                 corner_radius: 3.0,
             },
             AccessibilitySemantics::decoration(),
+            flow_path,
         )?;
-        self.push_node(
+        self.push_node_in_flow(
             object,
             bounds,
             z_index + 1,
@@ -637,6 +720,7 @@ impl BuildState<'_> {
                     "The source object is retained but cannot yet be rendered".to_owned(),
                 ),
             },
+            flow_path,
         )?;
         self.diagnostics.push(SceneDiagnostic {
             code: "unsupported_content".to_owned(),
@@ -646,13 +730,14 @@ impl BuildState<'_> {
         Ok(())
     }
 
-    fn push_node(
+    fn push_node_in_flow(
         &mut self,
         object: &PageObject,
         bounds: Rect,
         z_index: i32,
         primitive: ScenePrimitive,
         accessibility: AccessibilitySemantics,
+        flow_path: &[SceneFlowPosition],
     ) -> Result<SceneNodeId> {
         self.check_cancelled()?;
         if self.nodes.len() >= self.options.max_nodes {
@@ -666,11 +751,18 @@ impl BuildState<'_> {
             id: id.clone(),
             source_object_id: object.id.clone(),
             bounds: finite_rect(bounds),
+            flow_path: flow_path.to_vec(),
             z_index,
             primitive,
             accessibility,
         });
         Ok(id)
+    }
+
+    fn next_flow_group(&mut self, object: &PageObject) -> SceneFlowId {
+        let id = SceneFlowId(format!("{}:flow:{}", object.id, self.flow_sequence));
+        self.flow_sequence = self.flow_sequence.saturating_add(1);
+        id
     }
 
     fn check_cancelled(&self) -> Result<()> {
@@ -682,11 +774,31 @@ impl BuildState<'_> {
     }
 }
 
-#[derive(Clone, Copy)]
 struct Cursor {
     x: f32,
     y: f32,
     width: f32,
+    flow_group: SceneFlowId,
+    flow_ancestors: Vec<SceneFlowPosition>,
+    next_flow_order: u32,
+}
+
+struct UnavailableResource {
+    label: String,
+    role: AccessibilityRole,
+    status: ResourceStatus,
+}
+
+impl Cursor {
+    fn next_flow_path(&mut self) -> Vec<SceneFlowPosition> {
+        let mut path = self.flow_ancestors.clone();
+        path.push(SceneFlowPosition {
+            group: self.flow_group.clone(),
+            order: self.next_flow_order,
+        });
+        self.next_flow_order = self.next_flow_order.saturating_add(1);
+        path
+    }
 }
 
 fn object_z(object: &PageObject, offset: i32) -> i32 {
@@ -969,11 +1081,12 @@ fn scene_bounds(page: &Page, nodes: &[SceneNode], options: SceneOptions) -> Rect
 #[cfg(test)]
 mod tests {
     use super::{estimate_text_height, format_list_number, ListState, SceneBuilder, SceneOptions};
-    use crate::{Error, ScenePrimitive};
+    use crate::{AccessibilityRole, Error, ScenePrimitive};
     use onenote_core::{
-        Attachment, Image, ListMarker, ListMarkerPart, ListNumberFormat, ObjectId, ObjectKind,
-        Page, PageId, PageObject, PageObjectRole, Rect, ResourceId, ResourceRef, ResourceStatus,
-        TextAlignment, TextBlock, TextStyle,
+        Attachment, ElementContent, Image, ListMarker, ListMarkerPart, ListNumberFormat, ObjectId,
+        ObjectKind, Outline, OutlineElement, Page, PageId, PageObject, PageObjectRole, Rect,
+        ResourceId, ResourceRef, ResourceStatus, Table, TableCell, TextAlignment, TextBlock,
+        TextStyle,
     };
     use std::sync::atomic::AtomicBool;
 
@@ -995,6 +1108,121 @@ mod tests {
         let three_lines = estimate_text_height(&block("first\n\nthird"), 1_000.0, options);
 
         assert!((three_lines - one_line * 3.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn emits_ordered_independent_flow_metadata_for_freeform_outlines() {
+        let page = Page {
+            id: PageId::new("page"),
+            native_id: String::new(),
+            title: String::new(),
+            level: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            author: None,
+            height: None,
+            objects: vec![outline_object("left", 0.0), outline_object("right", 200.0)],
+        };
+
+        let scene = SceneBuilder::default()
+            .build(&page, &AtomicBool::new(false))
+            .expect("scene");
+        let text_nodes = scene
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.primitive, ScenePrimitive::Text { .. }))
+            .collect::<Vec<_>>();
+
+        assert_eq!(text_nodes.len(), 4);
+        assert!(text_nodes.iter().all(|node| node.flow_path.len() == 1));
+        assert_eq!(text_nodes[0].flow_path[0].order, 0);
+        assert_eq!(text_nodes[1].flow_path[0].order, 1);
+        assert_eq!(
+            text_nodes[0].flow_path[0].group,
+            text_nodes[1].flow_path[0].group
+        );
+        assert_ne!(
+            text_nodes[0].flow_path[0].group,
+            text_nodes[2].flow_path[0].group
+        );
+    }
+
+    #[test]
+    fn table_cells_get_nested_flows_without_losing_the_outer_sequence() {
+        let table = Table {
+            rows: vec![vec![TableCell {
+                background: None,
+                max_width: None,
+                elements: vec![outline_element("cell")],
+            }]],
+            column_widths: vec![120.0],
+            locked_columns: vec![false],
+            borders_visible: true,
+        };
+        let page = Page {
+            id: PageId::new("page"),
+            native_id: String::new(),
+            title: String::new(),
+            level: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            author: None,
+            height: None,
+            objects: vec![PageObject {
+                id: ObjectId::new("outline"),
+                role: PageObjectRole::Body,
+                bounds: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    width: 300.0,
+                    height: 200.0,
+                },
+                z_index: 0,
+                kind: ObjectKind::Outline(Outline {
+                    child_level: 0,
+                    indents: Vec::new(),
+                    user_sized: false,
+                    elements: vec![
+                        OutlineElement {
+                            level: 0,
+                            list: None,
+                            content: vec![ElementContent::Table(table)],
+                            children: Vec::new(),
+                        },
+                        outline_element("after"),
+                    ],
+                }),
+            }],
+        };
+
+        let scene = SceneBuilder::default()
+            .build(&page, &AtomicBool::new(false))
+            .expect("scene");
+        let table_node = scene
+            .nodes
+            .iter()
+            .find(|node| node.accessibility.role == AccessibilityRole::Table)
+            .expect("table node");
+        let cell_text = scene
+            .nodes
+            .iter()
+            .find(|node| node.accessibility.label == "cell")
+            .expect("cell text");
+        let following_text = scene
+            .nodes
+            .iter()
+            .find(|node| node.accessibility.label == "after")
+            .expect("following text");
+
+        assert_eq!(table_node.flow_path.len(), 1);
+        assert_eq!(cell_text.flow_path.len(), 2);
+        assert_eq!(cell_text.flow_path[0], table_node.flow_path[0]);
+        assert_eq!(following_text.flow_path.len(), 1);
+        assert_eq!(
+            following_text.flow_path[0].group,
+            table_node.flow_path[0].group
+        );
+        assert_eq!(following_text.flow_path[0].order, 1);
     }
 
     #[test]
@@ -1284,5 +1512,44 @@ mod tests {
         assert_eq!(first.unsupported_formats, [42]);
         assert_eq!(second.text, "2");
         assert!(second.unsupported_formats.is_empty());
+    }
+
+    fn outline_object(id: &str, x: f32) -> PageObject {
+        PageObject {
+            id: ObjectId::new(id),
+            role: PageObjectRole::Body,
+            bounds: Rect {
+                x,
+                y: 0.0,
+                width: 180.0,
+                height: 100.0,
+            },
+            z_index: 0,
+            kind: ObjectKind::Outline(Outline {
+                child_level: 0,
+                indents: Vec::new(),
+                user_sized: false,
+                elements: vec![outline_element("first"), outline_element("second")],
+            }),
+        }
+    }
+
+    fn outline_element(text: &str) -> OutlineElement {
+        OutlineElement {
+            level: 0,
+            list: None,
+            content: vec![ElementContent::Text(TextBlock {
+                text: text.to_owned(),
+                base_style: TextStyle::default(),
+                runs: Vec::new(),
+                math: Vec::new(),
+                links: Vec::new(),
+                alignment: TextAlignment::Left,
+                space_before: 0.0,
+                space_after: 0.0,
+                line_spacing: None,
+            })],
+            children: Vec::new(),
+        }
     }
 }

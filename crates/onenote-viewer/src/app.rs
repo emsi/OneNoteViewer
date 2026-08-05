@@ -8,7 +8,7 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use onenote_core::{
-    ExtractionPhase, LoadOptions, LoadedNotebook, Page, PageId, Rect, SectionId, SourceId,
+    ExtractionPhase, LoadOptions, LoadedNotebook, ObjectId, Page, PageId, Rect, SectionId, SourceId,
 };
 use onenote_index::SearchHit;
 use onenote_render::HitAction;
@@ -250,6 +250,12 @@ struct ActiveLocation {
     section: Option<SectionLocation>,
 }
 
+#[derive(Clone)]
+struct RevealTarget {
+    object_id: Option<ObjectId>,
+    bounds: Rect,
+}
+
 #[derive(Default)]
 struct State {
     sources: Vec<Source>,
@@ -258,7 +264,7 @@ struct State {
     active: Option<ActiveLocation>,
     search_generation: u64,
     scene_generation: u64,
-    pending_reveal: Option<Rect>,
+    pending_reveal: Option<RevealTarget>,
 }
 
 struct Viewer {
@@ -1056,9 +1062,7 @@ impl Viewer {
                     Ok(scene) => {
                         self.page_view.set_scene(Some(scene));
                         self.canvas_stack.set_visible_child_name("document");
-                        if let Some(bounds) = self.state.borrow_mut().pending_reveal.take() {
-                            self.page_view.reveal(bounds);
-                        }
+                        self.reveal_pending_target();
                         self.status.set_label("Page ready");
                     }
                     Err(error) => self.show_error("Could not render page", &error),
@@ -1088,6 +1092,18 @@ impl Viewer {
                 self.import_activity_phase
                     .set_label(extraction_phase_label(phase));
             }
+        }
+    }
+
+    fn reveal_pending_target(&self) {
+        let Some(target) = self.state.borrow_mut().pending_reveal.take() else {
+            return;
+        };
+        if let Some(object_id) = target.object_id {
+            self.page_view
+                .reveal_source_object(&object_id, target.bounds);
+        } else {
+            self.page_view.reveal(target.bounds);
         }
     }
 
@@ -1243,7 +1259,7 @@ impl Viewer {
         &self,
         source_id: &SourceId,
         requested: &SectionLocation,
-        reveal: Option<Rect>,
+        reveal: Option<RevealTarget>,
     ) {
         let (pages, location) = {
             let state = self.state.borrow();
@@ -1323,7 +1339,7 @@ impl Viewer {
         }
     }
 
-    fn activate_page(&self, position: usize, reveal: Option<Rect>) {
+    fn activate_page(&self, position: usize, reveal: Option<RevealTarget>) {
         let value = (|| {
             let state = self.state.borrow();
             let row = state.pages.get(position)?;
@@ -1502,7 +1518,10 @@ impl Viewer {
                 section_id: hit.section_id,
                 page_id: Some(hit.page_id),
             },
-            hit.bounds,
+            hit.bounds.map(|bounds| RevealTarget {
+                object_id: hit.object_id,
+                bounds,
+            }),
         );
     }
 

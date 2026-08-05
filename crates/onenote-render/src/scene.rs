@@ -9,6 +9,24 @@ use std::sync::Arc;
 #[serde(transparent)]
 pub struct SceneNodeId(pub String);
 
+/// Stable identity of one independently reflowable sequence within a scene.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(transparent)]
+pub struct SceneFlowId(pub String);
+
+/// A node's position in one linear flow.
+///
+/// Nested content can carry more than one position in [`SceneNode::flow_path`]:
+/// an outer position moves the nested object with its parent, while the final
+/// position describes layout within that object.
+#[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct SceneFlowPosition {
+    /// Independently reflowable sequence.
+    pub group: SceneFlowId,
+    /// Authored order within the sequence.
+    pub order: u32,
+}
+
 /// An immutable retained page scene.
 #[derive(Clone, Debug)]
 pub struct PageScene {
@@ -57,6 +75,8 @@ pub struct SceneNode {
     pub source_object_id: ObjectId,
     /// Conservative logical bounds used for culling and hit testing.
     pub bounds: Rect,
+    /// Ordered outer-to-inner flow positions used by measuring adapters.
+    pub flow_path: Vec<SceneFlowPosition>,
     /// Effective stacking order.
     pub z_index: i32,
     /// UI-neutral content.
