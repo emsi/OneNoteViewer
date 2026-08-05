@@ -36,11 +36,12 @@ record Orca tests under GNOME and KDE on Wayland and X11.
 
 ### 3. Complete Viewer Actions and Operations
 
-**Why open:** The viewer resolves search hits and imports packages, but does not
-yet implement confirmed external links, attachment extraction/opening,
-operation cancellation/progress, per-source diagnostics, manual refresh, or
-automatic source-change refresh. Package cancellation exists in the core API
-but is not wired to the UI. Active page and pane state are not restored.
+**Why open:** The viewer resolves search hits, opens pointer-activated inline
+links, and imports packages, but does not yet implement attachment
+extraction/opening, operation cancellation/progress, per-source diagnostics,
+manual refresh, or automatic source-change refresh. Package cancellation
+exists in the core API but is not wired to the UI. Active page and pane state
+are not restored.
 
 **Completion:** Add explicit host policies for renderer actions; bounded,
 sanitized attachment extraction; cancellable operations with progress; source
@@ -63,7 +64,7 @@ private aggregate corpus gates.
 ### 5. Parser and Corpus Breadth
 
 **Why open:** All 32 sections in one private desktop package and all 83
-physical snapshots in one private backup folder parse only after five narrow
+physical snapshots in one private backup folder parse only after documented
 patches in the pinned public parser fork. This does not prove
 OneNote 2016, Microsoft 365, Mac backup, FSSHTTP download, encrypted/corrupt,
 or feature-matrix breadth. The private sources cannot be redistributed.

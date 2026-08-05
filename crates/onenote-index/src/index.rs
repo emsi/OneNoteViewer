@@ -601,11 +601,11 @@ fn i64_to_usize(value: i64) -> usize {
 #[cfg(test)]
 mod tests {
     use super::SearchIndex;
-    use crate::{Error, SearchQuery};
+    use crate::{Error, MatchedField, SearchQuery};
     use onenote_core::{
         MathExpression, MathNode, MathSpan, Notebook, NotebookEntry, ObjectId, ObjectKind, Outline,
         OutlineElement, Page, PageId, PageObject, PageObjectRole, Rect, Section, SectionId,
-        SourceFingerprint, SourceId, TextAlignment, TextBlock, TextStyle,
+        SourceFingerprint, SourceId, TextAlignment, TextBlock, TextLink, TextLinkOrigin, TextStyle,
     };
     use std::sync::atomic::AtomicBool;
 
@@ -747,12 +747,45 @@ mod tests {
             .contains(['\u{fdd0}', '\u{fdee}', '\u{fdef}']));
     }
 
+    #[test]
+    fn indexes_inline_link_targets_in_the_link_field() {
+        let mut notebook = notebook("link-source", "link-fingerprint", "Link notebook");
+        let NotebookEntry::Section(section) = &mut notebook.entries[0] else {
+            unreachable!();
+        };
+        let ObjectKind::Outline(outline) = &mut section.pages[0].objects[0].kind else {
+            unreachable!();
+        };
+        let onenote_core::ElementContent::Text(text) = &mut outline.elements[0].content[0] else {
+            unreachable!();
+        };
+        text.links.push(TextLink {
+            start_utf16: 2,
+            end_utf16: 12,
+            target: "https://linked-target.example/path".to_owned(),
+            origin: TextLinkOrigin::OneNote,
+        });
+        let mut index = SearchIndex::open_in_memory().expect("index");
+        let cancel = AtomicBool::new(false);
+        index
+            .replace_source(&notebook, &cancel, |_| {})
+            .expect("index linked notebook");
+
+        let hits = index
+            .search(&SearchQuery::simple("linked-target.example"), &cancel)
+            .expect("search link target");
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].matched_field, MatchedField::Link);
+    }
+
     fn notebook(source: &str, fingerprint: &str, notebook_name: &str) -> Notebook {
         let text = TextBlock {
             text: "A searchable phrase in freeform content".to_owned(),
             base_style: TextStyle::default(),
             runs: Vec::new(),
             math: Vec::new(),
+            links: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,

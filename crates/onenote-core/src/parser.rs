@@ -4,10 +4,11 @@ use crate::model::{
     InkStroke, ListMarker, ListMarkerPart, ListNumberFormat, Notebook, NotebookEntry, ObjectId,
     ObjectKind, Outline, OutlineElement, Page, PageId, PageObject, PageObjectRole, Rect,
     ResourceId, ResourceRef, Section, SectionGroup, SectionId, SourceFingerprint, SourceId, Table,
-    TableCell, TextAlignment, TextBlock, TextRun, TextStyle,
+    TableCell, TextAlignment, TextBlock, TextLink, TextLinkOrigin, TextRun, TextStyle,
 };
 use crate::resource::{resource_status, ResourceLoader};
 use crate::{Error, ResourceStore, Result, PIXELS_PER_HALF_INCH};
+use linkify::{LinkFinder, LinkKind};
 use onenote_parser::contents::{
     Content, EmbeddedFile, Image as ParserImage, Ink as ParserInk, List, Outline as ParserOutline,
     OutlineElement as ParserOutlineElement, OutlineItem, ParagraphStyling, RichText,
@@ -56,6 +57,16 @@ impl Default for ParseLimits {
     }
 }
 
+/// Optional semantic enrichment applied while projecting native content.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct LoadOptions {
+    /// Recognize visible plain URLs and email addresses as links.
+    ///
+    /// Explicit `OneNote` hyperlink metadata is always preserved regardless
+    /// of this option.
+    pub detect_plain_text_links: bool,
+}
+
 /// A parsed semantic notebook plus separately owned lazy binary payloads.
 #[derive(Clone, Debug)]
 pub struct LoadedNotebook {
@@ -69,12 +80,29 @@ pub struct LoadedNotebook {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct OneNoteLoader {
     limits: ParseLimits,
+    options: LoadOptions,
 }
 
 impl OneNoteLoader {
     /// Construct a loader with explicit defensive projection limits.
     pub fn with_limits(limits: ParseLimits) -> Self {
-        Self { limits }
+        Self {
+            limits,
+            options: LoadOptions::default(),
+        }
+    }
+
+    /// Construct a loader with optional semantic enrichment.
+    pub fn with_options(options: LoadOptions) -> Self {
+        Self {
+            limits: ParseLimits::default(),
+            options,
+        }
+    }
+
+    /// Construct a loader with explicit limits and semantic enrichment.
+    pub fn with_limits_and_options(limits: ParseLimits, options: LoadOptions) -> Self {
+        Self { limits, options }
     }
 
     /// Load either a complete `.onetoc2` notebook or one standalone `.one`
@@ -112,7 +140,7 @@ impl OneNoteLoader {
                 message: error.to_string(),
             })?;
         ensure_source_unchanged(path, &fingerprint)?;
-        Projector::new(path, fingerprint, self.limits).notebook(&parsed)
+        Projector::new(path, fingerprint, self.limits, self.options).notebook(&parsed)
     }
 
     fn load_section(&self, path: &Path) -> Result<LoadedNotebook> {
@@ -124,7 +152,7 @@ impl OneNoteLoader {
                 message: error.to_string(),
             })?;
         ensure_source_unchanged(path, &fingerprint)?;
-        Projector::new(path, fingerprint, self.limits).standalone_section(&parsed)
+        Projector::new(path, fingerprint, self.limits, self.options).standalone_section(&parsed)
     }
 }
 
@@ -133,6 +161,7 @@ struct Projector {
     fingerprint: SourceFingerprint,
     source_path: PathBuf,
     limits: ParseLimits,
+    options: LoadOptions,
     section_count: usize,
     page_count: usize,
     object_count: usize,
@@ -140,7 +169,12 @@ struct Projector {
 }
 
 impl Projector {
-    fn new(path: &Path, fingerprint: SourceFingerprint, limits: ParseLimits) -> Self {
+    fn new(
+        path: &Path,
+        fingerprint: SourceFingerprint,
+        limits: ParseLimits,
+        options: LoadOptions,
+    ) -> Self {
         let path_bytes = path_identity(path);
         let source_id = SourceId::new(stable_id(&[b"source", &path_bytes]));
         Self {
@@ -148,6 +182,7 @@ impl Projector {
             fingerprint,
             source_path: path.to_path_buf(),
             limits,
+            options,
             section_count: 0,
             page_count: 0,
             object_count: 0,
@@ -417,7 +452,7 @@ impl Projector {
 
     fn element_content(&mut self, content: &Content, key: &str) -> Result<ElementContent> {
         match content {
-            Content::RichText(text) => Ok(ElementContent::Text(project_text(text))),
+            Content::RichText(text) => Ok(ElementContent::Text(project_text(text, self.options))),
             Content::Table(table) => Ok(ElementContent::Table(self.table(table, key)?)),
             Content::Image(image) => Ok(ElementContent::Image(self.image(image, key)?)),
             Content::EmbeddedFile(file) => {
@@ -691,7 +726,7 @@ impl Projector {
     }
 }
 
-fn project_text(text: &RichText) -> TextBlock {
+fn project_text(text: &RichText, options: LoadOptions) -> TextBlock {
     let base_style = project_text_style(text.paragraph_style());
     let total = u32::try_from(text.text().encode_utf16().count()).unwrap_or(u32::MAX);
     let projected_text = normalize_rich_text_controls(text.text());
@@ -710,6 +745,20 @@ fn project_text(text: &RichText) -> TextBlock {
             style: project_text_style(run.style),
         })
         .collect();
+    let mut links = text
+        .hyperlinks()
+        .into_iter()
+        .map(|link| TextLink {
+            start_utf16: link.start(),
+            end_utf16: link.end(),
+            target: link.target().to_owned(),
+            origin: TextLinkOrigin::OneNote,
+        })
+        .collect::<Vec<_>>();
+    if options.detect_plain_text_links {
+        links.extend(detect_plain_links(text, &source_runs, &links));
+    }
+    links.sort_by_key(|link| (link.start_utf16, link.end_utf16));
     let mut math_objects = text.math_inline_objects().iter().copied();
     let associated = source_runs
         .iter()
@@ -755,6 +804,7 @@ fn project_text(text: &RichText) -> TextBlock {
         base_style,
         runs,
         math,
+        links,
         alignment: match text.paragraph_alignment() {
             ParagraphAlignment::Left => TextAlignment::Left,
             ParagraphAlignment::Center => TextAlignment::Center,
@@ -765,6 +815,96 @@ fn project_text(text: &RichText) -> TextBlock {
         space_after: half_inches(text.paragraph_space_after()),
         line_spacing: text.paragraph_line_spacing_exact().map(half_inches),
     }
+}
+
+fn detect_plain_links(
+    text: &RichText,
+    source_runs: &[SourceTextRun<'_>],
+    explicit: &[TextLink],
+) -> Vec<TextLink> {
+    let mut finder = LinkFinder::new();
+    finder.kinds(&[LinkKind::Url, LinkKind::Email]);
+    finder.url_must_have_scheme(false);
+    if source_runs.is_empty() {
+        let style = project_text_style(text.paragraph_style());
+        return if style_allows_plain_link_detection(
+            &style,
+            text.paragraph_style().math_formatting(),
+        ) {
+            detect_links_in_run(&finder, text.text(), 0, explicit)
+        } else {
+            Vec::new()
+        };
+    }
+    let mut links = Vec::new();
+    for run in source_runs {
+        let style = project_text_style(run.style);
+        if !style_allows_plain_link_detection(&style, run.style.math_formatting()) {
+            continue;
+        }
+        links.extend(detect_links_in_run(
+            &finder,
+            run.text,
+            run.start_utf16,
+            explicit,
+        ));
+    }
+    links
+}
+
+fn style_allows_plain_link_detection(style: &TextStyle, math_formatting: bool) -> bool {
+    !style.hidden && !math_formatting
+}
+
+fn detect_links_in_run(
+    finder: &LinkFinder,
+    text: &str,
+    run_start_utf16: u32,
+    explicit: &[TextLink],
+) -> Vec<TextLink> {
+    finder
+        .links(text)
+        .filter_map(|found| {
+            let start_utf16 = run_start_utf16.saturating_add(byte_to_utf16(text, found.start()));
+            let end_utf16 = run_start_utf16.saturating_add(byte_to_utf16(text, found.end()));
+            if start_utf16 >= end_utf16
+                || explicit
+                    .iter()
+                    .any(|link| start_utf16 < link.end_utf16 && end_utf16 > link.start_utf16)
+            {
+                return None;
+            }
+            let target = match found.kind() {
+                LinkKind::Email => format!("mailto:{}", found.as_str()),
+                LinkKind::Url if has_uri_scheme(found.as_str()) => found.as_str().to_owned(),
+                LinkKind::Url => format!("https://{}", found.as_str()),
+                _ => return None,
+            };
+            Some(TextLink {
+                start_utf16,
+                end_utf16,
+                target,
+                origin: TextLinkOrigin::Detected,
+            })
+        })
+        .collect()
+}
+
+fn byte_to_utf16(text: &str, byte: usize) -> u32 {
+    u32::try_from(text[..byte].encode_utf16().count()).unwrap_or(u32::MAX)
+}
+
+fn has_uri_scheme(value: &str) -> bool {
+    let Some((scheme, _)) = value.split_once(':') else {
+        return false;
+    };
+    let mut characters = scheme.chars();
+    characters
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic())
+        && characters.all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '+' | '-' | '.')
+        })
 }
 
 fn normalize_rich_text_controls(text: &str) -> Cow<'_, str> {
@@ -1179,8 +1319,12 @@ fn host_typed_path(path: &Path) -> TypedPath<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_rich_text_controls, project_list_template, stable_id, OneNoteLoader};
-    use crate::{Error, ListMarkerPart, ListNumberFormat};
+    use super::{
+        detect_links_in_run, normalize_rich_text_controls, project_list_template, stable_id,
+        style_allows_plain_link_detection, OneNoteLoader,
+    };
+    use crate::{Error, ListMarkerPart, ListNumberFormat, LoadOptions, TextLink, TextLinkOrigin};
+    use linkify::{LinkFinder, LinkKind};
     use std::fs;
 
     #[test]
@@ -1240,5 +1384,59 @@ mod tests {
             source.encode_utf16().count(),
             normalized.encode_utf16().count()
         );
+    }
+
+    #[test]
+    fn detects_plain_urls_and_emails_with_utf16_offsets() {
+        let mut finder = LinkFinder::new();
+        finder.kinds(&[LinkKind::Url, LinkKind::Email]);
+        finder.url_must_have_scheme(false);
+        let text = "😀 example.com and user@example.com";
+
+        let links = detect_links_in_run(&finder, text, 7, &[]);
+
+        assert_eq!(links.len(), 2);
+        assert_eq!(links[0].target, "https://example.com");
+        assert_eq!(links[0].origin, TextLinkOrigin::Detected);
+        assert_eq!(links[0].start_utf16, 10);
+        assert_eq!(links[1].target, "mailto:user@example.com");
+    }
+
+    #[test]
+    fn explicit_link_ranges_take_precedence_over_detection() {
+        let mut finder = LinkFinder::new();
+        finder.kinds(&[LinkKind::Url, LinkKind::Email]);
+        finder.url_must_have_scheme(false);
+        let explicit = TextLink {
+            start_utf16: 0,
+            end_utf16: 12,
+            target: "onenote:#page-id={abc}".to_owned(),
+            origin: TextLinkOrigin::OneNote,
+        };
+
+        assert!(detect_links_in_run(&finder, "example.com", 0, &[explicit]).is_empty());
+    }
+
+    #[test]
+    fn hyperlink_formatting_does_not_hide_a_detectable_visible_target() {
+        let style = crate::TextStyle {
+            hyperlink: true,
+            ..crate::TextStyle::default()
+        };
+
+        assert!(style_allows_plain_link_detection(&style, false));
+        assert!(!style_allows_plain_link_detection(
+            &crate::TextStyle {
+                hidden: true,
+                ..style.clone()
+            },
+            false,
+        ));
+        assert!(!style_allows_plain_link_detection(&style, true));
+    }
+
+    #[test]
+    fn reusable_loader_does_not_enable_heuristic_links_by_default() {
+        assert!(!LoadOptions::default().detect_plain_text_links);
     }
 }

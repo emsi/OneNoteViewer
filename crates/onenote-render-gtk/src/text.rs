@@ -19,6 +19,38 @@ pub(crate) fn layout(
 pub(crate) struct TextLayout {
     pub(crate) layout: pango::Layout,
     pub(crate) math: Vec<MathPlacement>,
+    links: Vec<LinkPlacement>,
+}
+
+impl TextLayout {
+    pub(crate) fn link_at(&self, x: f32, y: f32) -> Option<&str> {
+        let (inside, index, _) = self
+            .layout
+            .xy_to_index(to_pango_units(x), to_pango_units(y));
+        if !inside {
+            return None;
+        }
+        let index = u32::try_from(index).ok()?;
+        self.link_for_index(index)
+    }
+
+    fn link_for_index(&self, index: u32) -> Option<&str> {
+        self.links
+            .iter()
+            .find(|link| index >= link.start && index < link.end)
+            .map(|link| link.target.as_str())
+    }
+}
+
+struct LinkPlacement {
+    start: u32,
+    end: u32,
+    target: String,
+}
+
+struct SourceOffset {
+    source_utf16: u32,
+    display_utf8: u32,
 }
 
 pub(crate) struct MathPlacement {
@@ -37,7 +69,8 @@ pub(crate) fn layout_with_math(
     width: f32,
     mut math_shape: impl FnMut(&MathSpan, &TextStyle) -> Option<(MathKey, MathSize)>,
 ) -> TextLayout {
-    let (display, segments, shapes) = display_segments_with_math(block, marker, &mut math_shape);
+    let (display, segments, shapes, source_offsets) =
+        display_segments_with_math(block, marker, &mut math_shape);
     let layout = pango::Layout::new(context);
     layout.set_text(&display);
     layout.set_width(to_pango_units(width));
@@ -72,6 +105,27 @@ pub(crate) fn layout_with_math(
             shape.end,
         );
     }
+    let links = block
+        .links
+        .iter()
+        .filter_map(|link| {
+            let start = display_offset(&source_offsets, link.start_utf16)?;
+            let end = display_offset(&source_offsets, link.end_utf16)?;
+            (start < end).then(|| LinkPlacement {
+                start,
+                end,
+                target: link.target.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    for link in &links {
+        insert(
+            &attributes,
+            pango::AttrInt::new_underline(pango::Underline::Single),
+            link.start,
+            link.end,
+        );
+    }
     layout.set_attributes(Some(&attributes));
     let math = shapes
         .into_iter()
@@ -87,7 +141,11 @@ pub(crate) fn layout_with_math(
             }
         })
         .collect();
-    TextLayout { layout, math }
+    TextLayout {
+        layout,
+        math,
+        links,
+    }
 }
 
 struct StyleSegment {
@@ -106,7 +164,7 @@ struct MathShape {
 
 #[cfg(test)]
 fn display_segments(block: &TextBlock, marker: Option<&str>) -> (String, Vec<StyleSegment>) {
-    let (display, segments, _) = display_segments_with_math(block, marker, &mut |_, _| None);
+    let (display, segments, _, _) = display_segments_with_math(block, marker, &mut |_, _| None);
     (display, segments)
 }
 
@@ -114,7 +172,7 @@ fn display_segments_with_math(
     block: &TextBlock,
     marker: Option<&str>,
     math_shape: &mut impl FnMut(&MathSpan, &TextStyle) -> Option<(MathKey, MathSize)>,
-) -> (String, Vec<StyleSegment>, Vec<MathShape>) {
+) -> (String, Vec<StyleSegment>, Vec<MathShape>, Vec<SourceOffset>) {
     let mut display = String::new();
     if let Some(marker) = marker.filter(|marker| !marker.is_empty()) {
         for character in marker.chars() {
@@ -124,6 +182,10 @@ fn display_segments_with_math(
     }
     let mut segments = Vec::new();
     let mut shapes = Vec::new();
+    let mut source_offsets = vec![SourceOffset {
+        source_utf16: 0,
+        display_utf8: u32::try_from(display.len()).unwrap_or(u32::MAX),
+    }];
     let mut utf16_offset = 0_u32;
     let mut run_index = 0_usize;
     let mut math_index = 0_usize;
@@ -195,6 +257,10 @@ fn display_segments_with_math(
             }
         }
         utf16_offset += if character.len_utf16() == 1 { 1 } else { 2 };
+        source_offsets.push(SourceOffset {
+            source_utf16: utf16_offset,
+            display_utf8: u32::try_from(display.len()).unwrap_or(u32::MAX),
+        });
     }
     let end = u32::try_from(display.len()).unwrap_or(u32::MAX);
     if active_start < end {
@@ -204,7 +270,14 @@ fn display_segments_with_math(
             style: style_at(block, active_run).clone(),
         });
     }
-    (display, segments, shapes)
+    (display, segments, shapes, source_offsets)
+}
+
+fn display_offset(offsets: &[SourceOffset], source_utf16: u32) -> Option<u32> {
+    offsets
+        .binary_search_by_key(&source_utf16, |offset| offset.source_utf16)
+        .ok()
+        .map(|index| offsets[index].display_utf8)
 }
 
 pub(crate) fn glib_text(value: &str) -> Cow<'_, str> {
@@ -347,8 +420,10 @@ fn from_pango_units(value: i32) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{display_segments, glib_text, layout};
-    use onenote_core::{OneNoteLoader, TextAlignment, TextBlock, TextRun, TextStyle};
+    use super::{display_segments, glib_text, layout, layout_with_math};
+    use onenote_core::{
+        OneNoteLoader, TextAlignment, TextBlock, TextLink, TextLinkOrigin, TextRun, TextStyle,
+    };
     use onenote_render::{SceneBuilder, ScenePrimitive};
     use std::path::PathBuf;
     use std::sync::atomic::AtomicBool;
@@ -381,6 +456,7 @@ mod tests {
                 },
             ],
             math: Vec::new(),
+            links: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,
@@ -391,12 +467,65 @@ mod tests {
     }
 
     #[test]
+    fn hyperlink_hit_testing_uses_display_offsets_after_hidden_text_and_list_markers() {
+        let marker = "\u{fddf}HYPERLINK \"https://example.test\"";
+        let marker_end = u32::try_from(marker.encode_utf16().count()).unwrap();
+        let total = marker_end + 2;
+        let block = TextBlock {
+            text: format!("{marker}Go"),
+            base_style: TextStyle::default(),
+            runs: vec![
+                TextRun {
+                    start_utf16: 0,
+                    end_utf16: marker_end,
+                    style: TextStyle {
+                        hidden: true,
+                        hyperlink: true,
+                        ..TextStyle::default()
+                    },
+                },
+                TextRun {
+                    start_utf16: marker_end,
+                    end_utf16: total,
+                    style: TextStyle {
+                        hyperlink: true,
+                        hyperlink_protected: true,
+                        ..TextStyle::default()
+                    },
+                },
+            ],
+            math: Vec::new(),
+            links: vec![TextLink {
+                start_utf16: marker_end,
+                end_utf16: total,
+                target: "https://example.test".to_owned(),
+                origin: TextLinkOrigin::OneNote,
+            }],
+            alignment: TextAlignment::Left,
+            space_before: 0.0,
+            space_after: 0.0,
+            line_spacing: None,
+        };
+        let text_layout = layout_with_math(
+            &gtk::pango::Context::new(),
+            &block,
+            Some("1."),
+            200.0,
+            |_, _| None,
+        );
+        assert_eq!(text_layout.layout.text(), "1. Go");
+        assert_eq!(text_layout.link_for_index(3), Some("https://example.test"));
+        assert_eq!(text_layout.link_for_index(2), None);
+    }
+
+    #[test]
     fn display_mapping_replaces_interior_nuls() {
         let block = TextBlock {
             text: "A\0B".to_owned(),
             base_style: TextStyle::default(),
             runs: Vec::new(),
             math: Vec::new(),
+            links: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,
@@ -417,6 +546,7 @@ mod tests {
             base_style: TextStyle::default(),
             runs: Vec::new(),
             math: Vec::new(),
+            links: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,
@@ -439,6 +569,7 @@ mod tests {
             },
             runs: Vec::new(),
             math: Vec::new(),
+            links: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,
@@ -457,6 +588,7 @@ mod tests {
             base_style: TextStyle::default(),
             runs: Vec::new(),
             math: Vec::new(),
+            links: Vec::new(),
             alignment: TextAlignment::Left,
             space_before: 0.0,
             space_after: 0.0,

@@ -433,8 +433,18 @@ classes:
 
 Internal links resolve against every open notebook by stable IDs first, then a
 normalized local locator if IDs are absent. Ambiguous targets show a chooser.
-Broken links remain visible. External or custom schemes require an explicit
-user gesture and a confirmation appropriate to the scheme.
+Broken links remain visible. Every external launch requires an explicit user
+gesture; local targets and unfamiliar custom schemes additionally require a
+confirmation that shows the exact destination.
+
+Desktop rich text can store the target in hidden `HYPERLINK` marker runs while
+the adjacent visible run carries the hyperlink style. The parser exposes each
+relationship as a target plus an inclusive-start/exclusive-end UTF-16 range.
+Projection retains those source offsets and marks conservatively recognized
+plain URLs or email addresses with separate provenance only when the caller
+enables that loader option. Explicit OneNote links do not depend on the
+heuristic. Malformed or incomplete marker/style pairs remain ordinary visible
+text and must not panic the parser.
 
 ### 6.11 Ink and Handwriting Recognition
 
@@ -566,7 +576,7 @@ Required fatal examples:
 Use `onenote_parser` only through `onenote-core`; parser types and revision
 internals must not spread into the application. The public fork is pinned to an
 immutable revision because the private desktop and backup corpora need
-unreleased support and five narrow compatibility patches. Those patches and
+unreleased support and focused compatibility patches. Those patches and
 their upstream pull requests are documented in
 `third_party/onenote.rs/PATCHES.md`; the local source tree is retained for
 audit history but is not the Cargo dependency.
@@ -583,8 +593,8 @@ Before beta, the chosen upstream release/commit must demonstrate:
 - ink and math projection;
 
 The current implementation pin is
-`f9cdc59f984bc1f7f096b54100cefaaebc892573` from 2026-07-23. It includes
-unreleased desktop work plus the documented local patches. It also contains an
+`98ee9c80b4f85c1886ec54886ad4aadb43c68582` from 2026-08-04. It includes
+unreleased desktop work plus the documented fork patches. It also contains an
 in-memory package reader that this application explicitly does not use.
 Production must move to a reviewed tagged release or explicitly accept and
 maintain the documented fork.

@@ -147,7 +147,12 @@ fn visit_outline(outline: &Outline, fields: &mut TextFields) {
 fn visit_element(element: &OutlineElement, fields: &mut TextFields) {
     for content in &element.content {
         match content {
-            ElementContent::Text(text) => push(&mut fields.body, &text.visible_text()),
+            ElementContent::Text(text) => {
+                push(&mut fields.body, &text.visible_text());
+                for link in &text.links {
+                    push(&mut fields.links, &link.target);
+                }
+            }
             ElementContent::Table(table) => visit_table(table, fields),
             ElementContent::Image(image) => visit_image(image, fields),
             ElementContent::Attachment(attachment) => {

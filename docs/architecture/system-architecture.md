@@ -194,7 +194,8 @@ configuration only after real corpus measurements.
 - Never instantiate web content inside the process for an embedded URL.
 - Never execute attachments. Extraction uses sanitized generated names in a
   user-approved destination, followed by an explicit open action.
-- Open external links only after a user gesture and show non-HTTP(S) schemes.
+- Open external links only after a user gesture; show and confirm local targets
+  and unfamiliar custom schemes before handing them to the desktop.
 - Package extraction runs out of process into a private staging directory and
   applies listing-size, entry-count, path, and file-type validation. Expanded
   byte and disk-space ceilings remain a release blocker.

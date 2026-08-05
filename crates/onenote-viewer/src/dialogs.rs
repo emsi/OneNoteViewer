@@ -163,10 +163,11 @@ pub(crate) fn present_settings<F, E>(
     current: PathBuf,
     default: PathBuf,
     current_theme: ThemePreference,
+    detect_plain_text_links: bool,
     on_save: F,
     on_error: E,
 ) where
-    F: Fn(&Path, ThemePreference) -> bool + 'static,
+    F: Fn(&Path, ThemePreference, bool) -> bool + 'static,
     E: Fn(&str, &str) + 'static,
 {
     let candidate = Rc::new(RefCell::new(current));
@@ -233,6 +234,21 @@ pub(crate) fn present_settings<F, E>(
     theme.set_hexpand(true);
     content.append(&theme);
 
+    let links_heading = gtk::Label::builder()
+        .label("Link Handling")
+        .xalign(0.0)
+        .selectable(true)
+        .build();
+    links_heading.add_css_class("field-label");
+    content.append(&links_heading);
+
+    let link_detection = gtk::CheckButton::with_label("Detect links in plain text");
+    link_detection.set_active(detect_plain_text_links);
+    link_detection.set_tooltip_text(Some(
+        "Recognize visible URLs and email addresses without changing explicit OneNote links",
+    ));
+    content.append(&link_detection);
+
     let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     actions.set_halign(gtk::Align::End);
     let cancel = gtk::Button::with_label("Cancel");
@@ -287,6 +303,7 @@ pub(crate) fn present_settings<F, E>(
         if on_save(
             &candidate.borrow(),
             ThemePreference::from_selected(theme.selected()),
+            link_detection.is_active(),
         ) {
             dialog_on_save.close();
         }

@@ -8,7 +8,9 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use num_traits::ToPrimitive;
 use onenote_core::{Color, MathSpan, Rect, ResourceId, ResourceStore, TextStyle};
-use onenote_render::{HitAction, MathLayoutBackend, PageScene, SceneNode, ScenePrimitive};
+use onenote_render::{
+    HitAction, MathLayoutBackend, PageScene, SceneNode, SceneNodeId, ScenePrimitive,
+};
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -28,8 +30,8 @@ type ActionHandler = Rc<dyn Fn(HitAction)>;
 mod imp {
     use super::{
         gdk, glib, ActionHandler, Arc, Cell, HashMap, HashSet, MathKey, MathLayoutBackend,
-        OnceLock, PageScene, RefCell, ResourceId, ResourceStore, TypstMathBackend, CANVAS_MARGIN,
-        DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
+        OnceLock, PageScene, Rc, RefCell, ResourceId, ResourceStore, SceneNodeId, TypstMathBackend,
+        CANVAS_MARGIN, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
     };
     use gtk::prelude::*;
     use gtk::subclass::prelude::*;
@@ -40,6 +42,7 @@ mod imp {
         pub(super) zoom: Cell<f32>,
         pub(super) default_text_color: RefCell<gdk::RGBA>,
         pub(super) action_handler: RefCell<Option<ActionHandler>>,
+        pub(super) text_layouts: RefCell<HashMap<SceneNodeId, Rc<crate::text::TextLayout>>>,
         pub(super) textures: RefCell<HashMap<ResourceId, CachedTexture>>,
         pub(super) pending: RefCell<HashSet<ResourceId>>,
         pub(super) failed: RefCell<HashSet<ResourceId>>,
@@ -60,6 +63,7 @@ mod imp {
                 zoom: Cell::new(DEFAULT_ZOOM),
                 default_text_color: RefCell::new(gdk::RGBA::BLACK),
                 action_handler: RefCell::default(),
+                text_layouts: RefCell::default(),
                 textures: RefCell::default(),
                 pending: RefCell::default(),
                 failed: RefCell::default(),
@@ -108,6 +112,7 @@ mod imp {
             object.set_focusable(true);
             object.set_overflow(gtk::Overflow::Hidden);
             let click = gtk::GestureClick::new();
+            click.set_button(gdk::BUTTON_PRIMARY);
             let weak = object.downgrade();
             click.connect_released(move |_, _, x, y| {
                 if let Some(object) = weak.upgrade() {
@@ -115,6 +120,21 @@ mod imp {
                 }
             });
             object.add_controller(click);
+            let motion = gtk::EventControllerMotion::new();
+            let weak = object.downgrade();
+            motion.connect_motion(move |_, x, y| {
+                if let Some(object) = weak.upgrade() {
+                    object.update_pointer_at(x, y);
+                }
+            });
+            let weak = object.downgrade();
+            motion.connect_leave(move |_| {
+                if let Some(object) = weak.upgrade() {
+                    object.set_cursor_from_name(None);
+                    object.set_tooltip_text(None);
+                }
+            });
+            object.add_controller(motion);
         }
     }
 
@@ -168,6 +188,7 @@ impl PageCanvas {
     pub fn set_scene(&self, scene: Option<Arc<PageScene>>) {
         let imp = self.imp();
         *imp.scene.borrow_mut() = scene;
+        imp.text_layouts.borrow_mut().clear();
         imp.textures.borrow_mut().clear();
         imp.pending.borrow_mut().clear();
         imp.failed.borrow_mut().clear();
@@ -202,6 +223,7 @@ impl PageCanvas {
         let zoom = normalize_zoom(zoom);
         if (self.imp().zoom.get() - zoom).abs() > f32::EPSILON {
             self.imp().zoom.set(zoom);
+            self.imp().text_layouts.borrow_mut().clear();
             self.imp().math_textures.borrow_mut().clear();
             self.imp().math_pending.borrow_mut().clear();
             self.imp().math_errors.borrow_mut().clear();
@@ -226,6 +248,7 @@ impl PageCanvas {
     /// host-provided value.
     pub fn set_default_text_color(&self, color: &gdk::RGBA) {
         *self.imp().default_text_color.borrow_mut() = *color;
+        self.imp().text_layouts.borrow_mut().clear();
         self.imp().math_textures.borrow_mut().clear();
         self.imp().math_pending.borrow_mut().clear();
         self.imp().math_errors.borrow_mut().clear();
@@ -248,6 +271,7 @@ impl PageCanvas {
     pub fn set_math_backend(&self, backend: Arc<dyn MathLayoutBackend>) {
         let imp = self.imp();
         *imp.math_backend.borrow_mut() = backend;
+        imp.text_layouts.borrow_mut().clear();
         imp.math_textures.borrow_mut().clear();
         imp.math_pending.borrow_mut().clear();
         imp.math_errors.borrow_mut().clear();
@@ -265,19 +289,70 @@ impl PageCanvas {
     }
 
     fn activate_at(&self, x: f64, y: f64) {
-        let Some(scene) = self.scene() else {
-            return;
-        };
-        let zoom = f64::from(self.zoom());
-        let logical_x = f64_to_f32(x / zoom) + scene.bounds.x - CANVAS_MARGIN;
-        let logical_y = f64_to_f32(y / zoom) + scene.bounds.y - CANVAS_MARGIN;
-        let action = scene
-            .hit_test(logical_x, logical_y)
-            .map(|region| region.action.clone());
+        let action = self.action_at(x, y);
         if let (Some(action), Some(handler)) = (action, self.imp().action_handler.borrow().as_ref())
         {
             handler(action);
         }
+    }
+
+    fn update_pointer_at(&self, x: f64, y: f64) {
+        if let Some(HitAction::OpenLink(target)) = self.action_at(x, y) {
+            self.set_cursor_from_name(Some("pointer"));
+            self.set_tooltip_text(Some(&target));
+        } else {
+            self.set_cursor_from_name(None);
+            self.set_tooltip_text(None);
+        }
+    }
+
+    fn action_at(&self, x: f64, y: f64) -> Option<HitAction> {
+        let scene = self.scene()?;
+        let zoom = f64::from(self.zoom());
+        let logical_x = f64_to_f32(x / zoom) + scene.bounds.x - CANVAS_MARGIN;
+        let logical_y = f64_to_f32(y / zoom) + scene.bounds.y - CANVAS_MARGIN;
+        for node in scene.nodes.iter().rev() {
+            if !contains(node.bounds, logical_x, logical_y) {
+                continue;
+            }
+            if let ScenePrimitive::Text { block, marker } = &node.primitive {
+                let layout = self.text_layout(node, block, marker.as_deref());
+                if let Some(target) =
+                    layout.link_at(logical_x - node.bounds.x, logical_y - node.bounds.y)
+                {
+                    return Some(HitAction::OpenLink(target.to_owned()));
+                }
+            }
+            if let Some(region) = scene.hit_regions.iter().rev().find(|region| {
+                region.node_id == node.id && contains(region.bounds, logical_x, logical_y)
+            }) {
+                return Some(region.action.clone());
+            }
+        }
+        None
+    }
+
+    fn text_layout(
+        &self,
+        node: &SceneNode,
+        block: &onenote_core::TextBlock,
+        marker: Option<&str>,
+    ) -> Rc<text::TextLayout> {
+        if let Some(layout) = self.imp().text_layouts.borrow().get(&node.id).cloned() {
+            return layout;
+        }
+        let layout = Rc::new(text::layout_with_math(
+            &self.pango_context(),
+            block,
+            marker,
+            node.bounds.width,
+            |span, style| self.math_shape(span, style),
+        ));
+        self.imp()
+            .text_layouts
+            .borrow_mut()
+            .insert(node.id.clone(), Rc::clone(&layout));
+        layout
     }
 
     fn snapshot_scene(&self, snapshot: &gtk::Snapshot) {
@@ -320,13 +395,7 @@ impl PageCanvas {
                 corner_radius: _,
             } => snapshot.append_color(&rgba(*color), &graphene_rect(node.bounds)),
             ScenePrimitive::Text { block, marker } => {
-                let layout = text::layout_with_math(
-                    &self.pango_context(),
-                    block,
-                    marker.as_deref(),
-                    node.bounds.width,
-                    |span, style| self.math_shape(span, style),
-                );
+                let layout = self.text_layout(node, block, marker.as_deref());
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(node.bounds.x, node.bounds.y));
                 snapshot.append_layout(&layout.layout, &self.default_text_color());
@@ -518,6 +587,7 @@ impl PageCanvas {
             Ok(raster) => raster,
             Err(error) => {
                 imp.math_errors.borrow_mut().insert(key, error);
+                imp.text_layouts.borrow_mut().clear();
                 self.queue_draw();
                 return;
             }
@@ -527,6 +597,7 @@ impl PageCanvas {
             imp.math_errors
                 .borrow_mut()
                 .insert(key, "math texture exceeds cache limit".to_owned());
+            imp.text_layouts.borrow_mut().clear();
             self.queue_draw();
             return;
         }
@@ -554,6 +625,7 @@ impl PageCanvas {
                 bytes,
             },
         );
+        imp.text_layouts.borrow_mut().clear();
         imp.math_texture_bytes.set(
             imp.math_textures
                 .borrow()
@@ -707,6 +779,10 @@ fn color_from_rgba(color: gdk::RGBA) -> Color {
 
 fn graphene_rect(rect: Rect) -> graphene::Rect {
     graphene::Rect::new(rect.x, rect.y, rect.width, rect.height)
+}
+
+fn contains(rect: Rect, x: f32, y: f32) -> bool {
+    x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
 }
 
 fn to_pango_units(value: f32) -> i32 {

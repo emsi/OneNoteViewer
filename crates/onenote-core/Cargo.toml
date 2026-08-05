@@ -10,6 +10,7 @@ publish = false
 
 [dependencies]
 blake3.workspace = true
+linkify.workspace = true
 onenote_parser.workspace = true
 serde.workspace = true
 thiserror.workspace = true
