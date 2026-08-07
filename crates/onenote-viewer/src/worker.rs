@@ -220,7 +220,7 @@ pub(crate) fn copy_attachment(
             operation_id,
             purpose,
             destination: request.destination,
-            result: result.map_err(|error| error.to_string()),
+            result: result.map_err(|error| format!("{error:#}")),
         });
     });
 }
