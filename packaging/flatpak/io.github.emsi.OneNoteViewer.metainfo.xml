@@ -36,6 +36,16 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.4" date="2026-08-07">
+      <description>
+        <p>
+          Improve page fidelity by retaining complete equation ink, reflowing
+          text and mathematics from measured heights, and rendering newly
+          visible content reliably while scrolling long pages.
+        </p>
+      </description>
+      <url type="details">https://github.com/emsi/OneNoteViewer/releases/tag/v0.1.4</url>
+    </release>
     <release version="0.1.3" date="2026-08-05">
       <description>
         <p>
