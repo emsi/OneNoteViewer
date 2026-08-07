@@ -7,6 +7,30 @@ use std::rc::Rc;
 
 type ErrorHandler = Rc<dyn Fn(&str, &str)>;
 
+pub(crate) fn present_about(parent_window: &gtk::ApplicationWindow) {
+    let system_information = format!(
+        "Version: {}\nSource revision: {}\nApplication ID: io.github.emsi.OneNoteViewer",
+        env!("CARGO_PKG_VERSION"),
+        crate::SOURCE_REVISION,
+    );
+    let dialog = gtk::AboutDialog::builder()
+        .transient_for(parent_window)
+        .modal(true)
+        .program_name("OneNote Viewer")
+        .version(env!("CARGO_PKG_VERSION"))
+        .comments("A native Linux viewer for local Microsoft OneNote notebooks.")
+        .copyright("Copyright (c) 2026 Mariusz Woloszyn")
+        .authors(["Mariusz Woloszyn"])
+        .license_type(gtk::License::Gpl30)
+        .logo_icon_name("io.github.emsi.OneNoteViewer")
+        .website("https://github.com/emsi/OneNoteViewer")
+        .website_label("Project website")
+        .system_information(system_information)
+        .build();
+    dialog.add_css_class("settings-dialog");
+    dialog.present();
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) fn present_package_import<F, E>(
     parent_window: &gtk::ApplicationWindow,

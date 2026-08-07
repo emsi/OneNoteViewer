@@ -48,6 +48,10 @@ jobs:
           binary=$(find dist -maxdepth 1 -type f -name '*.bin' -print -quit)
           test -n "${binary}"
           test -x "${binary}"
+          version=$(sed -n '/^\[workspace\.package\]$/,/^\[/ { s/^version = "\([^"]*\)"/\1/p; }' Cargo.toml)
+          reported_source=$("${binary}" --source | head -n 1)
+          test "${reported_source}" = \
+            "OneNote Viewer ${version} source revision: ${GITHUB_SHA}"
           G_DEBUG=fatal-warnings \
             GTK_A11Y=none \
             GSK_RENDERER=cairo \
@@ -73,8 +77,13 @@ jobs:
         run: |
           version=$(sed -n '/^\[workspace\.package\]$/,/^\[/ { s/^version = "\([^"]*\)"/\1/p; }' Cargo.toml)
           test -n "${version}"
+          mkdir -p target/flatpak
+          ONENOTE_VIEWER_SOURCE_REVISION="${GITHUB_SHA}" \
+            ./scripts/source-revision.sh > target/flatpak/source-revision
+          revision=$(cat target/flatpak/source-revision)
           echo "version=${version}" >> "${GITHUB_OUTPUT}"
           echo "bundle=OneNoteViewer-${version}-linux-x86_64.flatpak" >> "${GITHUB_OUTPUT}"
+          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
 
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@401fe28a8384095fc1531b9d320b292f0ee45adb
@@ -88,6 +97,7 @@ jobs:
       - name: Verify bundled application and extractor
         env:
           BUNDLE: ${{ steps.release.outputs.bundle }}
+          REVISION: ${{ steps.release.outputs.revision }}
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           flatpak install --noninteractive "./${BUNDLE}"
@@ -97,6 +107,10 @@ jobs:
           reported_version=$(flatpak run io.github.emsi.OneNoteViewer --version |
             head -n 1)
           test "${reported_version}" = "OneNote Viewer ${VERSION}"
+          reported_source=$(flatpak run io.github.emsi.OneNoteViewer --source |
+            head -n 1)
+          test "${reported_source}" = \
+            "OneNote Viewer ${VERSION} source revision: ${REVISION}"
           flatpak run --command=7zz io.github.emsi.OneNoteViewer i |
             grep 'Cab' >/dev/null
           xvfb-run -a \
@@ -154,6 +168,11 @@ jobs:
           test -n "${appimage}"
           test -x "${appimage}"
           APPIMAGE_EXTRACT_AND_RUN=1 "${appimage}" --version
+          reported_source=$(APPIMAGE_EXTRACT_AND_RUN=1 "${appimage}" --source |
+            head -n 1)
+          version=$(sed -n '/^\[workspace\.package\]$/,/^\[/ { s/^version = "\([^"]*\)"/\1/p; }' Cargo.toml)
+          test "${reported_source}" = \
+            "OneNote Viewer ${version} source revision: ${GITHUB_SHA}"
           APPIMAGE_EXTRACT_AND_RUN=1 \
             G_DEBUG=fatal-warnings \
             GTK_A11Y=none \
