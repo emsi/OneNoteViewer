@@ -56,6 +56,8 @@ mod imp {
         pub(super) math_texture_bytes: Cell<usize>,
         pub(super) math_backend: RefCell<Arc<dyn MathLayoutBackend>>,
         pub(super) math_generation: Cell<u64>,
+        #[cfg(test)]
+        pub(super) viewport_redraw_requests: Cell<u64>,
     }
 
     impl Default for PageCanvas {
@@ -79,6 +81,8 @@ mod imp {
                 math_texture_bytes: Cell::default(),
                 math_backend: RefCell::new(Arc::new(TypstMathBackend::new())),
                 math_generation: Cell::default(),
+                #[cfg(test)]
+                viewport_redraw_requests: Cell::default(),
             }
         }
     }
@@ -274,6 +278,19 @@ impl PageCanvas {
     /// Current fallback for text whose `OneNote` style uses automatic color.
     pub fn default_text_color(&self) -> gdk::RGBA {
         *self.imp().default_text_color.borrow()
+    }
+
+    pub(crate) fn queue_viewport_redraw(&self) {
+        #[cfg(test)]
+        self.imp()
+            .viewport_redraw_requests
+            .set(self.imp().viewport_redraw_requests.get().wrapping_add(1));
+        self.queue_draw();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn viewport_redraw_requests(&self) -> u64 {
+        self.imp().viewport_redraw_requests.get()
     }
 
     /// Replace the native math backend used for future equations.
