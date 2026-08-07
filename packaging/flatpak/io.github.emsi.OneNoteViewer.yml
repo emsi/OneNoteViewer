@@ -40,7 +40,9 @@ modules:
         CARGO_NET_OFFLINE: 'true'
     build-commands:
       - install -Dm0644 cargo/config .cargo/config.toml
-      - cargo build --offline --frozen --release -p onenote-viewer
+      - >-
+        ONENOTE_VIEWER_SOURCE_REVISION="$(cat onenote-viewer-source-revision)"
+        cargo build --offline --frozen --release -p onenote-viewer
       - install -Dm0755 target/release/onenote-viewer /app/bin/onenote-viewer
       - install -Dm0644 packaging/flatpak/io.github.emsi.OneNoteViewer.desktop /app/share/applications/io.github.emsi.OneNoteViewer.desktop
       - install -Dm0644 packaging/flatpak/io.github.emsi.OneNoteViewer.metainfo.xml /app/share/metainfo/io.github.emsi.OneNoteViewer.metainfo.xml
@@ -62,4 +64,7 @@ modules:
           - onepkg
           - target
           - test-corpus
+      - type: file
+        path: ../../target/flatpak/source-revision
+        dest-filename: onenote-viewer-source-revision
       - cargo-sources.json

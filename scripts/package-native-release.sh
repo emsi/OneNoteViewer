@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
 
 case "$(uname -m)" in
@@ -28,10 +28,11 @@ if ! git diff --quiet || ! git diff --cached --quiet; then
         'native releases require a committed source tree so the source archive matches the binary' >&2
     exit 1
 fi
-revision=$(git rev-parse --verify HEAD)
+revision=$(./scripts/source-revision.sh)
 
 ./scripts/check-licenses.sh
-cargo build --locked --release -p onenote-viewer
+ONENOTE_VIEWER_SOURCE_REVISION="$revision" \
+    cargo build --locked --release -p onenote-viewer
 
 archive="OneNoteViewer-${version}-linux-${arch}.tar.gz"
 executable="OneNoteViewer-${version}-linux-${arch}.bin"

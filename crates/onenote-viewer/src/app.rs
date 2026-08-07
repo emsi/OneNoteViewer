@@ -339,6 +339,7 @@ impl Viewer {
         let open_folder = gio::SimpleAction::new("open-folder", None);
         let import_package = gio::SimpleAction::new("import-package", None);
         let open_settings = gio::SimpleAction::new("settings", None);
+        let show_about = gio::SimpleAction::new("about", None);
         let quit = gio::SimpleAction::new("quit", None);
         let close_source = icon_button("onenote-close-symbolic", "Close selected notebook");
         let spinner = gtk::Spinner::new();
@@ -362,6 +363,9 @@ impl Viewer {
         let preferences_menu = gio::Menu::new();
         preferences_menu.append(Some("Settings"), Some("win.settings"));
         application_menu.append_section(None, &preferences_menu);
+        let information_menu = gio::Menu::new();
+        information_menu.append(Some("About OneNote Viewer"), Some("win.about"));
+        application_menu.append_section(None, &information_menu);
         let quit_menu = gio::Menu::new();
         quit_menu.append(Some("Quit OneNote Viewer"), Some("win.quit"));
         application_menu.append_section(None, &quit_menu);
@@ -606,6 +610,7 @@ impl Viewer {
         viewer.window.add_action(&open_folder);
         viewer.window.add_action(&import_package);
         viewer.window.add_action(&open_settings);
+        viewer.window.add_action(&show_about);
         viewer.window.add_action(&quit);
         application.set_accels_for_action("win.open-file", &["<Primary>o"]);
         application.set_accels_for_action("win.open-folder", &["<Primary><Shift>o"]);
@@ -620,6 +625,7 @@ impl Viewer {
             &quit,
             &close_source,
         );
+        viewer.connect_about(&show_about);
         viewer.connect_system_theme();
         viewer.connect_import_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
@@ -723,6 +729,15 @@ impl Viewer {
         close_source.connect_clicked(move |_| {
             if let Some(viewer) = weak.upgrade() {
                 viewer.close_active_source();
+            }
+        });
+    }
+
+    fn connect_about(self: &Rc<Self>, show_about: &gio::SimpleAction) {
+        let weak = Rc::downgrade(self);
+        show_about.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                crate::dialogs::present_about(&viewer.window);
             }
         });
     }

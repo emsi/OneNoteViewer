@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
 
 for command in cargo curl file glib-compile-schemas install pkg-config sha256sum; do
@@ -30,6 +30,7 @@ if [ -z "$version" ]; then
     printf '%s\n' 'could not determine workspace version' >&2
     exit 1
 fi
+revision=$(./scripts/source-revision.sh)
 
 linuxdeploy_url=https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
 linuxdeploy_sha256=c20cd71e3a4e3b80c3483cef793cda3f4e990aca14014d23c544ca3ce1270b4d
@@ -73,7 +74,8 @@ download_verified "$sevenzip_source_url" "$sevenzip_source" "$sevenzip_source_sh
 chmod +x "$linuxdeploy" "$appimagetool"
 
 cargo fetch --locked
-cargo build --offline --frozen --locked --release -p onenote-viewer
+ONENOTE_VIEWER_SOURCE_REVISION="$revision" \
+    cargo build --offline --frozen --locked --release -p onenote-viewer
 
 rm -rf "$appdir"
 mkdir -p \

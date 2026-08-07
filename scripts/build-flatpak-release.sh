@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$root"
 
 for command in flatpak flatpak-builder; do
@@ -41,6 +41,10 @@ manifest=packaging/flatpak/io.github.emsi.OneNoteViewer.yml
 build_dir=target/flatpak/build
 repo_dir=target/flatpak/repo
 bundle="dist/OneNoteViewer-${version}-linux-${arch}.flatpak"
+revision_file=target/flatpak/source-revision
+
+mkdir -p "$(dirname "$revision_file")" dist
+./scripts/source-revision.sh >"$revision_file"
 
 flatpak remote-add \
     --user \
@@ -56,7 +60,6 @@ flatpak-builder \
     --repo="$repo_dir" \
     "$build_dir" \
     "$manifest"
-mkdir -p dist
 flatpak build-bundle \
     "$repo_dir" \
     "$bundle" \
