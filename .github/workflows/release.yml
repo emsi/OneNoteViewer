@@ -36,6 +36,10 @@ jobs:
           cargo test --workspace --all-targets --locked --offline
           GTK_A11Y=none \
             GSK_RENDERER=cairo \
+            xvfb-run -a cargo test -p onenote-render-gtk \
+              scroll_adjustments_invalidate_the_viewport_snapshot --locked --offline
+          GTK_A11Y=none \
+            GSK_RENDERER=cairo \
             xvfb-run -a cargo test -p onenote-viewer navigation::tests --locked --offline
           ./scripts/package-native-release.sh
 

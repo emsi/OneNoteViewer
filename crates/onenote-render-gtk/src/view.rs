@@ -28,6 +28,7 @@ impl PageView {
             .overlay_scrolling(true)
             .child(&canvas)
             .build();
+        install_viewport_invalidation(&canvas, &root);
         install_pan(&canvas, &root);
         install_zoom(&canvas, &root);
         Self { root, canvas }
@@ -127,6 +128,17 @@ impl PageView {
     }
 }
 
+fn install_viewport_invalidation(canvas: &PageCanvas, root: &gtk::ScrolledWindow) {
+    for adjustment in [root.hadjustment(), root.vadjustment()] {
+        let weak = canvas.downgrade();
+        adjustment.connect_value_changed(move |_| {
+            if let Some(canvas) = weak.upgrade() {
+                canvas.queue_viewport_redraw();
+            }
+        });
+    }
+}
+
 impl Default for PageView {
     fn default() -> Self {
         Self::new()
@@ -185,5 +197,38 @@ fn reveal_adjustment(adjustment: &gtk::Adjustment, start: f64, extent: f64) {
         adjustment.set_value(start);
     } else if end > visible_end {
         adjustment.set_value(end - adjustment.page_size());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PageView;
+    use gtk::prelude::*;
+
+    #[test]
+    fn scroll_adjustments_invalidate_the_viewport_snapshot() {
+        if gtk::init().is_err() {
+            return;
+        }
+
+        let view = PageView::new();
+        let horizontal = view.widget().hadjustment();
+        let vertical = view.widget().vadjustment();
+        horizontal.configure(0.0, 0.0, 1_000.0, 1.0, 100.0, 100.0);
+        vertical.configure(0.0, 0.0, 1_000.0, 1.0, 100.0, 100.0);
+
+        let before_horizontal = view.canvas().viewport_redraw_requests();
+        horizontal.set_value(250.0);
+        assert_eq!(
+            view.canvas().viewport_redraw_requests(),
+            before_horizontal + 1
+        );
+
+        let before_vertical = view.canvas().viewport_redraw_requests();
+        vertical.set_value(400.0);
+        assert_eq!(
+            view.canvas().viewport_redraw_requests(),
+            before_vertical + 1
+        );
     }
 }
