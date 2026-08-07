@@ -27,10 +27,7 @@ pub(crate) fn present_about(parent_window: &gtk::ApplicationWindow) {
         .website_label("Project website")
         .system_information(system_information)
         .build();
-    dialog.add_credit_section(
-        "Core third-party dependency",
-        &["onenote.rs OneNote parser - originally authored by Markus Siemens"],
-    );
+    dialog.add_credit_section("onenote.rs parser", &["Markus Siemens (original author)"]);
     dialog.add_css_class("settings-dialog");
     dialog.present();
 }
