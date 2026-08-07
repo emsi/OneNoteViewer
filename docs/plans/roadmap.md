@@ -106,7 +106,10 @@ independent protocol fixtures pass. Recorded latency targets remain open.
   reusable scene construction retains a full-page option.
 - [x] Preserve and pointer-activate inline web, mail, file, and OneNote page
   links through host-owned policy.
-- [ ] Complete tags and safe attachment extraction.
+- [ ] Complete tags.
+- [x] Add safe on-demand attachment Save As and Open actions with bounded
+  streaming, portable filename sanitation, progress, cancellation, private
+  cache materialization, and desktop/portal delegation.
 - [x] Project, render, and index basic OfficeMath with structured fallback.
 - [x] Global search with result navigation to matching object geometry.
 - [x] Persistent all-open-notebooks workspace and default global search scope.
@@ -169,7 +172,7 @@ end-to-end package-import tests remain release work.
 ## Deferred Backlog
 
 - Password-protected sections.
-- Sandboxed attachment body extraction.
+- Optional in-application previews for explicitly supported attachment types.
 - Media playback with note timing.
 - Old-version/conflict browsing.
 - Additional distribution packages.

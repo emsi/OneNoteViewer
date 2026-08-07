@@ -64,6 +64,13 @@ Index/query API     UI-neutral page scene
    parsed model becomes available to the UI.
 6. A failed index replacement leaves its last good generation available. Full
    automatic/manual source refresh is not implemented yet.
+7. Activating an attachment returns its stable resource action to the viewer.
+   The viewer presents explicit Open and Save As choices. Both stream the lazy
+   payload on a worker through the core resource API and a cancellable GIO
+   replacement stream. Save As writes to the portal-selected `GFile`; Open
+   writes to an XDG cache entry scoped by source identity, fingerprint, and
+   resource identity, then uses `GtkFileLauncher`. No attachment is extracted
+   during parsing, import, rendering, or indexing.
 
 Source files are opened read-only. There is no write-back code path.
 The immutable domain model preserves semantic objects and their source
@@ -172,10 +179,17 @@ of application-global state, cancellable, and resource-bounded. See
 - The viewer currently serializes discovery, parsing, and indexing on one
   worker and runs scene/search jobs separately. It requires bounded scheduling
   and operation cancellation before release.
+- Package imports and attachment copies share one foreground file-operation
+  coordinator. Operation identities reject stale worker progress/completion;
+  only one destination-writing operation runs at a time, while scene and
+  search jobs remain independent.
 - Reusable index, scene, and package APIs accept caller cancellation at their
   documented checkpoints; parser projection cancellation is not yet public.
 - Binary payloads are streamed and decoded lazily; attachments are not loaded
   while indexing unless a bounded extractor is explicitly enabled.
+- Attachment copies use a fixed 64 KiB core buffer, an explicit per-file
+  ceiling, cooperative cancellation, declared-size validation, and
+  destination replacement rather than full-payload allocation.
 - Images use encoded/decoded size and dimension limits plus a bounded texture
   cache.
 - The index library reports progress through caller callbacks and the viewer
@@ -191,6 +205,11 @@ configuration only after real corpus measurements.
 
 - Reject absolute paths, `..`, device paths, and symlink escapes referenced by
   notebook metadata.
+- Treat attachment display names as untrusted metadata. Save/cache leaf names
+  are sanitized with portable Windows restrictions and bounded UTF-8 length;
+  cache directories use hashed source/resource identities and private modes.
+- Never execute attachments in-process. Opening first materializes a completed
+  read-only cache file and delegates it to the desktop through `FileLauncher`.
 - Sniff content from bytes; extensions are hints only.
 - Bound every allocation derived from input lengths and dimensions.
 - Treat text, URLs, filenames, and metadata as data, never markup.

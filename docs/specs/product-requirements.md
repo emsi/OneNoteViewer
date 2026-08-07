@@ -171,6 +171,8 @@ The primary window provides:
 - persisted System, Light, and Dark application themes with readable active,
   inactive, selected, and disabled states;
 - scoped compatibility and source-refresh diagnostics.
+- explicit attachment details with Open and Save As actions, bounded
+  background copying, progress/cancellation, and copyable failure diagnostics.
 
 Navigation lists must be virtualized for large notebooks. Loading, indexing,
 refresh, extraction, and cancellation expose progress without blocking the UI.
@@ -202,6 +204,10 @@ The MVP cannot be called a native OneNote viewer until:
     remain free of application-global state;
 11. a manifest-free backup folder opens as one source with reconstructed
     section groups, deterministic snapshot selection, and explicit provenance.
+12. available attachments can be saved byte-for-byte or opened through the
+    desktop handler without changing the notebook source; cancellation,
+    integrity failure, unsafe names, and concurrent destination changes do not
+    publish partial output or overwrite a newer destination.
 
 ## Existing Linux Tools Are Not Substitutes
 

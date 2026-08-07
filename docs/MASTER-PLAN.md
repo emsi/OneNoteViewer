@@ -133,8 +133,8 @@ The detailed milestone sequence and exit gates are in the
 - The five-crate Rust workspace and pinned Rust 1.85.1 toolchain are in place.
 - `onenote-core` projects native `.one`/`.onetoc2` sources into a public
   semantic and geometry model, fingerprints source trees, lazily exposes
-  bounded resources, and manages validated, atomic, on-disk `.onepkg`
-  extraction through `7zz`/`7z`.
+  bounded resources through cancellable streaming, and manages validated,
+  atomic, on-disk `.onepkg` extraction through `7zz`/`7z`.
 - `onenote-render` builds deterministic UI-neutral scenes, and
   `onenote-render-gtk` provides an independently runnable Pango/GSK page view
   with culling, pan, zoom, hit testing, bounded asynchronous image decoding,
@@ -149,9 +149,12 @@ The detailed milestone sequence and exit gates are in the
   background parsing/indexing/scene construction, global search result
   navigation, a native freeform canvas, settings-backed default notebook
   location discovery, and package onboarding with destination confirmation,
-  phase progress, and cancellation. Its compact single-row shell exposes native
-  window controls, an application-command menu, and persisted System, Light,
-  and Dark themes under the [desktop UI requirements](specs/desktop-ui.md).
+  phase progress, and cancellation. Attachments can be saved or opened on
+  explicit request through bounded background streaming, safe destination
+  replacement, a private source-scoped cache, and desktop/portal delegation.
+  Its compact single-row shell exposes native window controls, an
+  application-command menu, and persisted System, Light, and Dark themes under
+  the [desktop UI requirements](specs/desktop-ui.md).
   Page title and creation time appear once in viewer chrome while the reusable
   renderer can still render the complete native title area for other hosts.
 - A manifest-free backup directory is not yet aggregated: the current
@@ -184,10 +187,11 @@ The detailed milestone sequence and exit gates are in the
 1. Implement the reusable manifest-free backup-folder loader and integrate its
    single synthetic notebook, reconstructed section groups, snapshot policy,
    workspace migration, and aggregate index generation.
-2. Complete viewer workflows: attachment handling, package and long-operation
-   cancellation/progress, diagnostics, source refresh, and fuller workspace
-   restoration. Pointer-activated inline link handling is implemented;
-   keyboard access remains part of the accessibility work.
+2. Complete remaining viewer workflows: package preflight/limits,
+   diagnostics, source refresh, tags, and fuller workspace restoration.
+   Pointer-activated inline link handling and safe on-demand attachment actions
+   are implemented; general canvas keyboard/screen-reader access remains part
+   of the accessibility work.
 3. Establish visual oracles and measured tolerances for rich text, tables,
    images/printouts, ink, negative coordinates, overlap, and large pages.
 4. Map scene semantics into GTK accessibility, add keyboard navigation, and
