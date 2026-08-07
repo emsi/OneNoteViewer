@@ -574,10 +574,10 @@ Required fatal examples:
 ## 10. Parser Dependency Profile
 
 Use `onenote_parser` only through `onenote-core`; parser types and revision
-internals must not spread into the application. The public fork is pinned to an
-immutable revision because the private desktop and backup corpora need
-unreleased support and focused compatibility patches. Those patches and
-their upstream pull requests are documented in
+internals must not spread into the application. Upstream release `v2.0.0` is
+pinned because the private desktop and backup corpora need its desktop support
+and focused compatibility fixes. Those former patches and their upstream pull
+requests are documented in
 `third_party/onenote.rs/PATCHES.md`; the local source tree is retained for
 audit history but is not the Cargo dependency.
 
@@ -592,12 +592,10 @@ Before beta, the chosen upstream release/commit must demonstrate:
 - per-page/section warnings;
 - ink and math projection;
 
-The current implementation pin is
-`98ee9c80b4f85c1886ec54886ad4aadb43c68582` from 2026-08-04. It includes
-unreleased desktop work plus the documented fork patches. It also contains an
-in-memory package reader that this application explicitly does not use.
-Production must move to a reviewed tagged release or explicitly accept and
-maintain the documented fork.
+The current implementation pin is upstream `v2.0.0` at
+`fa4d7a044324af3bfe68727704a9789a08b36a3c`. It includes the documented former
+fork patches and an in-memory package reader that this application explicitly
+does not use.
 
 ## 11. Implementation Acceptance
 

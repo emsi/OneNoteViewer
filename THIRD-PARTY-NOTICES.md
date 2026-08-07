@@ -17,13 +17,15 @@ License, version 3 or (at your option) any later version
 The application depends on `onenote_parser` and
 `onenote_parser-macros` from:
 
-- source: <https://github.com/emsi/onenote.rs>
-- revision: `98ee9c80b4f85c1886ec54886ad4aadb43c68582`
+- source: <https://github.com/msiemens/onenote.rs>
+- version: `v2.0.0`
+- revision: `fa4d7a044324af3bfe68727704a9789a08b36a3c`
 - license: Mozilla Public License 2.0 (`MPL-2.0`)
 
-That revision contains local compatibility changes described in
-`third_party/onenote.rs/PATCHES.md`. A source snapshot and the complete MPL 2.0
-text are retained under `third_party/onenote.rs/`.
+The compatibility changes formerly maintained in the project fork are part of
+this upstream release and are described in `third_party/onenote.rs/PATCHES.md`.
+That directory retains the historical patched source snapshot for audit
+purposes; the complete MPL 2.0 text is retained there as well.
 
 Under section 3.3 of MPL 2.0, the MPL-covered parser source included in the
 combined GPL executable is additionally made available under

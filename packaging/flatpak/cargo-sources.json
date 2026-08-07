@@ -1,9 +1,9 @@
 [
     {
         "type": "git",
-        "url": "https://github.com/emsi/onenote.rs",
-        "commit": "98ee9c80b4f85c1886ec54886ad4aadb43c68582",
-        "dest": "flatpak-cargo/git/onenote.rs-98ee9c8"
+        "url": "https://github.com/msiemens/onenote.rs",
+        "commit": "fa4d7a044324af3bfe68727704a9789a08b36a3c",
+        "dest": "flatpak-cargo/git/onenote.rs-fa4d7a0"
     },
     {
         "type": "archive",
@@ -2348,12 +2348,12 @@
     {
         "type": "shell",
         "commands": [
-            "cp -r --reflink=auto \"flatpak-cargo/git/onenote.rs-98ee9c8/crates/parser\" \"cargo/vendor/onenote_parser\""
+            "cp -r --reflink=auto \"flatpak-cargo/git/onenote.rs-fa4d7a0/crates/parser\" \"cargo/vendor/onenote_parser\""
         ]
     },
     {
         "type": "inline",
-        "contents": "[package]\nname = \"onenote_parser\"\nreadme = \"../../README.md\"\ndescription = \"A parser for Microsoft OneNote\u00ae files\"\nkeywords = [\"onenote\", \"parser\"]\ncategories = [\"parser-implementations\"]\nversion = \"1.1.1\"\nauthors = [\"Markus Siemens <markus@m-siemens.de>\"]\nedition = \"2024\"\nrust-version = \"1.85\"\nlicense = \"MPL-2.0\"\nrepository = \"https://github.com/msiemens/onenote.rs\"\n\n[features]\ndefault = [\"native-fs\"]\nbacktrace = []\nnative-fs = []\nonepkg = [\"dep:cab\"]\n\n[dependencies]\nbytes = \"1.11\"\nencoding_rs = \"0.8\"\nenum-primitive-derive = \"0.3\"\nitertools = \"0.14\"\nlog = \"0.4\"\nnum-traits = \"0.2\"\nsanitize-filename = \"0.6\"\nthiserror = \"2.0\"\nuuid = \"1.19\"\nwidestring = \"1.2\"\nlru = \"0.18\"\ntyped-path = \"0.12.3\"\n\n[dependencies.time]\nversion = \"0.3\"\nfeatures = [\"macros\"]\n\n[dependencies.onenote_parser-macros]\nversion = \"=1.1.1\"\npath = \"crates/parser-macros\"\n\n[dependencies.cab]\nversion = \"0.6\"\noptional = true\n\n[dev-dependencies]\nbytes = \"1.11\"\ninsta = \"1.45\"\ntempfile = \"3.15\"\nyare = \"3.0.0\"\n\n[dev-dependencies.criterion]\nversion = \"0.7\"\ndefault-features = false\nfeatures = [\"cargo_bench_support\"]\n\n[lib]\ncrate-type = [\"cdylib\", \"lib\"]\n\n[[bench]]\nname = \"parse\"\nharness = false\n",
+        "contents": "[package]\nname = \"onenote_parser\"\nreadme = \"../../README.md\"\ndescription = \"A parser for Microsoft OneNote\u00ae files\"\nkeywords = [\"onenote\", \"parser\"]\ncategories = [\"parser-implementations\"]\nexclude = [\"/tests\", \"/benches\"]\nversion = \"2.0.0\"\nauthors = [\"Markus Siemens <markus@m-siemens.de>\"]\nedition = \"2024\"\nrust-version = \"1.85\"\nlicense = \"MPL-2.0\"\nrepository = \"https://github.com/msiemens/onenote.rs\"\n\n[package.metadata.docs.rs]\nall-features = true\n\n[features]\ndefault = [\"native-fs\"]\nbacktrace = []\nnative-fs = []\nonepkg = [\"dep:cab\"]\n\n[dependencies]\nbytes = \"1.11\"\nencoding_rs = \"0.8\"\nenum-primitive-derive = \"0.3\"\nitertools = \"0.14\"\nlog = \"0.4\"\nnum-traits = \"0.2\"\nsanitize-filename = \"0.6\"\nthiserror = \"2.0\"\nuuid = \"1.19\"\nwidestring = \"1.2\"\nlru = \"0.18\"\ntyped-path = \"0.12.3\"\n\n[dependencies.time]\nversion = \"0.3\"\nfeatures = [\"macros\"]\n\n[dependencies.onenote_parser-macros]\nversion = \"=2.0.0\"\npath = \"crates/parser-macros\"\n\n[dependencies.cab]\nversion = \"0.6\"\noptional = true\n\n[dev-dependencies]\nbytes = \"1.11\"\ninsta = \"1.45\"\ntempfile = \"3.15\"\nyare = \"3.0.0\"\n\n[dev-dependencies.criterion]\nversion = \"0.7\"\ndefault-features = false\nfeatures = [\"cargo_bench_support\"]\n\n[lib]\ncrate-type = [\"cdylib\", \"lib\"]\n\n[[bench]]\nname = \"parse\"\nharness = false\n",
         "dest": "cargo/vendor/onenote_parser",
         "dest-filename": "Cargo.toml"
     },
@@ -2366,12 +2366,12 @@
     {
         "type": "shell",
         "commands": [
-            "cp -r --reflink=auto \"flatpak-cargo/git/onenote.rs-98ee9c8/crates/parser-macros\" \"cargo/vendor/onenote_parser-macros\""
+            "cp -r --reflink=auto \"flatpak-cargo/git/onenote.rs-fa4d7a0/crates/parser-macros\" \"cargo/vendor/onenote_parser-macros\""
         ]
     },
     {
         "type": "inline",
-        "contents": "[package]\nname = \"onenote_parser-macros\"\ndescription = \"Internal derive macros used by onenote_parser for binary parsing\"\nversion = \"1.1.1\"\nauthors = [\"Markus Siemens <markus@m-siemens.de>\"]\nedition = \"2024\"\nrust-version = \"1.85\"\nlicense = \"MPL-2.0\"\nrepository = \"https://github.com/msiemens/onenote.rs\"\n\n[dependencies]\nquote = \"1.0\"\nproc-macro2 = \"1.0\"\n\n[dependencies.syn]\nversion = \"2.0\"\nfeatures = [\"full\"]\n\n[lib]\nproc-macro = true\n",
+        "contents": "[package]\nname = \"onenote_parser-macros\"\ndescription = \"Internal derive macros used by onenote_parser for binary parsing\"\nversion = \"2.0.0\"\nauthors = [\"Markus Siemens <markus@m-siemens.de>\"]\nedition = \"2024\"\nrust-version = \"1.85\"\nlicense = \"MPL-2.0\"\nrepository = \"https://github.com/msiemens/onenote.rs\"\n\n[dependencies]\nquote = \"1.0\"\nproc-macro2 = \"1.0\"\n\n[dependencies.syn]\nversion = \"2.0\"\nfeatures = [\"full\"]\n\n[lib]\nproc-macro = true\n",
         "dest": "cargo/vendor/onenote_parser-macros",
         "dest-filename": "Cargo.toml"
     },
@@ -5100,7 +5100,7 @@
     },
     {
         "type": "inline",
-        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/emsi/onenote.rs\"]\ngit = \"https://github.com/emsi/onenote.rs\"\nreplace-with = \"vendored-sources\"\nrev = \"98ee9c80b4f85c1886ec54886ad4aadb43c68582\"\n",
+        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/msiemens/onenote.rs\"]\ngit = \"https://github.com/msiemens/onenote.rs\"\nreplace-with = \"vendored-sources\"\ntag = \"v2.0.0\"\n",
         "dest": "cargo",
         "dest-filename": "config"
     }

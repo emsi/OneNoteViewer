@@ -25,21 +25,18 @@ contains the user-facing behavior.
 - **Release gate:** All MVP rows have at least one legal positive fixture;
   desktop inputs include both OneNote 2016 and current Microsoft 365.
 
-### L-002: Desktop parser support is not in a stable release
+### L-002: Desktop parser support is available in a stable release
 
-- **Status:** Open
-- **Impact:** The current crates.io `onenote_parser` 1.1.1 targets FSSHTTP
-  content. Desktop revision-store support exists at upstream commit
-  `f9cdc59...` and is described for the next major release.
-- **Current mitigation:** The public `emsi/onenote.rs` fork is pinned to
-  signed revision `98ee9c8...` and isolated behind `onenote-core`.
-  `third_party/onenote.rs/PATCHES.md` records the nine focused compatibility
-  patches and their upstream tracking where applicable.
-- **Remaining mitigation:** Complete upstream review and move to a tagged
-  upstream release when it contains the required fixes.
-- **Package boundary:** Its unreleased `.onepkg` API is not used because it
+- **Status:** Resolved
+- **Impact:** Earlier builds depended on unreleased desktop revision-store
+  support and compatibility patches maintained in a public fork.
+- **Resolution:** The application pins upstream `onenote_parser` v2.0.0,
+  which includes the required desktop support and compatibility fixes, and
+  isolates it behind `onenote-core`. `third_party/onenote.rs/PATCHES.md`
+  records the former patch set and its upstream history.
+- **Package boundary:** Its `.onepkg` API is not used because it
   expands package contents in memory; ADR 0002 owns package extraction.
-- **Release gate:** Tagged parser version passes the complete input and
+- **Release gate:** The tagged parser version passes the complete input and
   malformed corpus without panics.
 
 ### L-003: Exact OneNote layout behavior is undocumented

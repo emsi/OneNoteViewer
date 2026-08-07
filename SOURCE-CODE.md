@@ -14,10 +14,9 @@ reported by:
 onenote-viewer --source
 ```
 
-The active MPL-2.0 OneNote parser source and local modifications are available
-at:
+The active MPL-2.0 OneNote parser source is available at:
 
-<https://github.com/emsi/onenote.rs/tree/98ee9c80b4f85c1886ec54886ad4aadb43c68582>
+<https://github.com/msiemens/onenote.rs/tree/v2.0.0>
 
 Portable releases include the unmodified 7-Zip 26.02 `7zzs` executable for
 `.onepkg` extraction. Its corresponding source archive is included inside each

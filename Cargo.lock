@@ -1793,8 +1793,8 @@ dependencies = [
 
 [[package]]
 name = "onenote_parser"
-version = "1.1.1"
-source = "git+https://github.com/emsi/onenote.rs?rev=98ee9c80b4f85c1886ec54886ad4aadb43c68582#98ee9c80b4f85c1886ec54886ad4aadb43c68582"
+version = "2.0.0"
+source = "git+https://github.com/msiemens/onenote.rs?tag=v2.0.0#fa4d7a044324af3bfe68727704a9789a08b36a3c"
 dependencies = [
  "bytes",
  "encoding_rs",
@@ -1814,8 +1814,8 @@ dependencies = [
 
 [[package]]
 name = "onenote_parser-macros"
-version = "1.1.1"
-source = "git+https://github.com/emsi/onenote.rs?rev=98ee9c80b4f85c1886ec54886ad4aadb43c68582#98ee9c80b4f85c1886ec54886ad4aadb43c68582"
+version = "2.0.0"
+source = "git+https://github.com/msiemens/onenote.rs?tag=v2.0.0#fa4d7a044324af3bfe68727704a9789a08b36a3c"
 dependencies = [
  "proc-macro2",
  "quote",

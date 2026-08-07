@@ -1,18 +1,17 @@
-# OneNote Parser Compatibility Patches
+# Historical OneNote Parser Compatibility Patches
 
-The active application dependency is the public
-[`emsi/onenote.rs`](https://github.com/emsi/onenote.rs) fork, pinned in the
-workspace manifest to revision
-`98ee9c80b4f85c1886ec54886ad4aadb43c68582`. That revision starts from upstream
-`f9cdc59f984bc1f7f096b54100cefaaebc892573` (version 1.1.1) and contains the
-compatibility patches below.
+The active application dependency is upstream
+[`msiemens/onenote.rs`](https://github.com/msiemens/onenote.rs), pinned in the
+workspace manifest to release `v2.0.0` at revision
+`fa4d7a044324af3bfe68727704a9789a08b36a3c`. That release contains the
+compatibility changes formerly maintained in the project fork.
 
 This directory retains an MPL-2.0 source snapshot for audit history and
 fallback inspection; Cargo does not build it. Upstream test samples and
 snapshots are intentionally omitted here. The application exposes the parser
 only through `onenote-core`.
 
-## Local Compatibility Patches
+## Former Compatibility Patches
 
 1. `OutlineElementNode` accepts a missing creation timestamp. The timestamp is
    not consumed by the high-level parser model, and OneNote Desktop sections
@@ -57,10 +56,9 @@ logical section require patch 5. All 83 snapshots parse independently after
 the patches; the corpus remains private and is tested only when
 `ONENOTE_BACKUP_TEST_CORPUS` is set.
 
-## Upstream Tracking
+## Upstream History
 
-The first five changes are split into independently reviewable draft pull
-requests:
+The compatibility changes were accepted upstream through these pull requests:
 
 - [msiemens/onenote.rs#36](https://github.com/msiemens/onenote.rs/pull/36)
   preserves unavailable attachment payloads and fixes
@@ -72,14 +70,13 @@ requests:
   accepts losslessly convertible enum property widths and fixes
   [issue #34](https://github.com/msiemens/onenote.rs/issues/34).
 
-The `GlobalIdTableEntry3FNDX` implementation is currently carried only by the
-fork and has not yet been submitted upstream. The TOC ordering fix is tracked
-by [msiemens/onenote.rs#40](https://github.com/msiemens/onenote.rs/pull/40) and
+The TOC ordering fix was merged through
+[msiemens/onenote.rs#40](https://github.com/msiemens/onenote.rs/pull/40) and
 fixes [issue #5](https://github.com/msiemens/onenote.rs/issues/5). Active
-revision materialization is tracked by
+revision materialization was merged through
 [msiemens/onenote.rs#41](https://github.com/msiemens/onenote.rs/pull/41).
-Structured rich-text hyperlinks are tracked by
+Structured rich-text hyperlinks were merged through
 [msiemens/onenote.rs#42](https://github.com/msiemens/onenote.rs/pull/42).
 
-Until those changes are accepted in an upstream release, update the pinned
-fork revision deliberately and review the corresponding lockfile change.
+Upstream release `v2.0.0` contains the complete resulting source tree used by
+OneNoteViewer, including the `GlobalIdTableEntry3FNDX` range resolution.
