@@ -71,6 +71,19 @@ Standard window-control fallbacks and the application icon are bundled so the
 native, AppImage, and Flatpak headers do not depend on different host icon
 inventories.
 
+## Page Context Header
+
+The page title and complete notebook/section-group/section context are
+selectable application text. Pointer selection, the standard label context
+menu, `Ctrl+A`, and `Ctrl+C` use GTK's native label behavior and must not
+change the active notebook, section, or page. Visual end ellipsizing may
+constrain the header layout, but selecting all and copying preserves the
+complete underlying Unicode value.
+
+The page date may remain display-only. Selection inside the freeform page
+canvas is a separate renderer capability and is not implemented through these
+header labels.
+
 ## Link Interaction
 
 Explicit OneNote hyperlinks are always underlined. The persisted **Detect

@@ -409,21 +409,13 @@ impl Viewer {
             NOTEBOOK_NAVIGATION_WIDTH + PAGE_NAVIGATION_WIDTH + NAVIGATION_SEPARATOR_WIDTH;
         navigation_stack.set_width_request(initial_navigation_width);
 
-        let page_title = gtk::Label::builder()
-            .xalign(0.0)
-            .ellipsize(gtk::pango::EllipsizeMode::End)
-            .build();
-        page_title.add_css_class("page-title");
+        let page_title = selectable_page_header_label("page-title");
         let page_date = gtk::Label::builder()
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
         page_date.add_css_class("page-date");
-        let page_context = gtk::Label::builder()
-            .xalign(0.0)
-            .ellipsize(gtk::pango::EllipsizeMode::End)
-            .build();
-        page_context.add_css_class("page-context");
+        let page_context = selectable_page_header_label("page-context");
         let title_box = gtk::Box::new(gtk::Orientation::Vertical, 2);
         title_box.set_margin_start(20);
         title_box.set_margin_end(16);
@@ -2033,6 +2025,16 @@ fn result_list(model: &gtk::StringList) -> (gtk::SingleSelection, gtk::ListView)
     (selection, list)
 }
 
+fn selectable_page_header_label(css_class: &str) -> gtk::Label {
+    let label = gtk::Label::builder()
+        .xalign(0.0)
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .selectable(true)
+        .build();
+    label.add_css_class(css_class);
+    label
+}
+
 fn bind_string(item: &glib::Object, multiline: bool) {
     let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
     let string = item
@@ -2760,6 +2762,56 @@ mod tests {
         view.set_zoom(10.0);
         assert_eq!(label.label(), "400%");
         assert_eq!(notifications.get(), 2);
+    }
+
+    #[test]
+    fn page_header_label_copies_complete_ellipsized_unicode_text() {
+        crate::test_support::run_gtk_test(
+            page_header_label_copies_complete_ellipsized_unicode_text_gtk,
+        );
+    }
+
+    fn page_header_label_copies_complete_ellipsized_unicode_text_gtk() {
+        let text = "A long Unicode page title: Matematyka, Ελληνικά, 日本語, 😀";
+        let label = selectable_page_header_label("page-title");
+        label.set_label(text);
+        assert!(label.is_selectable());
+        assert!(label.is_focusable());
+        assert_eq!(label.ellipsize(), gtk::pango::EllipsizeMode::End);
+
+        let window = gtk::Window::builder()
+            .default_width(180)
+            .default_height(48)
+            .child(&label)
+            .build();
+        window.present();
+        while glib::MainContext::default().iteration(false) {}
+
+        assert!(label.grab_focus());
+        label
+            .activate_action("selection.select-all", None)
+            .expect("select-all action");
+        assert_eq!(
+            label.selection_bounds(),
+            Some((
+                0,
+                i32::try_from(text.chars().count()).expect("test text length")
+            ))
+        );
+        label
+            .activate_action("clipboard.copy", None)
+            .expect("copy action");
+
+        let clipboard = label.clipboard();
+        let copied = glib::MainContext::default()
+            .block_on(clipboard.read_text_future())
+            .expect("read clipboard")
+            .expect("clipboard text");
+        assert_eq!(copied, text);
+
+        label.set_label("Next page");
+        assert_eq!(label.selection_bounds(), None);
+        window.close();
     }
 
     #[test]

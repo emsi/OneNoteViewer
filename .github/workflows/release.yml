@@ -40,7 +40,7 @@ jobs:
               scroll_adjustments_invalidate_the_viewport_snapshot --locked --offline
           GTK_A11Y=none \
             GSK_RENDERER=cairo \
-            xvfb-run -a cargo test -p onenote-viewer navigation::tests --locked --offline
+            xvfb-run -a cargo test -p onenote-viewer --locked --offline
           ./scripts/package-native-release.sh
 
       - name: Smoke-test quick-run executable
