@@ -1,6 +1,7 @@
 use crate::settings::ThemePreference;
 use gtk::gio;
 use gtk::prelude::*;
+use onenote_core::{ResourceRef, ResourceStatus};
 use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -30,6 +31,108 @@ pub(crate) fn present_about(parent_window: &gtk::ApplicationWindow) {
     dialog.add_credit_section("onenote.rs parser", &["Markus Siemens (original author)"]);
     dialog.add_css_class("settings-dialog");
     dialog.present();
+}
+
+pub(crate) fn present_attachment<O, S>(
+    parent_window: &gtk::ApplicationWindow,
+    resource: &ResourceRef,
+    on_open: O,
+    on_save: S,
+) where
+    O: Fn() + 'static,
+    S: Fn() + 'static,
+{
+    let dialog = gtk::Window::builder()
+        .title("Attachment")
+        .transient_for(parent_window)
+        .modal(true)
+        .resizable(false)
+        .default_width(560)
+        .build();
+    dialog.add_css_class("settings-dialog");
+
+    let content = dialog_content(14);
+    let filename = gtk_safe_text(&resource.name);
+    let heading = gtk::Label::builder()
+        .label(filename.as_ref())
+        .xalign(0.0)
+        .selectable(true)
+        .wrap(true)
+        .wrap_mode(gtk::pango::WrapMode::WordChar)
+        .build();
+    heading.add_css_class("dialog-title");
+    content.append(&heading);
+
+    let details = gtk::Label::builder()
+        .label(format!(
+            "Type: {}\nSize: {}",
+            gtk_safe_text(&resource.media_type),
+            crate::attachment::format_size(resource.size)
+        ))
+        .xalign(0.0)
+        .selectable(true)
+        .build();
+    details.add_css_class("dim-label");
+    content.append(&details);
+
+    if resource.status != ResourceStatus::Available {
+        let status = match resource.status {
+            ResourceStatus::Missing => "The attachment data is missing from this OneNote source.",
+            ResourceStatus::Invalid => "The OneNote source marks this attachment data as invalid.",
+            ResourceStatus::Available => unreachable!(),
+        };
+        let warning = gtk::Label::builder()
+            .label(status)
+            .xalign(0.0)
+            .selectable(true)
+            .wrap(true)
+            .build();
+        warning.add_css_class("warning-label");
+        content.append(&warning);
+    }
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_halign(gtk::Align::End);
+    let cancel = gtk::Button::with_label("Cancel");
+    let save = gtk::Button::with_label("Save As...");
+    let open = gtk::Button::with_label("Open");
+    open.add_css_class("suggested-action");
+    let available = resource.status == ResourceStatus::Available;
+    save.set_sensitive(available);
+    open.set_sensitive(available);
+    actions.append(&cancel);
+    actions.append(&save);
+    actions.append(&open);
+    content.append(&actions);
+
+    let dialog_on_cancel = dialog.clone();
+    cancel.connect_clicked(move |_| dialog_on_cancel.close());
+    let dialog_on_save = dialog.clone();
+    save.connect_clicked(move |_| {
+        dialog_on_save.close();
+        on_save();
+    });
+    let dialog_on_open = dialog.clone();
+    open.connect_clicked(move |_| {
+        dialog_on_open.close();
+        on_open();
+    });
+
+    dialog.set_child(Some(&content));
+    if available {
+        open.grab_focus();
+    } else {
+        cancel.grab_focus();
+    }
+    dialog.present();
+}
+
+fn gtk_safe_text(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.contains('\0') {
+        std::borrow::Cow::Owned(value.replace('\0', "\u{fffd}"))
+    } else {
+        std::borrow::Cow::Borrowed(value)
+    }
 }
 
 #[allow(clippy::too_many_lines)]

@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod app;
+mod attachment;
 mod dialogs;
 mod navigation;
 mod navigation_state;

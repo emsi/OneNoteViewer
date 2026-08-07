@@ -570,27 +570,9 @@ impl BuildState<'_> {
         z_index: i32,
         flow_path: &[SceneFlowPosition],
     ) -> Result<()> {
-        if attachment.resource.status != ResourceStatus::Available {
-            let name = bounded_label(&attachment.resource.name, 128);
-            let label = if attachment.resource.status == ResourceStatus::Missing {
-                format!("Attachment data missing: {name}")
-            } else {
-                format!("Broken attachment: {name}")
-            };
-            return self.unavailable_resource(
-                object,
-                bounds,
-                z_index,
-                UnavailableResource {
-                    label,
-                    role: AccessibilityRole::Attachment,
-                    status: attachment.resource.status,
-                },
-                flow_path,
-            );
-        }
         let resource_id = attachment.resource.id.clone();
         let label = attachment.resource.name.clone();
+        let status = attachment.resource.status;
         let node_id = self.push_node_in_flow(
             object,
             bounds,
@@ -599,7 +581,11 @@ impl BuildState<'_> {
             AccessibilitySemantics {
                 role: AccessibilityRole::Attachment,
                 label,
-                description: Some("Embedded file".to_owned()),
+                description: Some(if status == ResourceStatus::Available {
+                    "Embedded file".to_owned()
+                } else {
+                    format!("Embedded file data is {status:?}")
+                }),
             },
             flow_path,
         )?;
@@ -609,6 +595,13 @@ impl BuildState<'_> {
             bounds,
             action: HitAction::OpenAttachment(resource_id),
         });
+        if status != ResourceStatus::Available {
+            self.diagnostics.push(SceneDiagnostic {
+                code: "resource_unavailable".to_owned(),
+                message: format!("A referenced attachment is unavailable ({status:?})"),
+                object_id: Some(object.id.clone()),
+            });
+        }
         Ok(())
     }
 
@@ -1081,7 +1074,7 @@ fn scene_bounds(page: &Page, nodes: &[SceneNode], options: SceneOptions) -> Rect
 #[cfg(test)]
 mod tests {
     use super::{estimate_text_height, format_list_number, ListState, SceneBuilder, SceneOptions};
-    use crate::{AccessibilityRole, Error, ScenePrimitive};
+    use crate::{AccessibilityRole, Error, HitAction, ScenePrimitive};
     use onenote_core::{
         Attachment, ElementContent, Image, ListMarker, ListMarkerPart, ListNumberFormat, ObjectId,
         ObjectKind, Outline, OutlineElement, Page, PageId, PageObject, PageObjectRole, Rect,
@@ -1348,7 +1341,7 @@ mod tests {
     }
 
     #[test]
-    fn unavailable_resources_render_as_inert_labeled_placeholders() {
+    fn unavailable_attachments_remain_actionable_with_diagnostics() {
         let unavailable = |name: &str, status| ResourceRef {
             id: ResourceId::new(format!("resource-{name}")),
             name: name.to_owned(),
@@ -1417,11 +1410,12 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(
-            labels,
-            vec!["Broken image", "Attachment data missing: report.pdf"]
-        );
-        assert!(scene.hit_regions.is_empty());
+        assert_eq!(labels, vec!["Broken image"]);
+        assert_eq!(scene.hit_regions.len(), 1);
+        assert!(matches!(
+            scene.hit_regions[0].action,
+            HitAction::OpenAttachment(_)
+        ));
         assert_eq!(scene.diagnostics.len(), 2);
         assert!(scene
             .diagnostics

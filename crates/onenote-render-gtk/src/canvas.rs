@@ -8,7 +8,7 @@ use gtk::graphene;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use num_traits::ToPrimitive;
-use onenote_core::{Color, MathSpan, Rect, ResourceId, ResourceStore, TextStyle};
+use onenote_core::{Color, MathSpan, Rect, ResourceId, ResourceStatus, ResourceStore, TextStyle};
 use onenote_render::{
     HitAction, MathLayoutBackend, PageScene, SceneNode, SceneNodeId, ScenePrimitive,
 };
@@ -35,6 +35,7 @@ mod imp {
         TypstMathBackend, CANVAS_MARGIN, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
     };
     use gtk::prelude::*;
+    use gtk::subclass::prelude::ObjectSubclassIsExt;
     use gtk::subclass::prelude::*;
 
     pub struct PageCanvas {
@@ -43,6 +44,8 @@ mod imp {
         pub(super) zoom: Cell<f32>,
         pub(super) default_text_color: RefCell<gdk::RGBA>,
         pub(super) action_handler: RefCell<Option<ActionHandler>>,
+        pub(super) hovered_attachment: RefCell<Option<ResourceId>>,
+        pub(super) focused_attachment: Cell<Option<usize>>,
         pub(super) text_layouts: RefCell<HashMap<SceneNodeId, Rc<crate::text::TextLayout>>>,
         pub(super) resolved_layout: RefCell<Option<CachedResolvedLayout>>,
         pub(super) layout_generation: Cell<u64>,
@@ -68,6 +71,8 @@ mod imp {
                 zoom: Cell::new(DEFAULT_ZOOM),
                 default_text_color: RefCell::new(gdk::RGBA::BLACK),
                 action_handler: RefCell::default(),
+                hovered_attachment: RefCell::default(),
+                focused_attachment: Cell::default(),
                 text_layouts: RefCell::default(),
                 resolved_layout: RefCell::default(),
                 layout_generation: Cell::default(),
@@ -141,13 +146,42 @@ mod imp {
                 if let Some(object) = weak.upgrade() {
                     object.set_cursor_from_name(None);
                     object.set_tooltip_text(None);
+                    object.set_hovered_attachment(None);
                 }
             });
             object.add_controller(motion);
+            let keys = gtk::EventControllerKey::new();
+            let weak = object.downgrade();
+            keys.connect_key_pressed(move |_, key, _, _| {
+                let Some(object) = weak.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                if matches!(key, gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::space) {
+                    if object.activate_focused_attachment() {
+                        return glib::Propagation::Stop;
+                    }
+                } else if key == gdk::Key::Escape {
+                    object.imp().focused_attachment.set(None);
+                    object.queue_draw();
+                }
+                glib::Propagation::Proceed
+            });
+            object.add_controller(keys);
         }
     }
 
     impl WidgetImpl for PageCanvas {
+        fn focus(&self, direction: gtk::DirectionType) -> bool {
+            if matches!(
+                direction,
+                gtk::DirectionType::TabForward | gtk::DirectionType::TabBackward
+            ) && self.obj().move_attachment_focus(direction)
+            {
+                return true;
+            }
+            self.parent_focus(direction)
+        }
+
         fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
             let Some(scene) = self.scene.borrow().clone() else {
                 return (1, 1, -1, -1);
@@ -203,6 +237,8 @@ impl PageCanvas {
     pub fn set_scene(&self, scene: Option<Arc<PageScene>>) {
         let imp = self.imp();
         *imp.scene.borrow_mut() = scene;
+        imp.hovered_attachment.borrow_mut().take();
+        imp.focused_attachment.set(None);
         self.invalidate_text_geometry();
         imp.textures.borrow_mut().clear();
         imp.pending.borrow_mut().clear();
@@ -319,6 +355,10 @@ impl PageCanvas {
 
     fn activate_at(&self, x: f64, y: f64) {
         let action = self.action_at(x, y);
+        if let Some(HitAction::OpenAttachment(resource_id)) = &action {
+            self.focus_attachment(resource_id);
+            self.grab_focus();
+        }
         if let (Some(action), Some(handler)) = (action, self.imp().action_handler.borrow().as_ref())
         {
             handler(action);
@@ -326,13 +366,142 @@ impl PageCanvas {
     }
 
     fn update_pointer_at(&self, x: f64, y: f64) {
-        if let Some(HitAction::OpenLink(target)) = self.action_at(x, y) {
-            self.set_cursor_from_name(Some("pointer"));
-            self.set_tooltip_text(Some(&target));
-        } else {
-            self.set_cursor_from_name(None);
-            self.set_tooltip_text(None);
+        match self.action_at(x, y) {
+            Some(HitAction::OpenLink(target)) => {
+                self.set_cursor_from_name(Some("pointer"));
+                self.set_tooltip_text(Some(&target));
+                self.set_hovered_attachment(None);
+            }
+            Some(HitAction::OpenAttachment(resource_id)) => {
+                self.set_cursor_from_name(Some("pointer"));
+                let name = self.attachment_name(&resource_id);
+                let tooltip = name.as_deref().map(text::glib_text);
+                self.set_tooltip_text(tooltip.as_deref());
+                self.set_hovered_attachment(Some(resource_id));
+            }
+            Some(HitAction::SelectObject(_)) | None => {
+                self.set_cursor_from_name(None);
+                self.set_tooltip_text(None);
+                self.set_hovered_attachment(None);
+            }
         }
+    }
+
+    fn set_hovered_attachment(&self, resource_id: Option<ResourceId>) {
+        if *self.imp().hovered_attachment.borrow() == resource_id {
+            return;
+        }
+        *self.imp().hovered_attachment.borrow_mut() = resource_id;
+        self.queue_draw();
+    }
+
+    fn attachment_name(&self, resource_id: &ResourceId) -> Option<String> {
+        self.scene()?
+            .nodes
+            .iter()
+            .find_map(|node| match &node.primitive {
+                ScenePrimitive::Attachment(attachment)
+                    if attachment.resource.id == *resource_id =>
+                {
+                    Some(attachment.resource.name.clone())
+                }
+                _ => None,
+            })
+    }
+
+    fn attachment_actions(&self) -> Vec<(ResourceId, HitAction, Rect)> {
+        let Some(scene) = self.scene() else {
+            return Vec::new();
+        };
+        let resolved = self.resolved_layout(&scene);
+        scene
+            .hit_regions
+            .iter()
+            .filter_map(|region| {
+                let HitAction::OpenAttachment(resource_id) = &region.action else {
+                    return None;
+                };
+                let node = scene.nodes.iter().find(|node| node.id == region.node_id)?;
+                Some((
+                    resource_id.clone(),
+                    region.action.clone(),
+                    resolved.hit_region_bounds(node, region),
+                ))
+            })
+            .collect()
+    }
+
+    fn focus_attachment(&self, resource_id: &ResourceId) {
+        if let Some(index) = self
+            .attachment_actions()
+            .iter()
+            .position(|(candidate, _, _)| candidate == resource_id)
+        {
+            self.imp().focused_attachment.set(Some(index));
+            self.reveal_attachment(index);
+            self.queue_draw();
+        }
+    }
+
+    fn move_attachment_focus(&self, direction: gtk::DirectionType) -> bool {
+        let targets = self.attachment_actions();
+        if targets.is_empty() {
+            return false;
+        }
+        let backwards = direction == gtk::DirectionType::TabBackward;
+        let next = next_attachment_index(
+            self.imp().focused_attachment.get(),
+            targets.len(),
+            backwards,
+        );
+        let Some(next) = next else {
+            self.imp().focused_attachment.set(None);
+            self.queue_draw();
+            return false;
+        };
+        if !self.has_focus() && !self.grab_focus() {
+            return false;
+        }
+        self.imp().focused_attachment.set(Some(next));
+        self.reveal_attachment(next);
+        self.queue_draw();
+        true
+    }
+
+    fn activate_focused_attachment(&self) -> bool {
+        let Some(index) = self.imp().focused_attachment.get() else {
+            return false;
+        };
+        let Some((_, action, _)) = self.attachment_actions().get(index).cloned() else {
+            self.imp().focused_attachment.set(None);
+            return false;
+        };
+        let Some(handler) = self.imp().action_handler.borrow().as_ref().cloned() else {
+            return false;
+        };
+        handler(action);
+        true
+    }
+
+    fn reveal_attachment(&self, index: usize) {
+        let Some((_, _, bounds)) = self.attachment_actions().get(index).cloned() else {
+            return;
+        };
+        let Some(scene) = self.scene() else {
+            return;
+        };
+        let Some(root) = self
+            .ancestor(gtk::ScrolledWindow::static_type())
+            .and_then(|widget| widget.downcast::<gtk::ScrolledWindow>().ok())
+        else {
+            return;
+        };
+        let resolved = self.resolved_layout(&scene);
+        let zoom = f64::from(self.zoom());
+        let x = f64::from(bounds.x - resolved.bounds.x + CANVAS_MARGIN) * zoom;
+        let y = f64::from(bounds.y - resolved.bounds.y + CANVAS_MARGIN) * zoom;
+        reveal_adjustment(&root.hadjustment(), x, f64::from(bounds.width) * zoom);
+        reveal_adjustment(&root.vadjustment(), y, f64::from(bounds.height) * zoom);
     }
 
     fn action_at(&self, x: f64, y: f64) -> Option<HitAction> {
@@ -536,16 +705,16 @@ impl PageCanvas {
                 }
             }
             ScenePrimitive::Attachment(attachment) => {
-                snapshot.append_color(
-                    &gdk::RGBA::new(0.95, 0.96, 0.98, 1.0),
-                    &graphene_rect(node_bounds),
-                );
-                self.snapshot_label(
-                    snapshot,
-                    node_bounds,
-                    &attachment.resource.name,
-                    gdk::RGBA::new(0.12, 0.25, 0.45, 1.0),
-                );
+                let hovered = self.imp().hovered_attachment.borrow().as_ref()
+                    == Some(&attachment.resource.id);
+                let focused = self.has_focus()
+                    && self
+                        .imp()
+                        .focused_attachment
+                        .get()
+                        .and_then(|index| self.attachment_actions().get(index).cloned())
+                        .is_some_and(|(resource_id, _, _)| resource_id == attachment.resource.id);
+                self.snapshot_attachment(snapshot, node_bounds, attachment, hovered, focused);
             }
             ScenePrimitive::Ink { strokes } => snapshot_ink(snapshot, node_bounds, strokes),
             ScenePrimitive::Line {
@@ -565,6 +734,72 @@ impl PageCanvas {
             ScenePrimitive::Placeholder { label } => {
                 self.snapshot_label(snapshot, node_bounds, label, self.default_text_color());
             }
+        }
+    }
+
+    fn snapshot_attachment(
+        &self,
+        snapshot: &gtk::Snapshot,
+        bounds: Rect,
+        attachment: &onenote_core::Attachment,
+        hovered: bool,
+        focused: bool,
+    ) {
+        let text_color = self.default_text_color();
+        let dark_surface = perceived_lightness(text_color) > 0.55;
+        let background = if dark_surface {
+            if hovered {
+                gdk::RGBA::new(0.20, 0.21, 0.23, 1.0)
+            } else {
+                gdk::RGBA::new(0.14, 0.15, 0.17, 1.0)
+            }
+        } else if hovered {
+            gdk::RGBA::new(0.91, 0.93, 0.96, 1.0)
+        } else {
+            gdk::RGBA::new(0.96, 0.97, 0.98, 1.0)
+        };
+        let border = if dark_surface {
+            gdk::RGBA::new(0.42, 0.44, 0.48, 1.0)
+        } else {
+            gdk::RGBA::new(0.65, 0.68, 0.73, 1.0)
+        };
+        let accent = if attachment.resource.status == ResourceStatus::Available {
+            if dark_surface {
+                gdk::RGBA::new(0.55, 0.75, 0.98, 1.0)
+            } else {
+                gdk::RGBA::new(0.12, 0.36, 0.64, 1.0)
+            }
+        } else {
+            gdk::RGBA::new(0.78, 0.22, 0.24, 1.0)
+        };
+        snapshot.append_color(&background, &graphene_rect(bounds));
+        snapshot_attachment_border(snapshot, bounds, border, 1.0);
+        snapshot_file_icon(snapshot, bounds, accent);
+
+        let label_bounds = Rect {
+            x: bounds.x + 32.0,
+            y: bounds.y,
+            width: (bounds.width - 32.0).max(1.0),
+            height: bounds.height,
+        };
+        self.snapshot_label(
+            snapshot,
+            label_bounds,
+            &attachment.resource.name,
+            text_color,
+        );
+        if focused {
+            snapshot_attachment_border(
+                snapshot,
+                Rect {
+                    x: bounds.x + 2.0,
+                    y: bounds.y + 2.0,
+                    width: (bounds.width - 4.0).max(1.0),
+                    height: (bounds.height - 4.0).max(1.0),
+                },
+                accent,
+                2.0,
+            );
         }
     }
 
@@ -842,6 +1077,66 @@ fn snapshot_line(
     let _ignored = cairo.stroke();
 }
 
+fn snapshot_attachment_border(
+    snapshot: &gtk::Snapshot,
+    bounds: Rect,
+    color: gdk::RGBA,
+    width: f64,
+) {
+    let cairo = snapshot.append_cairo(&graphene_rect(bounds));
+    cairo.set_source_rgba(
+        f64::from(color.red()),
+        f64::from(color.green()),
+        f64::from(color.blue()),
+        f64::from(color.alpha()),
+    );
+    cairo.set_line_width(width);
+    let inset = width / 2.0;
+    cairo.rectangle(
+        inset,
+        inset,
+        (f64::from(bounds.width) - width).max(0.0),
+        (f64::from(bounds.height) - width).max(0.0),
+    );
+    let _ignored = cairo.stroke();
+}
+
+fn snapshot_file_icon(snapshot: &gtk::Snapshot, bounds: Rect, color: gdk::RGBA) {
+    let icon_size = bounds.height.min(24.0).min(bounds.width).max(1.0);
+    let scale = f64::from(icon_size / 24.0);
+    let cairo = snapshot.append_cairo(&graphene_rect(bounds));
+    cairo.translate(4.0, f64::from((bounds.height - icon_size) / 2.0));
+    cairo.scale(scale, scale);
+    cairo.set_source_rgba(
+        f64::from(color.red()),
+        f64::from(color.green()),
+        f64::from(color.blue()),
+        f64::from(color.alpha()),
+    );
+    cairo.set_line_width(2.0);
+    cairo.set_line_cap(gtk::cairo::LineCap::Round);
+    cairo.set_line_join(gtk::cairo::LineJoin::Round);
+    // Lucide "file" icon geometry, rendered directly by the snapshot canvas.
+    cairo.move_to(14.0, 2.0);
+    cairo.line_to(6.0, 2.0);
+    cairo.curve_to(4.9, 2.0, 4.0, 2.9, 4.0, 4.0);
+    cairo.line_to(4.0, 20.0);
+    cairo.curve_to(4.0, 21.1, 4.9, 22.0, 6.0, 22.0);
+    cairo.line_to(18.0, 22.0);
+    cairo.curve_to(19.1, 22.0, 20.0, 21.1, 20.0, 20.0);
+    cairo.line_to(20.0, 8.0);
+    cairo.close_path();
+    let _ignored = cairo.stroke();
+    cairo.move_to(14.0, 2.0);
+    cairo.line_to(14.0, 8.0);
+    cairo.line_to(20.0, 8.0);
+    let _ignored = cairo.stroke();
+}
+
+fn perceived_lightness(color: gdk::RGBA) -> f32 {
+    color.red() * 0.2126 + color.green() * 0.7152 + color.blue() * 0.0722
+}
+
 fn ink_bounds(strokes: &[onenote_core::InkStroke]) -> Option<Rect> {
     strokes
         .iter()
@@ -882,6 +1177,30 @@ fn contains(rect: Rect, x: f32, y: f32) -> bool {
     x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
 }
 
+fn next_attachment_index(current: Option<usize>, len: usize, backwards: bool) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    match current {
+        None => Some(if backwards { len - 1 } else { 0 }),
+        Some(0) if backwards => None,
+        Some(index) if !backwards && index + 1 >= len => None,
+        Some(index) if backwards => Some(index - 1),
+        Some(index) => Some(index + 1),
+    }
+}
+
+fn reveal_adjustment(adjustment: &gtk::Adjustment, start: f64, extent: f64) {
+    let end = start + extent;
+    let visible_start = adjustment.value();
+    let visible_end = visible_start + adjustment.page_size();
+    if start < visible_start {
+        adjustment.set_value(start);
+    } else if end > visible_end {
+        adjustment.set_value(end - adjustment.page_size());
+    }
+}
+
 fn to_pango_units(value: f32) -> i32 {
     finite_f32_to_i32(value * 1_024.0)
 }
@@ -908,7 +1227,21 @@ fn f64_to_f32(value: f64) -> f32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{normalize_zoom, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM};
+    use super::{
+        next_attachment_index, normalize_zoom, PageCanvas, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
+    };
+    use gtk::prelude::*;
+    use gtk::subclass::prelude::ObjectSubclassIsExt;
+    use onenote_core::{
+        Attachment, ObjectId, PageId, Rect, ResourceId, ResourceRef, ResourceStatus,
+    };
+    use onenote_render::{
+        AccessibilityRole, AccessibilitySemantics, HitAction, HitRegion, PageScene, SceneNode,
+        SceneNodeId, ScenePrimitive,
+    };
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    use std::sync::Arc;
 
     #[test]
     fn zoom_normalization_is_finite_and_bounded() {
@@ -917,6 +1250,95 @@ mod tests {
         assert_zoom_eq(normalize_zoom(f32::NAN), DEFAULT_ZOOM);
         assert_zoom_eq(normalize_zoom(f32::INFINITY), DEFAULT_ZOOM);
         assert_zoom_eq(normalize_zoom(1.21), 1.21);
+    }
+
+    #[test]
+    fn attachment_focus_enters_moves_and_leaves_at_boundaries() {
+        assert_eq!(next_attachment_index(None, 3, false), Some(0));
+        assert_eq!(next_attachment_index(Some(0), 3, false), Some(1));
+        assert_eq!(next_attachment_index(Some(2), 3, false), None);
+        assert_eq!(next_attachment_index(None, 3, true), Some(2));
+        assert_eq!(next_attachment_index(Some(2), 3, true), Some(1));
+        assert_eq!(next_attachment_index(Some(0), 3, true), None);
+        assert_eq!(next_attachment_index(None, 0, false), None);
+    }
+
+    #[test]
+    fn attachment_pointer_and_click_dispatch_the_resource_action() {
+        if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return;
+        }
+        if gtk::init().is_err() {
+            return;
+        }
+        let resource_id = ResourceId::new("attachment");
+        let node_id = SceneNodeId("node".to_owned());
+        let object_id = ObjectId::new("object");
+        let bounds = Rect {
+            x: 0.0,
+            y: 0.0,
+            width: 180.0,
+            height: 44.0,
+        };
+        let scene = PageScene {
+            page_id: PageId::new("page"),
+            bounds,
+            nodes: vec![SceneNode {
+                id: node_id.clone(),
+                source_object_id: object_id.clone(),
+                bounds,
+                flow_path: Vec::new(),
+                z_index: 0,
+                primitive: ScenePrimitive::Attachment(Attachment {
+                    resource: ResourceRef {
+                        id: resource_id.clone(),
+                        name: "manual\0.pdf".to_owned(),
+                        media_type: "application/pdf".to_owned(),
+                        size: 12,
+                        status: ResourceStatus::Available,
+                    },
+                    width: None,
+                    height: None,
+                }),
+                accessibility: AccessibilitySemantics {
+                    role: AccessibilityRole::Attachment,
+                    label: "manual.pdf".to_owned(),
+                    description: None,
+                },
+            }],
+            hit_regions: vec![HitRegion {
+                node_id,
+                source_object_id: object_id,
+                bounds,
+                action: HitAction::OpenAttachment(resource_id.clone()),
+            }],
+            diagnostics: Vec::new(),
+        };
+        let canvas = PageCanvas::new();
+        canvas.set_scene(Some(Arc::new(scene)));
+        for color in [gtk::gdk::RGBA::BLACK, gtk::gdk::RGBA::WHITE] {
+            canvas.set_default_text_color(&color);
+            let snapshot = gtk::Snapshot::new();
+            canvas.snapshot_scene(&snapshot);
+            assert!(snapshot.to_node().is_some());
+        }
+        let dispatched = Rc::new(RefCell::new(Vec::new()));
+        let dispatched_from_handler = Rc::clone(&dispatched);
+        canvas.set_action_handler(Some(move |action| {
+            dispatched_from_handler.borrow_mut().push(action);
+        }));
+
+        canvas.update_pointer_at(40.0, 40.0);
+        assert_eq!(canvas.tooltip_text().as_deref(), Some("manual�.pdf"));
+        canvas.activate_at(40.0, 40.0);
+
+        assert_eq!(
+            dispatched.borrow().as_slice(),
+            &[HitAction::OpenAttachment(resource_id)]
+        );
+        assert_eq!(canvas.imp().focused_attachment.get(), Some(0));
+        assert!(canvas.activate_focused_attachment());
+        assert_eq!(dispatched.borrow().len(), 2);
     }
 
     fn assert_zoom_eq(actual: f32, expected: f32) {
