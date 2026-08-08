@@ -122,8 +122,8 @@ contains the user-facing behavior.
   private staging, cancellation, destination conflicts, and atomic publication
   are implemented. Tests cover unsafe paths, bounded listing capture,
   pre-launch cancellation, unchanged-source real extraction, and corpus
-  counts. The viewer imports packages but does not yet expose progress or
-  cancellation.
+  counts. The viewer exposes package phases and cancellation through its shared
+  foreground file-operation surface.
 - **Release gate:** Missing-tool, corrupt/truncated, path, limit, cancellation,
   partial-output, and source-unchanged cases pass.
 
@@ -167,6 +167,10 @@ contains the user-facing behavior.
   persisted printout/preview images if available; open externally on request.
 - **Security boundary:** Never activate macros, OLE, scripts, or executables
   in-process. External applications assume responsibility after confirmation.
+- **Current evidence:** The original bytes can be saved or materialized in a
+  private cache on explicit request using bounded streaming, cancellation,
+  portable name sanitation, and GIO replacement. The viewer delegates Open to
+  the desktop and does not preview or execute attachment content in-process.
 
 ### L-014: PDF and document printouts
 
@@ -270,9 +274,10 @@ lost effects.
 - **Mitigation:** checked/bounded parsing, canonical root containment,
   payload streaming, content sniffing, no embedded web runtime, and fuzzing.
 - **Current evidence:** Canonical source access, projection/resource limits,
-  package containment checks, bounded image decode, inert URLs/attachments,
-  and no web runtime are implemented. Parser fuzzing, aggregate memory limits,
-  attachment extraction policy, and package expansion/disk ceilings remain.
+  package containment checks, bounded image decode, confirmed external links,
+  bounded/sanitized attachment materialization, and no web runtime are
+  implemented. Parser fuzzing, aggregate memory limits, and package
+  expansion/disk ceilings remain.
 
 ### L-024: Flatpak access to notebook directory trees
 
@@ -332,11 +337,14 @@ Current defensive defaults are:
 - 1,000,000 extracted entries and a 16 MiB bounded archive listing;
 - 32 MiB encoded and 64 MiB decoded per image, maximum dimension 16,384, and a
   128 MiB GTK texture cache;
+- 2 GiB per attachment copy and a 4 GiB attachment-cache target; cache entries
+  older than 30 days are pruned at startup before size-based pruning;
 - 1,000,000 generated scene nodes per page;
 - 1,000 search results and 2,048 snippet characters per query.
 
 These ceilings are code defaults, not corpus-tuned release guarantees.
-Section bytes, aggregate model memory, attachment extraction, expanded package
-bytes/disk, coordinates, graph depth, and concurrency queues still need
-measured limits. Until those and hostile-input tests pass, release builds must
-not claim arbitrary untrusted notebook/package safety.
+Section bytes, aggregate model memory, expanded package bytes/disk,
+coordinates, graph depth, and concurrency queues still need measured limits.
+The attachment ceilings are defensive defaults rather than corpus-tuned
+guarantees. Until the remaining limits and hostile-input tests pass, release
+builds must not claim arbitrary untrusted notebook/package safety.

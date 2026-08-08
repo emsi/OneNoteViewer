@@ -44,6 +44,16 @@ not implemented; its contract and delivery gates are in the
 `OnePkgExtractor` is a separate optional operation and is never required to
 consume an already extracted source.
 
+`ResourceStore::copy_to` is the reusable attachment/image payload boundary.
+It performs blocking, bounded streaming into a caller-owned `Write`, reports
+progress on the calling thread, accepts a cloneable cooperative cancellation
+handle, enforces an explicit byte ceiling, and validates reliable declared
+payload lengths. It returns typed read, write, cancellation, size-limit, and
+size-mismatch errors. Callers choose their worker/thread model and own durable
+destination publication; the core library never selects paths, creates a
+cache, or launches an attachment. This additive contract is exposed by core
+API version 6.
+
 The public model includes:
 
 - source identity and fingerprint;
@@ -124,6 +134,13 @@ object to a keyboard-focusable GTK accessible child is not implemented. It
 does not own notebook navigation, search UI, window creation, recent files, or
 workspace persistence. The `standalone` example embeds it in a window without
 linking `onenote-viewer`.
+
+Attachment hit regions provide theme-aware visuals, pointer/tooltips, bounded
+focus traversal, and Enter/Space activation. The renderer still returns only
+`HitAction::OpenAttachment`; the embedding host owns availability diagnostics,
+destination selection, persistence, desktop launching, and execution policy.
+This keyboard action support is not a claim that the custom canvas exposes a
+complete virtual accessibility tree.
 
 `PageView` exposes its effective bounded zoom and a change notification that
 covers built-in gestures as well as host-initiated changes. Hosts can therefore

@@ -27,8 +27,9 @@ make visual regressions testable on fixed fonts and renderers.
 
 **Why open:** `PageScene` carries semantic labels and roles, and GTK navigation
 uses standard virtualized controls, but scene nodes are not exposed as
-focusable GTK accessible children. Links and attachments cannot be reached by
-keyboard. Orca has not been tested.
+focusable GTK accessible children. Attachment hit regions have focus traversal
+and keyboard activation; inline text links and general scene nodes do not.
+Orca has not been tested.
 
 **Completion:** Implement a virtual accessible object/focus model synchronized
 with viewport and hit regions. Add keyboard reading order and activation, then
@@ -37,16 +38,15 @@ record Orca tests under GNOME and KDE on Wayland and X11.
 ### 3. Complete Viewer Actions and Operations
 
 **Why open:** The viewer resolves search hits, opens pointer-activated inline
-links, and imports packages, but does not yet implement attachment
-extraction/opening, operation cancellation/progress, per-source diagnostics,
-manual refresh, or automatic source-change refresh. Package cancellation
-exists in the core API but is not wired to the UI. Active page and pane state
-are not restored.
+links, safely saves/opens attachments, and imports packages. Attachment and
+package writes share cancellable progress UI, but per-source diagnostics,
+manual refresh, automatic source-change refresh, and restoration of active
+page/pane state remain incomplete.
 
-**Completion:** Add explicit host policies for renderer actions; bounded,
-sanitized attachment extraction; cancellable operations with progress; source
-fingerprint monitoring and transactional refresh; diagnostics surfaces; and
-versioned workspace state with corruption recovery tests.
+**Completion:** Add source fingerprint monitoring and transactional refresh,
+diagnostics surfaces, and versioned workspace state with corruption recovery
+tests. Extend the operation coordinator only when another concrete long-running
+workflow requires it.
 
 ### 4. Manifest-Free Backup Folder Aggregation
 
@@ -143,6 +143,9 @@ The following are complete enough to build on, but remain pre-1.0:
   rendering with embedded fonts and visible fallback diagnostics;
 - embeddable GTK `PageView` with Pango/GSK/Cairo rendering, pan/zoom, and
   bounded asynchronous raster decode;
+- bounded on-demand attachment Save As/Open with portable name sanitation,
+  GIO replacement, cancellation/progress, source-scoped private cache, desktop
+  delegation, and unchanged-destination failure tests;
 - transactional multi-source FTS5 indexing and structured Rust/JSONL queries;
 - native GTK multi-notebook shell with virtualized navigation, persistence,
   configurable XDG Documents library discovery,

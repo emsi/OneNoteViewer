@@ -45,7 +45,7 @@ pub enum Error {
         status: crate::ResourceStatus,
     },
 
-    /// A resource exceeded the caller's explicit memory limit.
+    /// A resource exceeded the caller's explicit size limit.
     #[error("resource {id} is {declared_bytes} bytes, above the {limit_bytes}-byte limit")]
     ResourceTooLarge {
         /// Stable resource identifier.
@@ -64,6 +64,36 @@ pub enum Error {
         /// Underlying I/O failure.
         #[source]
         source: std::io::Error,
+    },
+
+    /// Writing a lazily loaded resource failed.
+    #[error("could not write resource {id}: {source}")]
+    ResourceWrite {
+        /// Stable resource identifier.
+        id: crate::ResourceId,
+        /// Underlying output failure.
+        #[source]
+        source: std::io::Error,
+    },
+
+    /// Copying a lazy resource was cancelled by its caller.
+    #[error("copying resource {id} was cancelled")]
+    ResourceCopyCancelled {
+        /// Stable resource identifier.
+        id: crate::ResourceId,
+    },
+
+    /// The resource payload length disagreed with its declared length.
+    #[error(
+        "resource {id} contains {actual_bytes} bytes, but its source declares {declared_bytes} bytes"
+    )]
+    ResourceSizeMismatch {
+        /// Stable resource identifier.
+        id: crate::ResourceId,
+        /// Size recorded in the `OneNote` source.
+        declared_bytes: u64,
+        /// Number of bytes returned by the lazy reader.
+        actual_bytes: u64,
     },
 
     /// No supported external CAB extractor is available.

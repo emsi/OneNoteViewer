@@ -1780,12 +1780,14 @@ name = "onenote-viewer"
 version = "0.1.4"
 dependencies = [
  "anyhow",
+ "blake3",
  "glib-build-tools",
  "gtk4",
  "onenote-core",
  "onenote-index",
  "onenote-render",
  "onenote-render-gtk",
+ "sanitize-filename",
  "serde",
  "serde_json",
  "tempfile",

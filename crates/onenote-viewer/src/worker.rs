@@ -1,3 +1,4 @@
+use gtk::gio;
 use onenote_core::{
     ExtractionPhase, LoadOptions, LoadedNotebook, OneNoteLoader, OnePkgExtractor, SourceId,
 };
@@ -41,11 +42,30 @@ pub(crate) enum Event {
         result: Result<Arc<PageScene>, String>,
     },
     Extracted {
+        operation_id: u64,
         result: Result<PathBuf, String>,
     },
     ExtractionProgress {
+        operation_id: u64,
         phase: ExtractionPhase,
     },
+    AttachmentProgress {
+        operation_id: u64,
+        copied_bytes: u64,
+        declared_bytes: Option<u64>,
+    },
+    AttachmentCopied {
+        operation_id: u64,
+        purpose: AttachmentPurpose,
+        destination: gio::File,
+        result: Result<u64, String>,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum AttachmentPurpose {
+    Open,
+    Save,
 }
 
 pub(crate) fn start_index_worker(
@@ -145,6 +165,7 @@ pub(crate) fn build_scene(
 }
 
 pub(crate) fn extract(
+    operation_id: u64,
     package: PathBuf,
     destination: PathBuf,
     cancel: Arc<AtomicBool>,
@@ -155,11 +176,51 @@ pub(crate) fn extract(
         let result = OnePkgExtractor::detect()
             .and_then(|extractor| {
                 extractor.extract_with_progress(&package, destination, &cancel, move |phase| {
-                    let _ignored = progress_events.send(Event::ExtractionProgress { phase });
+                    let _ignored = progress_events.send(Event::ExtractionProgress {
+                        operation_id,
+                        phase,
+                    });
                 })
             })
             .map(|report| report.destination)
             .map_err(|error| error.to_string());
-        let _ignored = events.send(Event::Extracted { result });
+        let _ignored = events.send(Event::Extracted {
+            operation_id,
+            result,
+        });
+    });
+}
+
+pub(crate) fn copy_attachment(
+    operation_id: u64,
+    purpose: AttachmentPurpose,
+    request: crate::attachment::CopyRequest,
+    events: mpsc::Sender<Event>,
+) {
+    std::thread::spawn(move || {
+        let progress_events = events.clone();
+        let mut last_reported = 0_u64;
+        let result = crate::attachment::copy_resource(&request, move |progress| {
+            let completed = progress
+                .declared_bytes
+                .is_some_and(|declared| progress.copied_bytes == declared);
+            if progress.copied_bytes == 0
+                || completed
+                || progress.copied_bytes.saturating_sub(last_reported) >= 1024 * 1024
+            {
+                last_reported = progress.copied_bytes;
+                let _ignored = progress_events.send(Event::AttachmentProgress {
+                    operation_id,
+                    copied_bytes: progress.copied_bytes,
+                    declared_bytes: progress.declared_bytes,
+                });
+            }
+        });
+        let _ignored = events.send(Event::AttachmentCopied {
+            operation_id,
+            purpose,
+            destination: request.destination,
+            result: result.map_err(|error| format!("{error:#}")),
+        });
     });
 }

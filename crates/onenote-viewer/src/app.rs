@@ -8,10 +8,11 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use onenote_core::{
-    ExtractionPhase, LoadOptions, LoadedNotebook, ObjectId, Page, PageId, Rect, SectionId, SourceId,
+    ExtractionPhase, LoadOptions, LoadedNotebook, ObjectId, Page, PageId, Rect, ResourceId,
+    ResourceRef, SectionId, SourceId,
 };
 use onenote_index::SearchHit;
-use onenote_render::HitAction;
+use onenote_render::{HitAction, ScenePrimitive};
 use onenote_render_gtk::{PageView, DEFAULT_ZOOM};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
@@ -52,6 +53,7 @@ const SYMBOLIC_ICON_NAMES: [&str; 19] = [
 
 pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
     register_resources()?;
+    std::thread::spawn(crate::attachment::prune_cache);
     let (workspace_path, index_path) = workspace::paths()?;
     workspace::ensure_index_parent(&index_path)?;
     let persisted = workspace::load(&workspace_path).unwrap_or_default();
@@ -101,6 +103,7 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
 
     let status = application.run_with_args::<&str>(&[]);
     if let Some(viewer) = viewer.borrow().as_ref() {
+        viewer.cancel_foreground_operation_for_shutdown(Duration::from_secs(5));
         let settings_result = viewer.flush_settings();
         let _ignored = viewer.commands.send(Command::Shutdown);
         settings_result?;
@@ -256,6 +259,42 @@ struct RevealTarget {
     bounds: Rect,
 }
 
+#[derive(Clone)]
+struct AttachmentContext {
+    resource: ResourceRef,
+    loaded: Arc<LoadedNotebook>,
+    source_id: SourceId,
+    fingerprint: onenote_core::SourceFingerprint,
+}
+
+enum ForegroundOperationKind {
+    PackageImport(Arc<AtomicBool>),
+    Attachment(crate::attachment::CopyCancellation),
+}
+
+struct ForegroundOperation {
+    id: u64,
+    kind: ForegroundOperationKind,
+}
+
+impl ForegroundOperation {
+    fn cancel(&self) {
+        match &self.kind {
+            ForegroundOperationKind::PackageImport(cancel) => {
+                cancel.store(true, Ordering::Release);
+            }
+            ForegroundOperationKind::Attachment(cancel) => cancel.cancel(),
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        match &self.kind {
+            ForegroundOperationKind::PackageImport(cancel) => cancel.load(Ordering::Acquire),
+            ForegroundOperationKind::Attachment(cancel) => cancel.is_cancelled(),
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
     sources: Vec<Source>,
@@ -286,13 +325,15 @@ struct Viewer {
     status: gtk::Label,
     spinner: gtk::Spinner,
     zoom_label: gtk::Label,
-    import_activity: gtk::Revealer,
-    import_activity_title: gtk::Label,
-    import_activity_phase: gtk::Label,
-    import_progress: gtk::ProgressBar,
-    import_cancel_button: gtk::Button,
+    operation_activity: gtk::Revealer,
+    operation_activity_title: gtk::Label,
+    operation_activity_phase: gtk::Label,
+    operation_progress: gtk::ProgressBar,
+    operation_cancel_button: gtk::Button,
     import_package_action: gio::SimpleAction,
-    import_cancel: RefCell<Option<Arc<AtomicBool>>>,
+    foreground_operation: RefCell<Option<ForegroundOperation>>,
+    next_operation_id: Cell<u64>,
+    operation_pulsing: Cell<bool>,
     scene_cancel: RefCell<Option<Arc<AtomicBool>>>,
     selection_syncing: Cell<bool>,
     state: RefCell<State>,
@@ -477,37 +518,37 @@ impl Viewer {
         footer.append(&zoom_in);
         footer.append(&zoom_reset);
 
-        let import_activity_title = gtk::Label::builder()
+        let operation_activity_title = gtk::Label::builder()
             .xalign(0.0)
             .hexpand(true)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
-        import_activity_title.add_css_class("activity-title");
-        let import_activity_phase = gtk::Label::builder()
+        operation_activity_title.add_css_class("activity-title");
+        let operation_activity_phase = gtk::Label::builder()
             .xalign(0.0)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
-        import_activity_phase.add_css_class("activity-phase");
+        operation_activity_phase.add_css_class("activity-phase");
         let activity_labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
         activity_labels.set_hexpand(true);
-        activity_labels.append(&import_activity_title);
-        activity_labels.append(&import_activity_phase);
-        let import_progress = gtk::ProgressBar::builder()
+        activity_labels.append(&operation_activity_title);
+        activity_labels.append(&operation_activity_phase);
+        let operation_progress = gtk::ProgressBar::builder()
             .width_request(240)
             .valign(gtk::Align::Center)
             .build();
-        import_progress.set_pulse_step(0.025);
-        let import_cancel_button = gtk::Button::with_label("Cancel");
+        operation_progress.set_pulse_step(0.025);
+        let operation_cancel_button = gtk::Button::with_label("Cancel");
         let activity_content = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         activity_content.set_margin_start(16);
         activity_content.set_margin_end(16);
         activity_content.set_margin_top(10);
         activity_content.set_margin_bottom(10);
         activity_content.append(&activity_labels);
-        activity_content.append(&import_progress);
-        activity_content.append(&import_cancel_button);
-        activity_content.add_css_class("import-activity");
-        let import_activity = gtk::Revealer::builder()
+        activity_content.append(&operation_progress);
+        activity_content.append(&operation_cancel_button);
+        activity_content.add_css_class("operation-activity");
+        let operation_activity = gtk::Revealer::builder()
             .transition_type(gtk::RevealerTransitionType::SlideDown)
             .child(&activity_content)
             .build();
@@ -541,7 +582,7 @@ impl Viewer {
         );
 
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        root.append(&import_activity);
+        root.append(&operation_activity);
         root.append(&content_paned);
         root.append(&separator_horizontal());
         root.append(&footer);
@@ -576,13 +617,15 @@ impl Viewer {
             status,
             spinner,
             zoom_label,
-            import_activity,
-            import_activity_title,
-            import_activity_phase,
-            import_progress,
-            import_cancel_button,
+            operation_activity,
+            operation_activity_title,
+            operation_activity_phase,
+            operation_progress,
+            operation_cancel_button,
             import_package_action: import_package.clone(),
-            import_cancel: RefCell::default(),
+            foreground_operation: RefCell::default(),
+            next_operation_id: Cell::new(1),
+            operation_pulsing: Cell::new(false),
             scene_cancel: RefCell::default(),
             selection_syncing: Cell::new(false),
             state: RefCell::default(),
@@ -619,7 +662,7 @@ impl Viewer {
         );
         viewer.connect_about(&show_about);
         viewer.connect_system_theme();
-        viewer.connect_import_activity();
+        viewer.connect_operation_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
         viewer.connect_page_actions();
         viewer.poll_events();
@@ -749,20 +792,21 @@ impl Viewer {
         });
     }
 
-    fn connect_import_activity(self: &Rc<Self>) {
+    fn connect_operation_activity(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
-        self.import_cancel_button.connect_clicked(move |button| {
+        self.operation_cancel_button.connect_clicked(move |button| {
             let Some(viewer) = weak.upgrade() else {
                 return;
             };
-            let Some(cancel) = viewer.import_cancel.borrow().as_ref().cloned() else {
+            let operation = viewer.foreground_operation.borrow();
+            let Some(operation) = operation.as_ref() else {
                 return;
             };
-            cancel.store(true, Ordering::Relaxed);
+            operation.cancel();
             button.set_sensitive(false);
             viewer
-                .import_activity_phase
-                .set_label("Cancelling and cleaning temporary files...");
+                .operation_activity_phase
+                .set_label("Cancelling and cleaning temporary output...");
         });
     }
 
@@ -810,12 +854,172 @@ impl Viewer {
     fn handle_page_action(self: &Rc<Self>, action: HitAction) {
         match action {
             HitAction::OpenLink(target) => self.open_link(&target),
-            HitAction::OpenAttachment(_) => {
-                self.status
-                    .set_label("Opening attachments is not implemented yet");
-            }
+            HitAction::OpenAttachment(resource_id) => self.show_attachment(&resource_id),
             HitAction::SelectObject(_) => {}
         }
+    }
+
+    fn show_attachment(self: &Rc<Self>, resource_id: &ResourceId) {
+        let Some(context) = self.attachment_context(resource_id) else {
+            self.show_error(
+                "Could not access attachment",
+                "The selected attachment no longer belongs to the displayed page.",
+            );
+            return;
+        };
+        let open_context = context.clone();
+        let save_context = context.clone();
+        let weak_open = Rc::downgrade(self);
+        let weak_save = weak_open.clone();
+        crate::dialogs::present_attachment(
+            &self.window,
+            &context.resource,
+            move || {
+                if let Some(viewer) = weak_open.upgrade() {
+                    viewer.open_attachment(open_context.clone());
+                }
+            },
+            move || {
+                if let Some(viewer) = weak_save.upgrade() {
+                    viewer.choose_attachment_destination(save_context.clone());
+                }
+            },
+        );
+    }
+
+    fn attachment_context(&self, resource_id: &ResourceId) -> Option<AttachmentContext> {
+        let scene = self.page_view.canvas().scene()?;
+        let resource = scene.nodes.iter().find_map(|node| match &node.primitive {
+            ScenePrimitive::Attachment(attachment) if attachment.resource.id == *resource_id => {
+                Some(attachment.resource.clone())
+            }
+            _ => None,
+        })?;
+        let active_source = self.state.borrow().active.as_ref()?.source.clone();
+        let state = self.state.borrow();
+        let source = state
+            .sources
+            .iter()
+            .find(|source| source.loaded.notebook.source_id == active_source)?;
+        Some(AttachmentContext {
+            resource,
+            loaded: source.loaded.clone(),
+            source_id: source.loaded.notebook.source_id.clone(),
+            fingerprint: source.loaded.notebook.fingerprint.clone(),
+        })
+    }
+
+    fn choose_attachment_destination(self: &Rc<Self>, context: AttachmentContext) {
+        let initial_name = crate::attachment::sanitized_filename(&context.resource.name);
+        let dialog = gtk::FileDialog::builder()
+            .title("Save Attachment")
+            .accept_label("Save")
+            .initial_name(initial_name)
+            .modal(true)
+            .build();
+        let weak = Rc::downgrade(self);
+        dialog.save(
+            Some(&self.window),
+            None::<&gio::Cancellable>,
+            move |result| match result {
+                Ok(destination) => {
+                    if let Some(viewer) = weak.upgrade() {
+                        viewer.start_attachment_copy(
+                            context,
+                            destination,
+                            worker::AttachmentPurpose::Save,
+                        );
+                    }
+                }
+                Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
+                Err(error) => {
+                    if let Some(viewer) = weak.upgrade() {
+                        viewer.show_error(
+                            "Could not choose attachment destination",
+                            &error.to_string(),
+                        );
+                    }
+                }
+            },
+        );
+    }
+
+    fn open_attachment(self: &Rc<Self>, context: AttachmentContext) {
+        let destination = match crate::attachment::cache_file(
+            &context.source_id,
+            &context.fingerprint,
+            &context.resource.id,
+            &context.resource.name,
+        ) {
+            Ok(destination) => destination,
+            Err(error) => {
+                self.show_error("Could not prepare attachment cache", &error.to_string());
+                return;
+            }
+        };
+        self.start_attachment_copy(context, destination, worker::AttachmentPurpose::Open);
+    }
+
+    fn start_attachment_copy(
+        self: &Rc<Self>,
+        context: AttachmentContext,
+        destination: gio::File,
+        purpose: worker::AttachmentPurpose,
+    ) {
+        if self.foreground_operation.borrow().is_some() {
+            self.status
+                .set_label("Another file operation is already running");
+            return;
+        }
+        let operation_id = self.allocate_operation_id();
+        let cancellation = crate::attachment::CopyCancellation::new();
+        *self.foreground_operation.borrow_mut() = Some(ForegroundOperation {
+            id: operation_id,
+            kind: ForegroundOperationKind::Attachment(cancellation.clone()),
+        });
+        self.operation_pulsing.set(context.resource.size == 0);
+        self.import_package_action.set_enabled(false);
+        self.operation_cancel_button.set_sensitive(true);
+        self.operation_progress.set_fraction(0.0);
+        self.operation_activity_title.set_label(&format!(
+            "{} {}",
+            if purpose == worker::AttachmentPurpose::Open {
+                "Preparing"
+            } else {
+                "Saving"
+            },
+            gtk_text(&context.resource.name)
+        ));
+        self.operation_activity_phase
+            .set_label("Copying attachment safely...");
+        self.operation_activity.set_reveal_child(true);
+        self.set_busy("Copying attachment");
+        worker::copy_attachment(
+            operation_id,
+            purpose,
+            crate::attachment::CopyRequest {
+                loaded: context.loaded,
+                resource_id: context.resource.id,
+                destination,
+                cancellation,
+            },
+            self.events.clone(),
+        );
+    }
+
+    fn launch_attachment(self: &Rc<Self>, file: &gio::File) {
+        let launcher = gtk::FileLauncher::new(Some(file));
+        launcher.set_writable(false);
+        let weak = Rc::downgrade(self);
+        launcher.launch(
+            Some(&self.window),
+            None::<&gio::Cancellable>,
+            move |result| {
+                if let (Err(error), Some(viewer)) = (result, weak.upgrade()) {
+                    viewer.show_error("Could not open attachment", &error.to_string());
+                }
+            },
+        );
     }
 
     fn open_link(self: &Rc<Self>, target: &str) {
@@ -995,8 +1199,11 @@ impl Viewer {
             for event in events {
                 viewer.handle_event(event);
             }
-            if viewer.import_activity.reveals_child() && viewer.import_cancel.borrow().is_some() {
-                viewer.import_progress.pulse();
+            if viewer.operation_activity.reveals_child()
+                && viewer.foreground_operation.borrow().is_some()
+                && viewer.operation_pulsing.get()
+            {
+                viewer.operation_progress.pulse();
             }
             glib::ControlFlow::Continue
         });
@@ -1075,30 +1282,119 @@ impl Viewer {
                     Err(error) => self.show_error("Could not render page", &error),
                 }
             }
-            Event::Extracted { result } => match result {
-                Ok(destination) => {
-                    self.status.set_label("Package imported; opening notebooks");
-                    self.import_cancel.borrow_mut().take();
-                    self.import_cancel_button.set_sensitive(false);
-                    self.import_progress.set_fraction(1.0);
-                    self.import_activity_phase
-                        .set_label("Imported successfully; opening notebooks...");
-                    self.hide_import_activity_after(Duration::from_millis(1_800));
-                    self.discover(destination);
-                }
-                Err(error) => {
-                    self.finish_import_activity();
-                    if error == "OneNote package extraction was cancelled" {
-                        self.status.set_label("Package import cancelled");
-                    } else {
-                        self.show_error("Package import failed", &error);
-                    }
-                }
-            },
-            Event::ExtractionProgress { phase } => {
-                self.import_activity_phase
-                    .set_label(extraction_phase_label(phase));
+            Event::Extracted {
+                operation_id,
+                result,
+            } => self.handle_extracted(operation_id, result),
+            Event::ExtractionProgress {
+                operation_id,
+                phase,
+            } => self.handle_extraction_progress(operation_id, phase),
+            Event::AttachmentProgress {
+                operation_id,
+                copied_bytes,
+                declared_bytes,
+            } => self.handle_attachment_progress(operation_id, copied_bytes, declared_bytes),
+            Event::AttachmentCopied {
+                operation_id,
+                purpose,
+                destination,
+                result,
+            } => self.handle_attachment_copied(operation_id, purpose, &destination, result),
+        }
+    }
+
+    fn handle_extracted(
+        self: &Rc<Self>,
+        operation_id: u64,
+        result: std::result::Result<PathBuf, String>,
+    ) {
+        if !self.operation_is_active(operation_id) {
+            return;
+        }
+        match result {
+            Ok(destination) => {
+                self.status.set_label("Package imported; opening notebooks");
+                self.operation_cancel_button.set_sensitive(false);
+                self.operation_progress.set_fraction(1.0);
+                self.operation_activity_phase
+                    .set_label("Imported successfully; opening notebooks...");
+                self.hide_operation_activity_after(operation_id, Duration::from_millis(1_800));
+                self.discover(destination);
             }
+            Err(error) => {
+                let cancelled = self.operation_was_cancelled(operation_id);
+                self.finish_operation(operation_id);
+                if cancelled || error == "OneNote package extraction was cancelled" {
+                    self.status.set_label("Package import cancelled");
+                } else {
+                    self.show_error("Package import failed", &error);
+                }
+            }
+        }
+    }
+
+    fn handle_extraction_progress(&self, operation_id: u64, phase: ExtractionPhase) {
+        if self.operation_is_active(operation_id) {
+            self.operation_activity_phase
+                .set_label(extraction_phase_label(phase));
+        }
+    }
+
+    fn handle_attachment_progress(
+        &self,
+        operation_id: u64,
+        copied_bytes: u64,
+        declared_bytes: Option<u64>,
+    ) {
+        if !self.operation_is_active(operation_id) {
+            return;
+        }
+        if let Some(total) = declared_bytes.filter(|total| *total > 0) {
+            self.operation_pulsing.set(false);
+            self.operation_progress
+                .set_fraction(attachment_progress_fraction(copied_bytes, total));
+            self.operation_activity_phase.set_label(&format!(
+                "Copied {} of {}",
+                crate::attachment::format_size(copied_bytes),
+                crate::attachment::format_size(total)
+            ));
+        } else {
+            self.operation_pulsing.set(true);
+            self.operation_activity_phase.set_label(&format!(
+                "Copied {}",
+                crate::attachment::format_size(copied_bytes)
+            ));
+        }
+    }
+
+    fn handle_attachment_copied(
+        self: &Rc<Self>,
+        operation_id: u64,
+        purpose: worker::AttachmentPurpose,
+        destination: &gio::File,
+        result: std::result::Result<u64, String>,
+    ) {
+        if !self.operation_is_active(operation_id) {
+            return;
+        }
+        let cancelled = self.operation_was_cancelled(operation_id);
+        self.finish_operation(operation_id);
+        match result {
+            Ok(bytes) if purpose == worker::AttachmentPurpose::Open => {
+                self.status.set_label(&format!(
+                    "Attachment ready ({})",
+                    crate::attachment::format_size(bytes)
+                ));
+                self.launch_attachment(destination);
+            }
+            Ok(bytes) => self.status.set_label(&format!(
+                "Attachment saved to {} ({})",
+                destination.parse_name(),
+                crate::attachment::format_size(bytes)
+            )),
+            Err(_) if cancelled => self.status.set_label("Attachment copy cancelled"),
+            Err(error) => self.show_error("Could not copy attachment", &error),
         }
     }
 
@@ -1652,9 +1948,9 @@ impl Viewer {
     }
 
     fn choose_package(self: &Rc<Self>) {
-        if self.import_cancel.borrow().is_some() {
+        if self.foreground_operation.borrow().is_some() {
             self.status
-                .set_label("A OneNote package import is already running");
+                .set_label("Another file operation is already running");
             return;
         }
         let filter = gtk::FileFilter::new();
@@ -1796,42 +2092,112 @@ impl Viewer {
     }
 
     fn start_package_import(&self, package: PathBuf, destination: PathBuf) {
-        if self.import_cancel.borrow().is_some() {
+        if self.foreground_operation.borrow().is_some() {
             self.status
-                .set_label("A OneNote package import is already running");
+                .set_label("Another file operation is already running");
             return;
         }
+        let operation_id = self.allocate_operation_id();
         let cancel = Arc::new(AtomicBool::new(false));
-        *self.import_cancel.borrow_mut() = Some(Arc::clone(&cancel));
+        *self.foreground_operation.borrow_mut() = Some(ForegroundOperation {
+            id: operation_id,
+            kind: ForegroundOperationKind::PackageImport(Arc::clone(&cancel)),
+        });
+        self.operation_pulsing.set(true);
         self.import_package_action.set_enabled(false);
-        self.import_cancel_button.set_sensitive(true);
-        self.import_progress.set_fraction(0.0);
-        self.import_activity_title.set_label(&format!(
+        self.operation_cancel_button.set_sensitive(true);
+        self.operation_progress.set_fraction(0.0);
+        self.operation_activity_title.set_label(&format!(
             "Importing {}",
             package
                 .file_name()
                 .and_then(|value| value.to_str())
                 .unwrap_or("OneNote package")
         ));
-        self.import_activity_phase
+        self.operation_activity_phase
             .set_label("Preparing package import...");
-        self.import_activity.set_reveal_child(true);
+        self.operation_activity.set_reveal_child(true);
         self.set_busy("Importing OneNote package");
-        worker::extract(package, destination, cancel, self.events.clone());
+        worker::extract(
+            operation_id,
+            package,
+            destination,
+            cancel,
+            self.events.clone(),
+        );
     }
 
-    fn finish_import_activity(&self) {
-        self.import_cancel.borrow_mut().take();
-        self.import_cancel_button.set_sensitive(false);
+    fn allocate_operation_id(&self) -> u64 {
+        let id = self.next_operation_id.get();
+        self.next_operation_id.set(id.wrapping_add(1).max(1));
+        id
+    }
+
+    fn operation_is_active(&self, operation_id: u64) -> bool {
+        self.foreground_operation
+            .borrow()
+            .as_ref()
+            .is_some_and(|operation| operation.id == operation_id)
+    }
+
+    fn operation_was_cancelled(&self, operation_id: u64) -> bool {
+        self.foreground_operation
+            .borrow()
+            .as_ref()
+            .is_some_and(|operation| operation.id == operation_id && operation.is_cancelled())
+    }
+
+    fn finish_operation(&self, operation_id: u64) {
+        let mut operation = self.foreground_operation.borrow_mut();
+        if operation
+            .as_ref()
+            .is_none_or(|operation| operation.id != operation_id)
+        {
+            return;
+        }
+        operation.take();
+        self.operation_pulsing.set(false);
+        self.operation_cancel_button.set_sensitive(false);
         self.import_package_action.set_enabled(true);
-        self.import_activity.set_reveal_child(false);
+        self.operation_activity.set_reveal_child(false);
     }
 
-    fn hide_import_activity_after(self: &Rc<Self>, delay: Duration) {
+    fn cancel_foreground_operation_for_shutdown(&self, timeout: Duration) {
+        let operation_id = {
+            let operation = self.foreground_operation.borrow();
+            let Some(operation) = operation.as_ref() else {
+                return;
+            };
+            operation.cancel();
+            operation.id
+        };
+        let deadline = std::time::Instant::now() + timeout;
+        while std::time::Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            let wait = remaining.min(Duration::from_millis(100));
+            match self.receiver.borrow().recv_timeout(wait) {
+                Ok(
+                    Event::Extracted {
+                        operation_id: completed,
+                        ..
+                    }
+                    | Event::AttachmentCopied {
+                        operation_id: completed,
+                        ..
+                    },
+                ) if completed == operation_id => break,
+                Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        self.finish_operation(operation_id);
+    }
+
+    fn hide_operation_activity_after(self: &Rc<Self>, operation_id: u64, delay: Duration) {
         let weak = Rc::downgrade(self);
         glib::timeout_add_local_once(delay, move || {
             if let Some(viewer) = weak.upgrade() {
-                viewer.finish_import_activity();
+                viewer.finish_operation(operation_id);
             }
         });
     }
@@ -1968,6 +2334,14 @@ fn extraction_phase_label(phase: ExtractionPhase) -> &'static str {
         ExtractionPhase::Verifying => "Verifying extracted notebook files...",
         ExtractionPhase::Publishing => "Publishing notebook folder...",
     }
+}
+
+fn attachment_progress_fraction(copied_bytes: u64, total_bytes: u64) -> f64 {
+    let total = u32::try_from(total_bytes.min(crate::attachment::MAX_ATTACHMENT_BYTES))
+        .unwrap_or(u32::MAX)
+        .max(1);
+    let copied = u32::try_from(copied_bytes.min(u64::from(total))).unwrap_or(total);
+    f64::from(copied) / f64::from(total)
 }
 
 fn list_view(model: &gtk::StringList, css_class: &str) -> (gtk::SingleSelection, gtk::ListView) {
@@ -2551,7 +2925,7 @@ fn theme_css(theme: EffectiveTheme) -> String {
             color: @text;
         }}
         .empty-icon, .empty-icon:backdrop {{ color: @muted; }}
-        .import-activity, .import-activity:backdrop {{
+        .operation-activity, .operation-activity:backdrop {{
             background: @activity_bg;
             color: @text;
             border-bottom: 1px solid @activity_border;
