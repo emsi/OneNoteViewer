@@ -61,6 +61,32 @@ must not clear, move, or replace the active selection. Reloading the active
 notebook preserves its last valid location and falls back deterministically if
 that content was removed.
 
+## Session Restoration
+
+The workspace state records the last page that became the committed active
+selection. On an ordinary startup, the viewer restores that page when its
+source still belongs to the configured workspace. The record uses stable
+source, section, and page identifiers together with the already-persisted
+source path; it does not store page titles or page content.
+
+Asynchronous source loading must not make restoration depend on completion
+order. The first available notebook may be displayed provisionally, but the
+remembered source replaces it when loaded. Any deliberate notebook, section,
+page, or search-result selection cancels that pending restoration so later
+worker results cannot override the user's choice.
+
+Persisted identifiers are hints and must be validated against the loaded
+notebook. A missing page falls back to the first page in its section, a missing
+section falls back to the first available section and page, and an unavailable
+source leaves the normal deterministic fallback active. Closing a notebook
+removes it from both the workspace and restoration state; history alone must
+never reopen a source the user closed.
+
+Workspace navigation writes are debounced and atomically published, with a
+final flush during clean shutdown. The workspace currently persists only the
+last page, not page scroll position, search state, tree expansion, or renderer
+internals.
+
 The freeform notebook page is document content rather than application chrome;
 its explicit colors continue to come from OneNote page data. Text stored with
 OneNote's automatic/default color uses a host-provided renderer fallback so it

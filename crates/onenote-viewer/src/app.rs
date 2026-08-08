@@ -2,7 +2,7 @@ use crate::navigation::{NavigationTarget, NotebookTree};
 use crate::navigation_state::{location_for_section, preferred_location, SectionLocation};
 use crate::settings::{self, AppSettings, ThemePreference};
 use crate::worker::{self, Command, Event};
-use crate::workspace::{self, WorkspaceConfig};
+use crate::workspace::{self, PersistedPageLocation, WorkspaceConfig, WorkspaceNavigation};
 use anyhow::Result;
 use gtk::gio;
 use gtk::glib;
@@ -60,14 +60,22 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
     let settings_path = settings::path();
     let persisted_settings = settings::load(&settings_path).unwrap_or_default();
     let notebooks_location = persisted_settings.notebooks_location.clone();
-    let initial_sources: Vec<_> = if requested_sources.is_empty() {
-        persisted.sources
+    let configured_sources = if requested_sources.is_empty() {
+        persisted.sources.clone()
     } else {
         requested_sources
-    }
-    .into_iter()
-    .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
-    .collect();
+    };
+    let restore_target = persisted.navigation.last_page.filter(|location| {
+        workspace::source_is_in_workspace(
+            &location.source_path,
+            &configured_sources,
+            &notebooks_location,
+        )
+    });
+    let initial_sources: Vec<_> = configured_sources
+        .into_iter()
+        .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
+        .collect();
 
     let application = gtk::Application::builder()
         .application_id("io.github.emsi.OneNoteViewer")
@@ -87,6 +95,7 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
             index_path.clone(),
             settings_path.clone(),
             persisted_settings.clone(),
+            restore_target.clone(),
             style_provider,
         );
         instance.open_notebooks_location();
@@ -104,8 +113,10 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
     let status = application.run_with_args::<&str>(&[]);
     if let Some(viewer) = viewer.borrow().as_ref() {
         viewer.cancel_foreground_operation_for_shutdown(Duration::from_secs(5));
+        let workspace_result = viewer.flush_workspace();
         let settings_result = viewer.flush_settings();
         let _ignored = viewer.commands.send(Command::Shutdown);
+        workspace_result?;
         settings_result?;
     }
     if status == glib::ExitCode::SUCCESS {
@@ -304,6 +315,7 @@ struct State {
     search_generation: u64,
     scene_generation: u64,
     pending_reveal: Option<RevealTarget>,
+    restore_target: Option<PersistedPageLocation>,
 }
 
 struct Viewer {
@@ -346,6 +358,7 @@ struct Viewer {
     events: mpsc::Sender<Event>,
     receiver: RefCell<mpsc::Receiver<Event>>,
     search_timer: RefCell<Option<glib::SourceId>>,
+    workspace_save_timer: RefCell<Option<glib::SourceId>>,
     settings_save_timer: RefCell<Option<glib::SourceId>>,
 }
 
@@ -359,6 +372,7 @@ impl Viewer {
         index_path: PathBuf,
         settings_path: PathBuf,
         settings: AppSettings,
+        restore_target: Option<PersistedPageLocation>,
         style_provider: gtk::CssProvider,
     ) -> Rc<Self> {
         let notebook_tree = NotebookTree::new();
@@ -628,7 +642,10 @@ impl Viewer {
             operation_pulsing: Cell::new(false),
             scene_cancel: RefCell::default(),
             selection_syncing: Cell::new(false),
-            state: RefCell::default(),
+            state: RefCell::new(State {
+                restore_target,
+                ..State::default()
+            }),
             workspace_path,
             index_path,
             settings_path,
@@ -638,6 +655,7 @@ impl Viewer {
             events: event_sender,
             receiver: RefCell::new(event_receiver),
             search_timer: RefCell::default(),
+            workspace_save_timer: RefCell::default(),
             settings_save_timer: RefCell::default(),
         });
         viewer.connect_navigation();
@@ -1047,7 +1065,7 @@ impl Viewer {
         }
     }
 
-    fn open_internal_onenote_link(&self, target: &str) {
+    fn open_internal_onenote_link(self: &Rc<Self>, target: &str) {
         let Some(native_page_id) = onenote_page_id(target) else {
             self.show_error(
                 "Could not open OneNote link",
@@ -1087,6 +1105,7 @@ impl Viewer {
                 })
         };
         if let Some((source_id, location)) = destination {
+            self.cancel_pending_restore();
             self.activate_location(&source_id, &location, None);
         } else {
             self.show_error(
@@ -1210,41 +1229,18 @@ impl Viewer {
     }
     fn handle_event(self: &Rc<Self>, event: Event) {
         match event {
-            Event::Discovered { requested, result } => match result {
-                Ok(paths) => {
-                    for path in paths {
-                        self.load_source(path);
-                    }
-                    self.set_busy(&format!("Opening {}", requested.display()));
-                }
-                Err(error) => self.show_error("Could not open source", &error),
-            },
-            Event::LibraryDiscovered { location, result } => match result {
-                Ok(paths) if paths.is_empty() => {
-                    self.spinner.stop();
-                    self.status.set_label(&format!(
-                        "Default notebooks location is empty: {}",
-                        location.display()
-                    ));
-                }
-                Ok(paths) => {
-                    let count = paths.len();
-                    for path in paths {
-                        self.load_source(path);
-                    }
-                    self.set_busy(&format!(
-                        "Opening {count} notebook{} from the default location",
-                        if count == 1 { "" } else { "s" }
-                    ));
-                }
-                Err(error) => self.show_error(
-                    "Could not scan default notebooks location",
-                    &format!("{}\n\n{error}", location.display()),
-                ),
-            },
+            Event::Discovered { requested, result } => {
+                self.handle_discovered(&requested, result);
+            }
+            Event::LibraryDiscovered { location, result } => {
+                self.handle_library_discovered(&location, result);
+            }
             Event::Loaded { path, result } => match result {
                 Ok(loaded) => self.add_source(path, loaded),
-                Err(error) => self.show_error("Could not read notebook", &error),
+                Err(error) => {
+                    self.finish_restore_load(&path);
+                    self.show_error("Could not read notebook", &error);
+                }
             },
             Event::Indexed { source_id, result } => {
                 self.spinner.stop();
@@ -1301,6 +1297,61 @@ impl Viewer {
                 destination,
                 result,
             } => self.handle_attachment_copied(operation_id, purpose, &destination, result),
+        }
+    }
+
+    fn handle_discovered(
+        self: &Rc<Self>,
+        requested: &std::path::Path,
+        result: std::result::Result<Vec<PathBuf>, String>,
+    ) {
+        match result {
+            Ok(paths) => {
+                self.finish_restore_discovery(requested, &paths);
+                for path in paths {
+                    self.load_source(path);
+                }
+                self.set_busy(&format!("Opening {}", requested.display()));
+            }
+            Err(error) => {
+                self.finish_restore_discovery(requested, &[]);
+                self.show_error("Could not open source", &error);
+            }
+        }
+    }
+
+    fn handle_library_discovered(
+        self: &Rc<Self>,
+        location: &std::path::Path,
+        result: std::result::Result<Vec<PathBuf>, String>,
+    ) {
+        match result {
+            Ok(paths) if paths.is_empty() => {
+                self.finish_restore_discovery(location, &[]);
+                self.spinner.stop();
+                self.status.set_label(&format!(
+                    "Default notebooks location is empty: {}",
+                    location.display()
+                ));
+            }
+            Ok(paths) => {
+                self.finish_restore_discovery(location, &paths);
+                let count = paths.len();
+                for path in paths {
+                    self.load_source(path);
+                }
+                self.set_busy(&format!(
+                    "Opening {count} notebook{} from the default location",
+                    if count == 1 { "" } else { "s" }
+                ));
+            }
+            Err(error) => {
+                self.finish_restore_discovery(location, &[]);
+                self.show_error(
+                    "Could not scan default notebooks location",
+                    &format!("{}\n\n{error}", location.display()),
+                );
+            }
         }
     }
 
@@ -1436,9 +1487,12 @@ impl Viewer {
         let _ignored = self.commands.send(Command::DiscoverLibrary(location));
     }
 
-    fn add_source(&self, path: PathBuf, loaded: Arc<LoadedNotebook>) {
+    fn add_source(self: &Rc<Self>, path: PathBuf, loaded: Arc<LoadedNotebook>) {
         let source_id = loaded.notebook.source_id.clone();
         let mut state = self.state.borrow_mut();
+        let restored_location =
+            restore_location_for_source(state.restore_target.as_ref(), &source_id);
+        let restoring = restored_location.is_some();
         if let Some(existing) = state
             .sources
             .iter_mut()
@@ -1446,11 +1500,14 @@ impl Viewer {
         {
             existing.path = path;
             existing.loaded = loaded;
+            if restored_location.is_some() {
+                existing.last_location.clone_from(&restored_location);
+            }
         } else {
             state.sources.push(Source {
                 path,
                 loaded,
-                last_location: None,
+                last_location: restored_location,
             });
         }
         let notebook = state
@@ -1460,18 +1517,51 @@ impl Viewer {
             .map(|source| source.loaded.notebook.clone())
             .expect("inserted source");
         let active_source = state.active.as_ref().map(|active| active.source.clone());
+        if restoring {
+            state.restore_target = None;
+        }
         drop(state);
 
         self.synchronize_selections(|| self.notebook_tree.upsert(&notebook));
-        if active_source
-            .as_ref()
-            .is_none_or(|active| active == &source_id)
+        if restoring
+            || active_source
+                .as_ref()
+                .is_none_or(|active| active == &source_id)
         {
             self.activate_source(&source_id);
         }
-        self.persist_workspace();
+        self.schedule_workspace_save();
         self.status
             .set_label("Notebook opened; building search index");
+    }
+
+    fn finish_restore_discovery(self: &Rc<Self>, requested: &std::path::Path, paths: &[PathBuf]) {
+        let unavailable = restore_missing_from_discovery(
+            self.state.borrow().restore_target.as_ref(),
+            requested,
+            paths,
+        );
+        if unavailable {
+            self.state.borrow_mut().restore_target = None;
+            self.schedule_workspace_save();
+        }
+    }
+
+    fn finish_restore_load(self: &Rc<Self>, path: &std::path::Path) {
+        let unavailable = self
+            .state
+            .borrow()
+            .restore_target
+            .as_ref()
+            .is_some_and(|target| same_source_path(path, &target.source_path));
+        if unavailable {
+            self.state.borrow_mut().restore_target = None;
+            self.schedule_workspace_save();
+        }
+    }
+
+    fn cancel_pending_restore(&self) {
+        self.state.borrow_mut().restore_target = None;
     }
 
     fn synchronize_selections<R>(&self, update: impl FnOnce() -> R) -> R {
@@ -1481,35 +1571,43 @@ impl Viewer {
         result
     }
 
-    fn notebook_selection_changed(&self) {
+    fn notebook_selection_changed(self: &Rc<Self>) {
         if self.selection_syncing.get() {
             return;
         }
         match self.notebook_tree.selected_target() {
-            Some(NavigationTarget::Notebook { source_id }) => self.activate_source(&source_id),
+            Some(NavigationTarget::Notebook { source_id }) => {
+                self.cancel_pending_restore();
+                self.activate_source(&source_id);
+            }
             Some(NavigationTarget::Section {
                 source_id,
                 section_id,
-            }) => self.activate_section(&source_id, &section_id),
+            }) => {
+                self.cancel_pending_restore();
+                self.activate_section(&source_id, &section_id);
+            }
             Some(NavigationTarget::Group { .. }) | None => {}
         }
     }
 
-    fn page_selection_changed(&self, position: u32) {
+    fn page_selection_changed(self: &Rc<Self>, position: u32) {
         if self.selection_syncing.get() || position == NO_SELECTION {
             return;
         }
+        self.cancel_pending_restore();
         self.activate_page(position as usize, None);
     }
 
-    fn result_selection_changed(&self, position: u32) {
+    fn result_selection_changed(self: &Rc<Self>, position: u32) {
         if self.selection_syncing.get() || position == NO_SELECTION {
             return;
         }
+        self.cancel_pending_restore();
         self.activate_result(position as usize);
     }
 
-    fn activate_source(&self, source_id: &SourceId) {
+    fn activate_source(self: &Rc<Self>, source_id: &SourceId) {
         let location = {
             let mut state = self.state.borrow_mut();
             let Some(source) = state
@@ -1535,10 +1633,11 @@ impl Viewer {
                 self.notebook_tree.select_notebook(source_id);
                 self.page_selection.set_selected(NO_SELECTION);
             });
+            self.schedule_workspace_save();
         }
     }
 
-    fn activate_section(&self, source_id: &SourceId, section_id: &SectionId) {
+    fn activate_section(self: &Rc<Self>, source_id: &SourceId, section_id: &SectionId) {
         let location = {
             let state = self.state.borrow();
             state
@@ -1559,7 +1658,7 @@ impl Viewer {
     }
 
     fn activate_location(
-        &self,
+        self: &Rc<Self>,
         source_id: &SourceId,
         requested: &SectionLocation,
         reveal: Option<RevealTarget>,
@@ -1639,10 +1738,11 @@ impl Viewer {
             self.activate_page(position, reveal);
         } else {
             self.clear_rendered_page();
+            self.schedule_workspace_save();
         }
     }
 
-    fn activate_page(&self, position: usize, reveal: Option<RevealTarget>) {
+    fn activate_page(self: &Rc<Self>, position: usize, reveal: Option<RevealTarget>) {
         let value = (|| {
             let state = self.state.borrow();
             let row = state.pages.get(position)?;
@@ -1697,6 +1797,7 @@ impl Viewer {
             self.page_selection
                 .set_selected(u32::try_from(position).unwrap_or(NO_SELECTION));
         });
+        self.schedule_workspace_save();
         let display_title = display_title(&page);
         let title = gtk_text(&display_title);
         self.page_title.set_label(&title);
@@ -1793,7 +1894,7 @@ impl Viewer {
         ));
     }
 
-    fn activate_result(&self, position: usize) {
+    fn activate_result(self: &Rc<Self>, position: usize) {
         let hit = {
             let state = self.state.borrow();
             state.search_hits.get(position).cloned()
@@ -1828,7 +1929,7 @@ impl Viewer {
         );
     }
 
-    fn close_active_source(&self) {
+    fn close_active_source(self: &Rc<Self>) {
         let removed = {
             let mut state = self.state.borrow_mut();
             let Some(source_id) = state.active.as_ref().map(|active| active.source.clone()) else {
@@ -1843,6 +1944,7 @@ impl Viewer {
             };
             state.active = None;
             state.pages.clear();
+            state.restore_target = None;
             (position, state.sources.remove(position))
         };
         let removed_source_id = removed.1.loaded.notebook.source_id.clone();
@@ -1856,7 +1958,6 @@ impl Viewer {
             clear_model(&self.page_model);
         });
         self.clear_rendered_page();
-        self.persist_workspace();
         let fallback = {
             let state = self.state.borrow();
             let position = removed.0.min(state.sources.len().saturating_sub(1));
@@ -1869,24 +1970,78 @@ impl Viewer {
             self.activate_source(&source_id);
         } else {
             self.status.set_label("No notebooks open");
+            self.schedule_workspace_save();
         }
     }
 
-    fn persist_workspace(&self) {
+    fn workspace_config(&self) -> WorkspaceConfig {
         let notebooks_location = self.settings.borrow().notebooks_location.clone();
-        let config = WorkspaceConfig {
-            sources: self
-                .state
-                .borrow()
+        let state = self.state.borrow();
+        let last_page = state.restore_target.clone().or_else(|| {
+            let active = state.active.as_ref()?;
+            let section = active.section.as_ref()?;
+            let page_id = section.page_id.clone()?;
+            let source = state
                 .sources
                 .iter()
-                .map(|source| source.path.clone())
-                .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
-                .collect(),
-        };
-        if let Err(error) = workspace::save(&self.workspace_path, &config) {
-            self.show_error("Could not save workspace", &error.to_string());
+                .find(|source| source.loaded.notebook.source_id == active.source)?;
+            Some(PersistedPageLocation {
+                source_path: source.path.clone(),
+                source_id: active.source.clone(),
+                section_id: section.section_id.clone(),
+                page_id,
+            })
+        });
+        let mut sources = state
+            .sources
+            .iter()
+            .map(|source| source.path.clone())
+            .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
+            .collect::<Vec<_>>();
+        if let Some(target) = state.restore_target.as_ref().filter(|target| {
+            !workspace::source_is_in_location(&target.source_path, &notebooks_location)
+                && !sources
+                    .iter()
+                    .any(|source| same_source_path(source, &target.source_path))
+        }) {
+            sources.push(target.source_path.clone());
         }
+        WorkspaceConfig {
+            sources,
+            navigation: WorkspaceNavigation { last_page },
+        }
+    }
+
+    fn schedule_workspace_save(self: &Rc<Self>) {
+        self.cancel_workspace_save();
+        let weak = Rc::downgrade(self);
+        *self.workspace_save_timer.borrow_mut() = Some(glib::timeout_add_local_once(
+            Duration::from_millis(300),
+            move || {
+                let Some(viewer) = weak.upgrade() else {
+                    return;
+                };
+                viewer.workspace_save_timer.borrow_mut().take();
+                if let Err(error) = viewer.write_workspace() {
+                    viewer.show_error("Could not save workspace", &error.to_string());
+                }
+            },
+        ));
+    }
+
+    fn cancel_workspace_save(&self) {
+        if let Some(timer) = self.workspace_save_timer.borrow_mut().take() {
+            timer.remove();
+        }
+    }
+
+    fn write_workspace(&self) -> Result<()> {
+        workspace::save(&self.workspace_path, &self.workspace_config())
+    }
+
+    fn flush_workspace(&self) -> Result<()> {
+        self.cancel_workspace_save();
+        self.write_workspace()
     }
 
     fn choose_file(self: &Rc<Self>) {
@@ -2032,7 +2187,7 @@ impl Viewer {
     }
 
     fn set_preferences(
-        &self,
+        self: &Rc<Self>,
         location: &std::path::Path,
         theme: ThemePreference,
         detect_plain_text_links: bool,
@@ -2057,7 +2212,7 @@ impl Viewer {
         }
         *self.settings.borrow_mut() = updated;
         self.apply_theme(theme);
-        self.persist_workspace();
+        self.schedule_workspace_save();
         if link_detection_changed {
             self.reload_sources_for_link_detection();
         }
@@ -3045,6 +3200,38 @@ fn native_ids_equal(left: &str, right: &str) -> bool {
         .eq_ignore_ascii_case(right.trim().trim_matches(['{', '}']))
 }
 
+fn same_source_path(left: &std::path::Path, right: &std::path::Path) -> bool {
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => left == right,
+    }
+}
+
+fn restore_location_for_source(
+    target: Option<&PersistedPageLocation>,
+    source_id: &SourceId,
+) -> Option<SectionLocation> {
+    target
+        .filter(|target| target.source_id == *source_id)
+        .map(|target| SectionLocation {
+            section_id: target.section_id.clone(),
+            page_id: Some(target.page_id.clone()),
+        })
+}
+
+fn restore_missing_from_discovery(
+    target: Option<&PersistedPageLocation>,
+    requested: &std::path::Path,
+    discovered: &[PathBuf],
+) -> bool {
+    target.is_some_and(|target| {
+        workspace::source_is_in_location(&target.source_path, requested)
+            && !discovered
+                .iter()
+                .any(|path| same_source_path(path, &target.source_path))
+    })
+}
+
 fn load_options(settings: &AppSettings) -> LoadOptions {
     LoadOptions {
         detect_plain_text_links: settings.detect_plain_text_links,
@@ -3108,6 +3295,54 @@ mod tests {
 
         settings.detect_plain_text_links = false;
         assert!(!load_options(&settings).detect_plain_text_links);
+    }
+
+    #[test]
+    fn startup_restore_matches_stable_source_identity() {
+        let target = persisted_page("wanted", "/notes/Wanted.onetoc2");
+
+        assert_eq!(
+            restore_location_for_source(Some(&target), &SourceId::new("wanted")),
+            Some(SectionLocation {
+                section_id: SectionId::new("section"),
+                page_id: Some(PageId::new("page")),
+            })
+        );
+        assert_eq!(
+            restore_location_for_source(Some(&target), &SourceId::new("other")),
+            None
+        );
+    }
+
+    #[test]
+    fn startup_restore_is_discarded_only_after_its_scope_omits_the_source() {
+        let target = persisted_page("wanted", "/notes/Wanted/Open Notebook.onetoc2");
+        let discovered = vec![PathBuf::from("/notes/Wanted/Open Notebook.onetoc2")];
+
+        assert!(!restore_missing_from_discovery(
+            Some(&target),
+            std::path::Path::new("/notes"),
+            &discovered,
+        ));
+        assert!(restore_missing_from_discovery(
+            Some(&target),
+            std::path::Path::new("/notes"),
+            &[PathBuf::from("/notes/Other/Open Notebook.onetoc2")],
+        ));
+        assert!(!restore_missing_from_discovery(
+            Some(&target),
+            std::path::Path::new("/unrelated"),
+            &[],
+        ));
+    }
+
+    fn persisted_page(source_id: &str, source_path: &str) -> PersistedPageLocation {
+        PersistedPageLocation {
+            source_path: PathBuf::from(source_path),
+            source_id: SourceId::new(source_id),
+            section_id: SectionId::new("section"),
+            page_id: PageId::new("page"),
+        }
     }
 
     #[test]

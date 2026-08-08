@@ -1,4 +1,5 @@
 use anyhow::{bail, Context, Result};
+use onenote_core::{PageId, SectionId, SourceId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -6,10 +7,26 @@ use std::path::{Path, PathBuf};
 
 const MAX_DISCOVERY_ENTRIES: usize = 100_000;
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct WorkspaceConfig {
     #[serde(default)]
     pub(crate) sources: Vec<PathBuf>,
+    #[serde(default)]
+    pub(crate) navigation: WorkspaceNavigation,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct WorkspaceNavigation {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) last_page: Option<PersistedPageLocation>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PersistedPageLocation {
+    pub(crate) source_path: PathBuf,
+    pub(crate) source_id: SourceId,
+    pub(crate) section_id: SectionId,
+    pub(crate) page_id: PageId,
 }
 
 pub(crate) fn paths() -> Result<(PathBuf, PathBuf)> {
@@ -129,6 +146,17 @@ pub(crate) fn source_is_in_location(source: &Path, location: &Path) -> bool {
     }
 }
 
+pub(crate) fn source_is_in_workspace(
+    source: &Path,
+    sources: &[PathBuf],
+    notebooks_location: &Path,
+) -> bool {
+    source_is_in_location(source, notebooks_location)
+        || sources
+            .iter()
+            .any(|configured| source_is_in_location(source, configured))
+}
+
 fn root_manifests(root: &Path, manifests: Vec<PathBuf>) -> Vec<PathBuf> {
     let manifest_parents: BTreeSet<PathBuf> = manifests
         .iter()
@@ -211,13 +239,36 @@ mod tests {
         let path = temporary.path().join("state/workspace.json");
         let expected = WorkspaceConfig {
             sources: vec![PathBuf::from("/notes/Notebook.onetoc2")],
+            navigation: WorkspaceNavigation {
+                last_page: Some(PersistedPageLocation {
+                    source_path: PathBuf::from("/notes/Notebook.onetoc2"),
+                    source_id: SourceId::new("source"),
+                    section_id: SectionId::new("section"),
+                    page_id: PageId::new("page"),
+                }),
+            },
         };
 
         save(&path, &expected).expect("save");
         let actual = load(&path).expect("load");
 
-        assert_eq!(actual.sources, expected.sources);
+        assert_eq!(actual, expected);
         assert!(!path.with_extension("json.new").exists());
+    }
+
+    #[test]
+    fn legacy_workspace_without_navigation_uses_empty_history() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let path = temporary.path().join("workspace.json");
+        fs::write(&path, r#"{"sources":["/notes/Notebook.onetoc2"]}"#).expect("legacy workspace");
+
+        let actual = load(&path).expect("load legacy workspace");
+
+        assert_eq!(
+            actual.sources,
+            vec![PathBuf::from("/notes/Notebook.onetoc2")]
+        );
+        assert_eq!(actual.navigation, WorkspaceNavigation::default());
     }
 
     #[test]
@@ -263,6 +314,28 @@ mod tests {
         assert!(!source_is_in_location(
             Path::new("/home/user/Documents/OneNoteViewer-old/Work.one"),
             root
+        ));
+    }
+
+    #[test]
+    fn workspace_membership_accepts_default_and_explicit_sources() {
+        let default = Path::new("/home/user/Documents/OneNoteViewer");
+        let explicit = vec![PathBuf::from("/mnt/archive/Notebook/Open Notebook.onetoc2")];
+
+        assert!(source_is_in_workspace(
+            Path::new("/home/user/Documents/OneNoteViewer/Work/Open Notebook.onetoc2"),
+            &explicit,
+            default
+        ));
+        assert!(source_is_in_workspace(
+            Path::new("/mnt/archive/Notebook/Open Notebook.onetoc2"),
+            &explicit,
+            default
+        ));
+        assert!(!source_is_in_workspace(
+            Path::new("/mnt/archive/Closed/Open Notebook.onetoc2"),
+            &explicit,
+            default
         ));
     }
 }
