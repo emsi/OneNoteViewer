@@ -643,6 +643,9 @@ pub struct TableCell {
 pub struct Image {
     /// Lazy binary payload.
     pub resource: ResourceRef,
+    /// Optional browser-compatible representation stored by `OneNote`.
+    #[serde(default)]
+    pub web_fallback: Option<ResourceRef>,
     /// Display width in logical pixels.
     pub width: Option<f32>,
     /// Display height in logical pixels.
@@ -662,6 +665,9 @@ pub struct Image {
 pub struct Attachment {
     /// Lazy binary payload.
     pub resource: ResourceRef,
+    /// Optional icon stored by `OneNote` for this embedded file.
+    #[serde(default)]
+    pub icon: Option<ResourceRef>,
     /// Display width in logical pixels.
     pub width: Option<f32>,
     /// Display height in logical pixels.

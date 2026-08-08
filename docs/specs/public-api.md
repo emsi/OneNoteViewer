@@ -52,7 +52,9 @@ payload lengths. It returns typed read, write, cancellation, size-limit, and
 size-mismatch errors. Callers choose their worker/thread model and own durable
 destination publication; the core library never selects paths, creates a
 cache, or launches an attachment. This additive contract is exposed by core
-API version 6.
+API version 6. API version 7 adds optional lazy resource handles for OneNote's
+browser-compatible image representation and embedded-file icon; primary
+payload handles remain unchanged.
 
 The public model includes:
 

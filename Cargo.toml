@@ -29,7 +29,7 @@ onenote-core = { path = "crates/onenote-core" }
 onenote-index = { path = "crates/onenote-index" }
 onenote-render = { path = "crates/onenote-render" }
 onenote-render-gtk = { path = "crates/onenote-render-gtk" }
-onenote_parser = { git = "https://github.com/msiemens/onenote.rs", tag = "v2.0.0" }
+onenote_parser = { git = "https://github.com/emsi/onenote.rs", rev = "57694b1ca128d4a6c1fb222f31049be3e6830599" }
 rusqlite = { version = "0.32.1", features = ["bundled"] }
 sanitize-filename = "0.6.0"
 serde = { version = "1.0.219", features = ["derive", "rc"] }
