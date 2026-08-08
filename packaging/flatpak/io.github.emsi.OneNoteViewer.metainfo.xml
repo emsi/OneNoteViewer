@@ -36,6 +36,16 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.1.5" date="2026-08-08">
+      <description>
+        <p>
+          Restore the last opened page across restarts, make page headers
+          selectable, and add safe attachment open and save actions. Stored
+          previews and file-type icons now improve embedded-file fidelity.
+        </p>
+      </description>
+      <url type="details">https://github.com/emsi/OneNoteViewer/releases/tag/v0.1.5</url>
+    </release>
     <release version="0.1.4" date="2026-08-07">
       <description>
         <p>
