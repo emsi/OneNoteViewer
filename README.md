@@ -27,13 +27,13 @@ yet a broad format-compatibility or visual-fidelity claim.
 
 Flatpak is the primary release channel.
 
-1. [Download OneNote Viewer 0.1.4](https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-0.1.4-linux-x86_64.flatpak).
+1. [Download OneNote Viewer 0.1.5](https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-0.1.5-linux-x86_64.flatpak).
 2. Open the downloaded file with your software center and install it.
 
 Alternatively, install it from a terminal opened in the download folder:
 
 ```bash
-flatpak install --user --or-update ./OneNoteViewer-0.1.4-linux-x86_64.flatpak
+flatpak install --user --or-update ./OneNoteViewer-0.1.5-linux-x86_64.flatpak
 ```
 
 Start **OneNote Viewer** from the desktop application menu. Flatpak and the
