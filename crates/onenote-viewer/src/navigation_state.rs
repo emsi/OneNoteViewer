@@ -84,6 +84,23 @@ mod tests {
     }
 
     #[test]
+    fn removed_remembered_section_falls_back_to_the_first_section() {
+        let notebook = notebook_with_pages(&["first"]);
+        let remembered = SectionLocation {
+            section_id: SectionId::new("removed"),
+            page_id: Some(PageId::new("removed-page")),
+        };
+
+        assert_eq!(
+            preferred_location(&notebook, Some(&remembered)),
+            Some(SectionLocation {
+                section_id: SectionId::new("section"),
+                page_id: Some(PageId::new("first")),
+            })
+        );
+    }
+
+    #[test]
     fn switching_sections_does_not_reuse_a_page_from_the_previous_section() {
         let notebook = Notebook {
             entries: vec![
