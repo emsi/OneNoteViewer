@@ -1,4 +1,4 @@
-use crate::image_cache::{self, DecodedImage, MAX_TEXTURE_CACHE_BYTES};
+use crate::image_cache::{self, DecodedImage, ImageDecodeFailure, MAX_TEXTURE_CACHE_BYTES};
 use crate::math_cache::{self, MathKey, MathSize, TypstMathBackend};
 use crate::resolved_layout::ResolvedLayout;
 use crate::text;
@@ -30,9 +30,10 @@ type ActionHandler = Rc<dyn Fn(HitAction)>;
 
 mod imp {
     use super::{
-        gdk, glib, ActionHandler, Arc, Cell, HashMap, HashSet, MathKey, MathLayoutBackend,
-        OnceLock, PageScene, Rc, RefCell, ResolvedLayout, ResourceId, ResourceStore, SceneNodeId,
-        TypstMathBackend, CANVAS_MARGIN, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
+        gdk, glib, ActionHandler, Arc, Cell, HashMap, HashSet, ImageDecodeFailure, MathKey,
+        MathLayoutBackend, OnceLock, PageScene, Rc, RefCell, ResolvedLayout, ResourceId,
+        ResourceStore, SceneNodeId, TypstMathBackend, CANVAS_MARGIN, DEFAULT_ZOOM, MAX_ZOOM,
+        MIN_ZOOM,
     };
     use gtk::prelude::*;
     use gtk::subclass::prelude::ObjectSubclassIsExt;
@@ -51,8 +52,9 @@ mod imp {
         pub(super) layout_generation: Cell<u64>,
         pub(super) textures: RefCell<HashMap<ResourceId, CachedTexture>>,
         pub(super) pending: RefCell<HashSet<ResourceId>>,
-        pub(super) failed: RefCell<HashSet<ResourceId>>,
+        pub(super) failed: RefCell<HashMap<ResourceId, ImageDecodeFailure>>,
         pub(super) texture_bytes: Cell<usize>,
+        pub(super) texture_generation: Cell<u64>,
         pub(super) math_textures: RefCell<HashMap<MathKey, CachedMathTexture>>,
         pub(super) math_pending: RefCell<HashSet<MathKey>>,
         pub(super) math_errors: RefCell<HashMap<MathKey, String>>,
@@ -80,6 +82,7 @@ mod imp {
                 pending: RefCell::default(),
                 failed: RefCell::default(),
                 texture_bytes: Cell::default(),
+                texture_generation: Cell::default(),
                 math_textures: RefCell::default(),
                 math_pending: RefCell::default(),
                 math_errors: RefCell::default(),
@@ -244,6 +247,8 @@ impl PageCanvas {
         imp.pending.borrow_mut().clear();
         imp.failed.borrow_mut().clear();
         imp.texture_bytes.set(0);
+        imp.texture_generation
+            .set(imp.texture_generation.get().wrapping_add(1));
         imp.math_textures.borrow_mut().clear();
         imp.math_pending.borrow_mut().clear();
         imp.math_errors.borrow_mut().clear();
@@ -266,6 +271,9 @@ impl PageCanvas {
         self.imp().pending.borrow_mut().clear();
         self.imp().failed.borrow_mut().clear();
         self.imp().texture_bytes.set(0);
+        self.imp()
+            .texture_generation
+            .set(self.imp().texture_generation.get().wrapping_add(1));
         self.queue_draw();
     }
 
@@ -682,28 +690,7 @@ impl PageCanvas {
                 }
                 snapshot.restore();
             }
-            ScenePrimitive::Image(image) => {
-                if let Some(texture) = self.texture(&image.resource.id) {
-                    snapshot.append_texture(&texture, &graphene_rect(node_bounds));
-                } else if self.imp().failed.borrow().contains(&image.resource.id) {
-                    snapshot.append_color(
-                        &gdk::RGBA::new(1.0, 0.92, 0.92, 1.0),
-                        &graphene_rect(node_bounds),
-                    );
-                    self.snapshot_label(
-                        snapshot,
-                        node_bounds,
-                        "Image unavailable",
-                        gdk::RGBA::new(0.55, 0.08, 0.08, 1.0),
-                    );
-                } else {
-                    snapshot.append_color(
-                        &gdk::RGBA::new(0.94, 0.94, 0.94, 1.0),
-                        &graphene_rect(node_bounds),
-                    );
-                    self.request_texture(image.resource.id.clone());
-                }
-            }
+            ScenePrimitive::Image(image) => self.snapshot_image(snapshot, node_bounds, image),
             ScenePrimitive::Attachment(attachment) => {
                 let hovered = self.imp().hovered_attachment.borrow().as_ref()
                     == Some(&attachment.resource.id);
@@ -734,6 +721,38 @@ impl PageCanvas {
             ScenePrimitive::Placeholder { label } => {
                 self.snapshot_label(snapshot, node_bounds, label, self.default_text_color());
             }
+        }
+    }
+
+    fn snapshot_image(&self, snapshot: &gtk::Snapshot, bounds: Rect, image: &onenote_core::Image) {
+        if let Some(texture) = self.texture(&image.resource.id) {
+            snapshot.append_texture(&texture, &graphene_rect(bounds));
+            return;
+        }
+        let Some(primary_failure) = self.image_failure(&image.resource.id) else {
+            Self::snapshot_image_loading(snapshot, bounds);
+            self.request_texture(image.resource.id.clone());
+            return;
+        };
+        let Some(fallback) = &image.web_fallback else {
+            self.snapshot_image_failure(
+                snapshot,
+                bounds,
+                image_failure_label(primary_failure, None),
+            );
+            return;
+        };
+        if let Some(texture) = self.texture(&fallback.id) {
+            snapshot.append_texture(&texture, &graphene_rect(bounds));
+        } else if let Some(fallback_failure) = self.image_failure(&fallback.id) {
+            self.snapshot_image_failure(
+                snapshot,
+                bounds,
+                image_failure_label(primary_failure, Some(fallback_failure)),
+            );
+        } else {
+            Self::snapshot_image_loading(snapshot, bounds);
+            self.request_texture(fallback.id.clone());
         }
     }
 
@@ -774,7 +793,24 @@ impl PageCanvas {
         };
         snapshot.append_color(&background, &graphene_rect(bounds));
         snapshot_attachment_border(snapshot, bounds, border, 1.0);
-        snapshot_file_icon(snapshot, bounds, accent);
+        let icon_bounds = Rect {
+            x: bounds.x + 4.0,
+            y: bounds.y + (bounds.height - 24.0).max(0.0) / 2.0,
+            width: bounds.width.clamp(1.0, 24.0),
+            height: bounds.height.clamp(1.0, 24.0),
+        };
+        if let Some(icon) = &attachment.icon {
+            if let Some(texture) = self.texture(&icon.id) {
+                snapshot.append_texture(&texture, &graphene_rect(icon_bounds));
+            } else {
+                snapshot_file_icon(snapshot, bounds, accent);
+                if self.image_failure(&icon.id).is_none() {
+                    self.request_texture(icon.id.clone());
+                }
+            }
+        } else {
+            snapshot_file_icon(snapshot, bounds, accent);
+        }
 
         let label_bounds = Rect {
             x: bounds.x + 32.0,
@@ -829,9 +865,33 @@ impl PageCanvas {
             .map(|entry| entry.texture.clone())
     }
 
+    fn image_failure(&self, id: &ResourceId) -> Option<ImageDecodeFailure> {
+        self.imp().failed.borrow().get(id).copied()
+    }
+
+    fn snapshot_image_loading(snapshot: &gtk::Snapshot, bounds: Rect) {
+        snapshot.append_color(
+            &gdk::RGBA::new(0.94, 0.94, 0.94, 1.0),
+            &graphene_rect(bounds),
+        );
+    }
+
+    fn snapshot_image_failure(&self, snapshot: &gtk::Snapshot, bounds: Rect, label: &str) {
+        snapshot.append_color(
+            &gdk::RGBA::new(1.0, 0.92, 0.92, 1.0),
+            &graphene_rect(bounds),
+        );
+        self.snapshot_label(
+            snapshot,
+            bounds,
+            label,
+            gdk::RGBA::new(0.55, 0.08, 0.08, 1.0),
+        );
+    }
+
     fn request_texture(&self, id: ResourceId) {
         let imp = self.imp();
-        if imp.failed.borrow().contains(&id)
+        if imp.failed.borrow().contains_key(&id)
             || imp.pending.borrow().contains(&id)
             || imp.textures.borrow().contains_key(&id)
         {
@@ -841,11 +901,12 @@ impl PageCanvas {
             return;
         };
         imp.pending.borrow_mut().insert(id.clone());
+        let generation = imp.texture_generation.get();
         let weak: glib::SendWeakRef<Self> = self.downgrade().into();
         image_cache::spawn_decode(resources, id, move |id, decoded| {
             glib::MainContext::default().invoke(move || {
                 if let Some(canvas) = weak.upgrade() {
-                    canvas.finish_texture(id, decoded);
+                    canvas.finish_texture(generation, id, decoded);
                 }
             });
         });
@@ -965,17 +1026,30 @@ impl PageCanvas {
         self.queue_draw();
     }
 
-    fn finish_texture(&self, id: ResourceId, decoded: Option<DecodedImage>) {
+    fn finish_texture(
+        &self,
+        generation: u64,
+        id: ResourceId,
+        decoded: Result<DecodedImage, ImageDecodeFailure>,
+    ) {
         let imp = self.imp();
-        imp.pending.borrow_mut().remove(&id);
-        let Some(decoded) = decoded else {
-            imp.failed.borrow_mut().insert(id);
-            self.queue_draw();
+        if generation != imp.texture_generation.get() {
             return;
+        }
+        imp.pending.borrow_mut().remove(&id);
+        let decoded = match decoded {
+            Ok(decoded) => decoded,
+            Err(failure) => {
+                imp.failed.borrow_mut().insert(id, failure);
+                self.queue_draw();
+                return;
+            }
         };
         let (id, texture, bytes) = image_cache::texture(decoded);
         if bytes > MAX_TEXTURE_CACHE_BYTES {
-            imp.failed.borrow_mut().insert(id);
+            imp.failed
+                .borrow_mut()
+                .insert(id, ImageDecodeFailure::CannotDisplay);
             self.queue_draw();
             return;
         }
@@ -1137,6 +1211,19 @@ fn perceived_lightness(color: gdk::RGBA) -> f32 {
     color.red() * 0.2126 + color.green() * 0.7152 + color.blue() * 0.0722
 }
 
+fn image_failure_label(
+    primary: ImageDecodeFailure,
+    fallback: Option<ImageDecodeFailure>,
+) -> &'static str {
+    if primary == ImageDecodeFailure::Unavailable
+        && fallback.is_none_or(|failure| failure == ImageDecodeFailure::Unavailable)
+    {
+        "Image unavailable"
+    } else {
+        "Image cannot be displayed"
+    }
+}
+
 fn ink_bounds(strokes: &[onenote_core::InkStroke]) -> Option<Rect> {
     strokes
         .iter()
@@ -1228,7 +1315,8 @@ fn f64_to_f32(value: f64) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        next_attachment_index, normalize_zoom, PageCanvas, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
+        image_failure_label, next_attachment_index, normalize_zoom, ImageDecodeFailure, PageCanvas,
+        DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
     };
     use gtk::prelude::*;
     use gtk::subclass::prelude::ObjectSubclassIsExt;
@@ -1261,6 +1349,28 @@ mod tests {
         assert_eq!(next_attachment_index(Some(2), 3, true), Some(1));
         assert_eq!(next_attachment_index(Some(0), 3, true), None);
         assert_eq!(next_attachment_index(None, 0, false), None);
+    }
+
+    #[test]
+    fn image_failure_labels_distinguish_missing_and_undecodable_data() {
+        assert_eq!(
+            image_failure_label(ImageDecodeFailure::Unavailable, None),
+            "Image unavailable"
+        );
+        assert_eq!(
+            image_failure_label(
+                ImageDecodeFailure::Unavailable,
+                Some(ImageDecodeFailure::Unavailable)
+            ),
+            "Image unavailable"
+        );
+        assert_eq!(
+            image_failure_label(
+                ImageDecodeFailure::CannotDisplay,
+                Some(ImageDecodeFailure::Unavailable)
+            ),
+            "Image cannot be displayed"
+        );
     }
 
     #[test]
@@ -1297,6 +1407,7 @@ mod tests {
                         size: 12,
                         status: ResourceStatus::Available,
                     },
+                    icon: None,
                     width: None,
                     height: None,
                 }),

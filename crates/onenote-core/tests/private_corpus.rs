@@ -495,9 +495,13 @@ fn resource_refs(entries: &[NotebookEntry]) -> Vec<&ResourceRef> {
                 for page in &section.pages {
                     for object in &page.objects {
                         match &object.kind {
-                            ObjectKind::Image(image) => resources.push(&image.resource),
+                            ObjectKind::Image(image) => {
+                                resources.push(&image.resource);
+                                resources.extend(image.web_fallback.iter());
+                            }
                             ObjectKind::Attachment(attachment) => {
                                 resources.push(&attachment.resource);
+                                resources.extend(attachment.icon.iter());
                             }
                             ObjectKind::Outline(outline) => {
                                 for element in &outline.elements {
@@ -521,8 +525,14 @@ fn element_resource_refs<'a>(
 ) {
     for content in &element.content {
         match content {
-            ElementContent::Image(image) => output.push(&image.resource),
-            ElementContent::Attachment(attachment) => output.push(&attachment.resource),
+            ElementContent::Image(image) => {
+                output.push(&image.resource);
+                output.extend(image.web_fallback.iter());
+            }
+            ElementContent::Attachment(attachment) => {
+                output.push(&attachment.resource);
+                output.extend(attachment.icon.iter());
+            }
             ElementContent::Table(table) => {
                 for row in &table.rows {
                     for cell in row {

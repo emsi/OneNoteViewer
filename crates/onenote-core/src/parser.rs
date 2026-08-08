@@ -11,7 +11,7 @@ use crate::{Error, ResourceStore, Result, PIXELS_PER_HALF_INCH};
 use linkify::{LinkFinder, LinkKind};
 use onenote_parser::contents::{
     Content, EmbeddedFile, Image as ParserImage, Ink as ParserInk, List, Outline as ParserOutline,
-    OutlineElement as ParserOutlineElement, OutlineItem, ParagraphStyling, RichText,
+    OutlineElement as ParserOutlineElement, OutlineItem, ParagraphStyling, Picture, RichText,
     Table as ParserTable,
 };
 use onenote_parser::notebook::Notebook as ParserNotebook;
@@ -538,8 +538,9 @@ impl Projector {
     }
 
     fn image(&mut self, image: &ParserImage, key: &str) -> Result<Image> {
+        let required_resources = 1 + usize::from(image.web_picture().is_some());
         self.enforce(
-            self.resources.len() < self.limits.max_resources,
+            self.resources.len().saturating_add(required_resources) <= self.limits.max_resources,
             "resource limit exceeded",
         )?;
         let id = ResourceId::new(self.id("resource", key));
@@ -556,8 +557,12 @@ impl Projector {
         };
         self.resources
             .insert(id, ResourceLoader::Image(image.clone()));
+        let web_fallback = image.web_picture().map(|picture| {
+            self.picture_resource(picture, &format!("{key}/web-fallback"), "image-fallback")
+        });
         Ok(Image {
             resource,
+            web_fallback,
             width: image
                 .layout_max_width()
                 .or_else(|| image.picture_width())
@@ -597,8 +602,9 @@ impl Projector {
     }
 
     fn attachment(&mut self, file: &EmbeddedFile, key: &str) -> Result<Attachment> {
+        let required_resources = 1 + usize::from(file.icon().is_some());
         self.enforce(
-            self.resources.len() < self.limits.max_resources,
+            self.resources.len().saturating_add(required_resources) <= self.limits.max_resources,
             "resource limit exceeded",
         )?;
         let id = ResourceId::new(self.id("resource", key));
@@ -616,11 +622,30 @@ impl Projector {
         };
         self.resources
             .insert(id, ResourceLoader::Attachment(file.clone()));
+        let icon = file
+            .icon()
+            .map(|picture| self.picture_resource(picture, &format!("{key}/icon"), "file-icon"));
         Ok(Attachment {
             resource,
+            icon,
             width: file.layout_max_width().map(half_inches),
             height: file.layout_max_height().map(half_inches),
         })
+    }
+
+    fn picture_resource(&mut self, picture: &Picture, key: &str, stem: &str) -> ResourceRef {
+        let id = ResourceId::new(self.id("resource", key));
+        let extension = picture.extension().unwrap_or("bin").trim_start_matches('.');
+        let resource = ResourceRef {
+            id: id.clone(),
+            name: format!("{stem}.{extension}"),
+            media_type: image_media_type(extension).to_owned(),
+            size: picture.size(),
+            status: resource_status(picture.data_status()),
+        };
+        self.resources
+            .insert(id, ResourceLoader::Picture(picture.clone()));
+        resource
     }
 
     fn ink_object(

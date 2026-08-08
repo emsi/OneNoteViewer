@@ -1,5 +1,5 @@
 use crate::{Error, ResourceId, ResourceStatus, Result};
-use onenote_parser::contents::{EmbeddedFile, FileDataStatus, Image};
+use onenote_parser::contents::{EmbeddedFile, FileDataStatus, Image, Picture};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -65,6 +65,7 @@ impl ResourceCopyControl {
 #[derive(Clone, Debug)]
 pub(crate) enum ResourceLoader {
     Image(Image),
+    Picture(Picture),
     Attachment(EmbeddedFile),
 }
 
@@ -72,6 +73,7 @@ impl ResourceLoader {
     fn size(&self) -> u64 {
         match self {
             Self::Image(image) => image.size().unwrap_or(0),
+            Self::Picture(picture) => picture.size(),
             Self::Attachment(file) => file.size(),
         }
     }
@@ -79,6 +81,7 @@ impl ResourceLoader {
     fn status(&self) -> ResourceStatus {
         let status = match self {
             Self::Image(image) => image.data_status(),
+            Self::Picture(picture) => picture.data_status(),
             Self::Attachment(file) => file.data_status(),
         };
         resource_status(status)
@@ -87,6 +90,7 @@ impl ResourceLoader {
     fn reader(&self) -> Option<Box<dyn Read>> {
         match self {
             Self::Image(image) => image.read(),
+            Self::Picture(picture) => Some(picture.read()),
             Self::Attachment(file) => Some(file.read()),
         }
     }
@@ -94,6 +98,7 @@ impl ResourceLoader {
     fn verified_size(&self) -> Option<u64> {
         match self {
             Self::Image(image) => image.size(),
+            Self::Picture(picture) => Some(picture.size()),
             Self::Attachment(file) => Some(file.size()),
         }
     }

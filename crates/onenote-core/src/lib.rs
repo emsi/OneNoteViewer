@@ -27,7 +27,7 @@ pub use resource::{
 };
 
 /// The crate API version during the pre-1.0 implementation phase.
-pub const API_VERSION: u32 = 6;
+pub const API_VERSION: u32 = 7;
 
 /// Logical display pixels per `OneNote` half-inch layout unit at 96 DPI.
 pub const PIXELS_PER_HALF_INCH: f32 = 48.0;

@@ -1371,6 +1371,7 @@ mod tests {
                     z_index: 0,
                     kind: ObjectKind::Image(Image {
                         resource: unavailable("image", ResourceStatus::Invalid),
+                        web_fallback: None,
                         width: None,
                         height: None,
                         alt_text: None,
@@ -1391,6 +1392,7 @@ mod tests {
                     z_index: 1,
                     kind: ObjectKind::Attachment(Attachment {
                         resource: unavailable("report.pdf", ResourceStatus::Missing),
+                        icon: None,
                         width: None,
                         height: None,
                     }),
