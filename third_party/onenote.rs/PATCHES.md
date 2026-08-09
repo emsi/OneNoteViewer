@@ -1,10 +1,11 @@
 # Historical OneNote Parser Compatibility Patches
 
-The active application dependency is upstream
-[`msiemens/onenote.rs`](https://github.com/msiemens/onenote.rs), pinned in the
-workspace manifest to release `v2.0.0` at revision
-`fa4d7a044324af3bfe68727704a9789a08b36a3c`. That release contains the
-compatibility changes formerly maintained in the project fork.
+The active application dependency is the public
+[`emsi/onenote.rs`](https://github.com/emsi/onenote.rs) fork, pinned at revision
+`57694b1ca128d4a6c1fb222f31049be3e6830599`. It builds on upstream `v2.0.0` and
+adds the supplemental-picture API used for stored image fallbacks and attachment
+icons. The compatibility changes formerly maintained in the fork are included
+in upstream `v2.0.0`.
 
 This directory retains an MPL-2.0 source snapshot for audit history and
 fallback inspection; Cargo does not build it. Upstream test samples and
@@ -78,5 +79,6 @@ revision materialization was merged through
 Structured rich-text hyperlinks were merged through
 [msiemens/onenote.rs#42](https://github.com/msiemens/onenote.rs/pull/42).
 
-Upstream release `v2.0.0` contains the complete resulting source tree used by
-OneNoteViewer, including the `GlobalIdTableEntry3FNDX` range resolution.
+Upstream release `v2.0.0` contains the former compatibility changes, including
+the `GlobalIdTableEntry3FNDX` range resolution. OneNoteViewer's current pinned
+revision additionally contains the supplemental-picture API described above.

@@ -21,8 +21,8 @@ Delivery levels:
 - **Unsupported:** detected with an explicit limitation.
 
 This is a target inventory, not an implementation-status table. The current
-code covers only a subset of rows even when their target level is MVP. See
-the [roadmap](../plans/roadmap.md), [risk register](../limitations.md), and
+code covers only a subset of rows even when their target level is MVP. See the
+[known limitations](../limitations.md) and current
 [GitHub issues](https://github.com/emsi/OneNoteViewer/issues) before making a
 support claim.
 

@@ -574,14 +574,12 @@ Required fatal examples:
 ## 10. Parser Dependency Profile
 
 Use `onenote_parser` only through `onenote-core`; parser types and revision
-internals must not spread into the application. Upstream release `v2.0.0` is
-pinned because the private desktop and backup corpora need its desktop support
-and focused compatibility fixes. Those former patches and their upstream pull
-requests are documented in
-`third_party/onenote.rs/PATCHES.md`; the local source tree is retained for
-audit history but is not the Cargo dependency.
+internals must not spread into the application. The selected revision builds on
+upstream `v2.0.0` desktop support. Former compatibility patches and their
+upstream pull requests are documented in `third_party/onenote.rs/PATCHES.md`;
+the retained local source tree is audit history, not the Cargo dependency.
 
-Before beta, the chosen upstream release/commit must demonstrate:
+The selected parser revision is expected to provide:
 
 - desktop and FSSHTTP header sniffing;
 - `.one` and `.onetoc2` parsing;
@@ -592,10 +590,10 @@ Before beta, the chosen upstream release/commit must demonstrate:
 - per-page/section warnings;
 - ink and math projection;
 
-The current implementation pin is upstream `v2.0.0` at
-`fa4d7a044324af3bfe68727704a9789a08b36a3c`. It includes the documented former
-fork patches and an in-memory package reader that this application explicitly
-does not use.
+The current implementation uses the public `emsi/onenote.rs` fork at immutable
+revision `57694b1ca128d4a6c1fb222f31049be3e6830599`. It is based on upstream
+`v2.0.0` and exposes the supplemental images used for stored image fallbacks and
+attachment icons. Its in-memory package reader is not used by this application.
 
 ## 11. Implementation Acceptance
 
@@ -608,6 +606,6 @@ Parsing support for a feature is complete only when:
 5. renderer and index behavior match the feature matrix;
 6. a OneNote reference screenshot/export or independent parser result provides
    an oracle;
-7. known differences are recorded in `docs/limitations.md`.
+7. known implementation differences are tracked in the project issue tracker.
 
 Passing a single notebook is not evidence of general compatibility.

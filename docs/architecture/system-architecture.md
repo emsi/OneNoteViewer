@@ -201,8 +201,9 @@ of application-global state, cancellable, and resource-bounded. See
 - Notebook failures are isolated in the viewer. Finer per-section/page parser
   recovery remains corpus-dependent.
 
-Initial resource ceilings are defined in the limitations document and become
-configuration only after real corpus measurements.
+Defensive resource ceilings are code defaults. Remaining aggregate limits and
+measurement work are tracked in
+[issue #43](https://github.com/emsi/OneNoteViewer/issues/43).
 
 ## Security Boundaries
 

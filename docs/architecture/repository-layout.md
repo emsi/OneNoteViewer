@@ -137,9 +137,10 @@ creates render nodes. Public interfaces follow
 
 - `docs/references/` contains redistributed primary specifications and a
   checksum manifest, not arbitrary web captures.
-- A future `fixtures/` contains only small synthetic or explicitly licensed
-  data. The current private corpus is supplied through an ignored
-  environment-specific path.
+- The repository currently contains no notebook samples. Redistributable corpus
+  work is tracked in
+  [issue #42](https://github.com/emsi/OneNoteViewer/issues/42); private notebooks
+  are supplied only through ignored environment-specific paths.
 - `third_party/onenote.rs/` is the retained MPL-2.0 parser audit snapshot. The
   active Cargo dependency is the public fork at the immutable revision recorded
   in the workspace manifest and lockfile.

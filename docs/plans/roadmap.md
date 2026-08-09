@@ -1,9 +1,9 @@
 # Roadmap
 
-This is the detailed implementation sequence beneath the
-[master plan](../MASTER-PLAN.md). The master plan owns overall scope, current
-status, deliverables, and document authority; this roadmap owns milestone order
-and exit gates.
+This is the long-term implementation sequence beneath the
+[master plan](../MASTER-PLAN.md). The master plan owns 1.0 criteria and overall
+scope; GitHub issues own current work and status. Roadmap milestones are broader
+engineering goals and are not additional 1.0 release gates.
 
 ## Milestone 0: Specification and Evidence
 
@@ -90,7 +90,7 @@ independent protocol fixtures pass. Recorded latency targets remain open.
 
 ## Milestone 2: Readable Notebook MVP
 
-**Status: in progress**
+**Status: usable viewer delivered; remaining enhancements continue**
 
 - [x] Open/close/reopen multiple notebook roots.
 - [x] Virtualized, collapsible notebook/section-group/section tree and page
@@ -121,7 +121,7 @@ independent protocol fixtures pass. Recorded latency targets remain open.
 - [ ] Add per-page/per-section compatibility warning surfaces.
 - [ ] Add source-change detection and manual transactional refresh.
 
-**Exit criteria:**
+**Long-term milestone criteria:**
 
 - every MVP feature-matrix row has a fixture or an explicit accepted
   limitation;
@@ -134,10 +134,9 @@ independent protocol fixtures pass. Recorded latency targets remain open.
   pass;
 - `cargo fmt`, clippy, tests, and dependency/license audit pass.
 
-Current implementation tasks and acceptance criteria are tracked as
+Current implementation tasks, acceptance criteria, and status are tracked as
 [GitHub issues](https://github.com/emsi/OneNoteViewer/issues). The
-[risk register](../limitations.md) records evidence gaps and accepted
-boundaries.
+[limitations document](../limitations.md) records stable product boundaries.
 
 ## Milestone 3: Compatibility and Fidelity
 

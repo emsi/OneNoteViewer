@@ -10,8 +10,9 @@ matrix defines the evidence required before compatibility claims.
 
 ### Redistributable
 
-Small purpose-built notebooks committed under `fixtures/generated/` with a
-README recording:
+The repository does not currently contain redistributable notebook samples.
+[Issue #42](https://github.com/emsi/OneNoteViewer/issues/42) tracks adding small,
+purpose-built notebooks with recorded:
 
 - producer application/version and operating system;
 - exact creation steps;
@@ -43,10 +44,10 @@ Manifest-free backup-folder snapshots use the separate
 `ONENOTE_BACKUP_TEST_CORPUS` path so their per-file parser regression can run
 without changing the manifest-backed package corpus.
 
-Current private evidence is one desktop `.onepkg`: extraction yields 32
-sections and five TOCs; the root notebook projects all sections, every page
-builds a finite scene, and 637 pages index and search. This is an implementation
-smoke corpus, not fulfillment of the producer or feature matrices below.
+The private regression corpus spans notebooks created across OneNote 2010
+through modern Microsoft 365 and OneNote for the web. It exercises parsing,
+rendering, indexing, search, and package extraction locally, but it does not
+provide public CI evidence or fulfill every producer and feature row below.
 
 ### Malformed/Fuzz Corpus
 

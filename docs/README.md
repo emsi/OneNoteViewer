@@ -38,7 +38,7 @@ normative.
 - [End-user installation guide](INSTALL.md)
 - [Roadmap and milestone gates](plans/roadmap.md)
 - [Reusable backup-folder loader plan](plans/backup-folder-loader.md)
-- [Potential limitations](limitations.md)
+- [Known product limitations](limitations.md)
 - [Actionable implementation work](https://github.com/emsi/OneNoteViewer/issues)
 - [Developer packaging and release guide](RELEASES.md)
 - [Project and third-party licensing](../THIRD-PARTY-NOTICES.md)
@@ -46,10 +46,11 @@ normative.
 - [Documentation baseline audit](plans/completion-audit.md)
 - [Reference manifest and provenance](references/README.md)
 
-The roadmap is the detailed execution schedule beneath the master plan.
-Remaining work records implementation and release gaps. The completion audit
-records how the original documentation baseline was assembled; it is
-historical evidence, not a current project plan or implementation status.
+GitHub issues are the source of truth for current implementation work and its
+status. The limitations document records only stable user-facing boundaries.
+The completion audit records how the original documentation baseline was
+assembled; it is historical evidence, not a current project plan or
+implementation status.
 
 ## Documentation Rules
 
@@ -57,7 +58,8 @@ historical evidence, not a current project plan or implementation status.
    external sources.
 2. State whether a claim is normative, observed, inferred, or provisional.
 3. Put irreversible or cross-cutting decisions in a numbered ADR.
-4. Keep limitations visible even when a workaround exists.
+4. Keep stable product limitations visible and track changing status in GitHub
+   issues.
 5. Update the feature matrix and corpus case together when adding format
    support.
 6. Never commit private notebooks. Only deliberately constructed, licensed

@@ -779,7 +779,7 @@ behavior before the public API is stabilized:
   keeping filename conventions distinct from binary format claims.
 - Add corpus cases and feature-matrix rows for classification, hierarchy,
   snapshot selection, and diagnostics.
-- Update `limitations.md` with tested producers/locales and unresolved
+- Update the tracking issue with tested producers/locales and unresolved
   conventions.
 - Update [issue #39](https://github.com/emsi/OneNoteViewer/issues/39) and the
   master plan's current evidence.

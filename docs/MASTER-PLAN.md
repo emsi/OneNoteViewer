@@ -1,8 +1,8 @@
 # OneNote Viewer Master Plan
 
-- **Status:** Functional implementation baseline; not release-ready
-- **Current phase:** Milestone 2 readable-viewer completion and evidence
-- **Last reconciled:** 2026-07-28 UTC
+- **Status:** Usable pre-1.0 application; two 1.0 blockers remain
+- **Current phase:** 1.0 completion
+- **Last reconciled:** 2026-08-09 UTC
 
 ## Role of This Document
 
@@ -129,108 +129,50 @@ The detailed milestone sequence and exit gates are in the
 
 ### Current Status
 
-- Milestone 0 documentation and evidence baseline is complete.
-- The five-crate Rust workspace and pinned Rust 1.85.1 toolchain are in place.
-- `onenote-core` projects native `.one`/`.onetoc2` sources into a public
-  semantic and geometry model, fingerprints source trees, lazily exposes
-  bounded resources through cancellable streaming, and manages validated,
-  atomic, on-disk `.onepkg` extraction through `7zz`/`7z`.
-- `onenote-render` builds deterministic UI-neutral scenes, and
-  `onenote-render-gtk` provides an independently runnable Pango/GSK page view
-  with culling, pan, zoom, hit testing, bounded asynchronous image decoding,
-  Cairo line primitives, and asynchronous native OfficeMath typesetting through
-  a replaceable UI-neutral backend contract. End-to-end notebook ink rendering
-  remains tracked in [issue #6](https://github.com/emsi/OneNoteViewer/issues/6).
-  Math source remains a typed domain AST and its marker-free linear form is
-  indexed.
-- `onenote-index` provides transactional multi-source FTS5 indexing,
-  structured result locators, snippets, filtering, integrity checks, and a
-  versioned JSON Lines query adapter with an independent process test.
-- `onenote-viewer` provides persistent multi-notebook discovery and
-  a collapsible notebook/section-group/section tree plus page navigation,
-  background parsing/indexing/scene construction, global search result
-  navigation, a native freeform canvas, settings-backed default notebook
-  location discovery, and package onboarding with destination confirmation,
-  phase progress, and cancellation. Attachments can be saved or opened on
-  explicit request through bounded background streaming, safe destination
-  replacement, a private source-scoped cache, and desktop/portal delegation.
-  Its compact single-row shell exposes native window controls, an
-  application-command menu, and persisted System, Light, and Dark themes under
-  the [desktop UI requirements](specs/desktop-ui.md).
-  Page title and creation time appear once in viewer chrome while the reusable
-  renderer can still render the complete native title area for other hosts.
-- A manifest-free backup directory is not yet aggregated: the current
-  discovery fallback loads each recursive `.one` file as a standalone source.
-  The reusable core replacement, snapshot selection, hierarchy reconstruction,
-  and workspace migration are specified in the
-  [backup-folder loader plan](plans/backup-folder-loader.md).
-- The supplied private `.onepkg` has passed unchanged-source extraction to 32
-  `.one` and five `.onetoc2` files. All 32 sections parse, every page builds a
-  finite scene, 637 pages index in the root notebook, and the complete viewer
-  opens and indexes it under Xvfb. A separate two-source run proved simultaneous
-  workspace and index behavior.
-- A separate private manifest-free backup contains 83 physical snapshots for
-  42 logical section paths. All 83 now parse independently after the documented
-  compatibility patches. This proves per-file recovery only, not aggregate
-  backup loading, unique-page counts, or complete rendering fidelity.
-- The private math regression fixture projects and natively renders its
-  three OfficeMath expressions, including fractions, scripts, function
-  application, and an n-ary summation with limits. This does not yet prove all
-  rare OfficeMath operators or exact OneNote geometry.
-- Ten primary Microsoft reference PDFs are pinned and reproducibly verified.
-- Workspace tests, private-corpus tests, strict Clippy, formatting, and index
-  integrity checks pass.
-- This evidence is deliberately narrow. It does not prove release-grade
-  fidelity, accessibility, security, producer breadth, or distribution.
-  The [roadmap](plans/roadmap.md) defines execution order, the
-  [risk register](limitations.md) defines evidence gaps and accepted boundaries,
-  and [GitHub issues](https://github.com/emsi/OneNoteViewer/issues) track
-  actionable implementation work.
+- OneNote Viewer is used daily to access, search, and read 15 years of personal
+  notes created across OneNote 2010 through modern Microsoft 365 and OneNote for
+  the web.
+- The desktop application provides persistent multi-notebook navigation and
+  search, native freeform rendering, `.onepkg` import, links, attachments,
+  workspace restoration, navigation history, zoom, and light/dark/system themes.
+- The reusable core, scene renderer, GTK widget, and index/query components are
+  implemented as a five-crate Rust workspace. Flatpak is the primary release
+  channel, with AppImage also published.
+- The two remaining 1.0 blockers are hand-drawn ink rendering
+  ([issue #6](https://github.com/emsi/OneNoteViewer/issues/6)) and freeform page
+  text selection/copy
+  ([issue #8](https://github.com/emsi/OneNoteViewer/issues/8)).
+- [GitHub issues](https://github.com/emsi/OneNoteViewer/issues) are the source of
+  truth for other bugs, compatibility gaps, and planned improvements. The
+  [limitations document](limitations.md) records only stable product boundaries.
 
 ### Next Execution Order
 
-1. Implement the reusable manifest-free backup-folder loader and integrate its
-   single synthetic notebook, reconstructed section groups, snapshot policy,
-   workspace migration, and aggregate index generation.
-2. Complete remaining viewer workflows: package preflight/limits,
-   diagnostics, source refresh, tags, and fuller workspace restoration.
-   Pointer-activated inline link handling and safe on-demand attachment actions
-   are implemented; general canvas keyboard/screen-reader access remains part
-   of the accessibility work.
-3. Establish visual oracles and measured tolerances for rich text, tables,
-   images/printouts, ink, negative coordinates, overlap, and large pages.
-4. Map scene semantics into GTK accessibility, add keyboard navigation, and
-   pass Orca tests under GNOME/KDE and Wayland/X11.
-5. Expand licensed producer/feature and malformed/fuzz corpora; close parser,
-   allocation, path, and process-lifecycle risks with repeatable evidence.
-6. Benchmark and optimize cold parse/index, warm search, pan/zoom, image cache,
-   and large workspace memory.
-7. Publish API documentation and complete portable-package integration,
-   reproducibility, and signing. The parser compatibility patches are available
-   in upstream v2.0.0; GPL-3.0-or-later and third-party/corresponding-source
-   packaging are already established.
+1. Render hand-drawn ink from native notebook data.
+2. Add spatial selection and clipboard support to the freeform page canvas.
+3. Run the existing release checks and publish 1.0 when both blockers are
+   complete.
+4. Prioritize remaining work from the issue tracker according to user impact;
+   it does not block 1.0 unless explicitly reclassified.
 
-## Definition of Success
+## Definition of 1.0 Success
 
-The first mature release requires all of the following:
+The 1.0 release requires all of the following:
 
-- representative native freeform pages match measured OneNote Desktop layout
-  and content behavior within documented tolerances;
 - multiple notebook roots remain open, persist across launches, and participate
   in one search scope;
-- package onboarding is bounded, cancellable, recoverable, and independent
-  from normal viewing;
-- standalone renderer and search clients use only supported public interfaces;
-- malformed and oversized input cannot panic, hang, escape source/staging
-  roots, or cause unbounded allocation;
-- deleting indexes and caches loses no notebook information;
+- native freeform pages render text, tables, images, attachments, equations, and
+  hand-drawn ink;
+- page text can be spatially selected and copied;
+- `.onepkg` import and published Flatpak/AppImage artifacts pass their release
+  checks;
 - source trees remain byte-for-byte unchanged after viewing and indexing;
-- accessibility, responsiveness, dependency, license, and distribution gates
-  pass;
-- release notes state precisely which producers and features were tested.
+- known remaining limitations are stated without presenting smaller open issues
+  as release blockers.
 
-Detailed acceptance criteria remain normative in the product, format, search,
-public API, corpus, feature, limitation, and roadmap documents.
+Detailed behavior remains normative in the product, format, search, public API,
+and feature specifications. Current implementation status belongs in GitHub
+issues.
 
 ## Document Authority
 
@@ -240,19 +182,18 @@ Read the project documents in this order:
    definition of success.
 2. **[Product requirements](specs/product-requirements.md):** normative user and
    product behavior.
-3. **[Roadmap](plans/roadmap.md):** implementation sequence, milestones, and
-   exit gates.
-4. **Architecture and accepted ADRs:** component ownership and reasons for
+3. **[GitHub issues](https://github.com/emsi/OneNoteViewer/issues):** current
+   implementation work, acceptance criteria, and status.
+4. **[Roadmap](plans/roadmap.md):** long-term milestones and sequencing context.
+5. **Architecture and accepted ADRs:** component ownership and reasons for
    cross-cutting decisions.
-5. **Detailed specifications:** format, feature, search, public API, and corpus
+6. **Detailed specifications:** format, feature, search, public API, and corpus
    contracts.
-6. **[Limitations](limitations.md):** open risks, accepted boundaries, and
-   release blockers.
-7. **[GitHub issues](https://github.com/emsi/OneNoteViewer/issues):** actionable
-   implementation work and its acceptance criteria.
+7. **[Limitations](limitations.md):** stable user-facing product boundaries and
+   the explicitly declared 1.0 blockers.
 8. **[Completion audit](plans/completion-audit.md):** historical evidence that
    the documentation baseline was assembled; it is not the current plan.
 
 If documents disagree, the more specific accepted specification or ADR governs
-its subject, but this master plan must be updated immediately so the main entry
-never presents stale scope or status.
+its subject. GitHub issues govern current implementation status, and this master
+plan must be updated when project scope or release criteria change.

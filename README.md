@@ -1,27 +1,10 @@
 # OneNote Viewer for Linux
 
-OneNote Viewer is a native Linux desktop application for
-opening, viewing, indexing, and searching local Microsoft OneNote notebooks.
-It reads the native `.one` and `.onetoc2` data directly and reconstructs the
-OneNote freeform page canvas; HTML, Markdown, PDF, or another linear document
-format is never its canonical representation. It is deliberately read-only:
-source notebook files are never modified.
-
-Multiple notebook directories remain open together in one workspace, with the
-familiar notebook/section-group/section/page/canvas hierarchy and one search
-scope across all of them. This is a desktop viewer, not a converter or an
-import bridge to another notes application.
-
-The viewer is also a reference consumer of reusable components. Native
-OneNote parsing, page layout/scene construction, GTK rendering, and
-index/query behavior live behind documented library boundaries so other
-note-taking and knowledge-management software can render `.one` sections or
-find relevant OneNote pages without adopting the complete desktop application.
-
-This repository contains a working Rust/GTK implementation, its specifications
-and architecture decisions, and a versioned copy of the primary format
-references. The implementation is a functional pre-release baseline; it is not
-yet a broad format-compatibility or visual-fidelity claim.
+OneNote Viewer is a native Linux desktop application for opening, indexing, and
+searching local Microsoft OneNote notebooks while preserving their freeform page
+layout. It reads native OneNote data directly and imports `.onepkg` notebook
+exports instead of converting pages to HTML, Markdown, PDF, or another linear
+format.
 
 ## Install
 
@@ -41,18 +24,22 @@ Flathub repository must already be configured; the
 [installation guide](docs/INSTALL.md) covers that setup, checksum verification,
 updates, removal, and the AppImage alternative.
 
-## Open Notebooks
+## Screenshots
 
-Use the application menu to open a `.one`, `.onetoc2`, `.onepkg`, or notebook
-directory. Additional notebook directories join the same searchable workspace
-without being moved. Notebook folders copied under the configurable default
-notebooks location open automatically on the next launch.
+### Light Theme
+
+![OneNote Viewer displaying a notebook in the light theme](docs/images/onenote-viewer-light.png)
+
+### Dark Theme
+
+![OneNote Viewer displaying a notebook in the dark theme](docs/images/onenote-viewer-dark.png)
 
 ## Highlights
 
-- Reconstructs the native freeform page canvas, including positioned and
-  overlapping rich text, lists, tables, images, printouts, and OfficeMath
-  equations, without converting notebooks to a linear document format.
+- Reconstructs positioned and overlapping rich text, lists, tables, images,
+  printouts, and OfficeMath equations on the freeform page canvas.
+- Imports complete `.onepkg` notebook exports through a guided, validated,
+  on-disk process with progress and cancellation.
 - Keeps multiple notebooks open in one workspace with nested section groups,
   collapsible navigation, and one search across page titles and stored content.
 - Preserves explicit OneNote links, optionally recognizes visible URLs and email
@@ -66,63 +53,60 @@ notebooks location open automatically on the next launch.
   `Alt+Left`/`Alt+Right`, and mouse navigation buttons. This will be included in
   the next release after 0.1.5.
 
+## Open Notebooks
+
+Use **Open Notebook Folder...** for a locally copied OneNote notebook directory,
+or **Open OneNote File...** for a standalone `.one` section. Additional notebook
+directories join the same searchable workspace without being moved. Notebook
+folders placed under the configurable default notebooks location open
+automatically on the next launch.
+
+## Import a OneNote Package
+
+A `.onepkg` file is a convenient single-file export of a complete notebook.
+OneNote Viewer imports it once into a normal notebook folder, validates the
+result, and then opens that folder like any other notebook. The original package
+is not modified, and normal viewing does not depend on the extractor afterward.
+
+### Export From OneNote
+
+Full-notebook package export is available in OneNote desktop for Windows:
+
+1. Open the notebook and allow OneNote to finish synchronizing it.
+2. Choose **File > Export**.
+3. Under **Export Current**, choose **Notebook**.
+4. Choose **OneNote Package (`*.onepkg`)** as the format.
+5. Select **Export** and save the package to a local folder.
+
+Microsoft documents notebook export as a Windows desktop capability in its
+[OneNote data-protection and recovery overview](https://support.microsoft.com/en-US/OneNote/onenote-platform-data-protection-recovery).
+The OneNote for the web download workflow is different and is limited by
+Microsoft to notebooks stored in personal OneDrive accounts.
+
+### Import Into OneNote Viewer
+
+1. Open the application menu and choose **Import OneNote Package...**.
+2. Select the `.onepkg` file.
+3. Review the destination notebook folder. It is created under the configured
+   default notebooks location unless **Change Location** selects another parent.
+4. Select **Import**. The progress display reports extraction and validation;
+   the operation can be cancelled before publication completes.
+
+Flatpak and AppImage releases include the required `7zz` extractor, so package
+import does not depend on a separately installed host tool.
+
 ## Current Limitations
 
-- Hand-drawn ink strokes are not rendered yet, although stored handwriting
-  recognition text can participate in search
-  ([issue #6](https://github.com/emsi/OneNoteViewer/issues/6)).
-- Text in the freeform page body cannot yet be selected or copied; page titles,
-  dates, and notebook paths can be copied
+Two missing capabilities currently prevent a 1.0 release:
+
+- rendering hand-drawn ink strokes
+  ([issue #6](https://github.com/emsi/OneNoteViewer/issues/6));
+- selecting and copying text from the freeform page body
   ([issue #8](https://github.com/emsi/OneNoteViewer/issues/8)).
-- A backup directory without a root `.onetoc2` is currently discovered as
-  separate section files instead of one notebook with reconstructed groups.
-- Notebook files changed externally are not monitored or refreshed
-  automatically. Reopen the source or restart the application to reload them.
-- Search includes stored notebook text and metadata, but not text hidden inside
-  attached documents or image text that OneNote did not store.
-- Password-protected sections and unconverted OneNote 2003/2007 files are not
-  supported. Cloud synchronization and live Microsoft 365 features are outside
-  the application scope.
 
-See [known limitations and risks](docs/limitations.md) for the detailed
-compatibility and engineering status.
-
-## Screenshots
-
-### Light Theme
-
-![OneNote Viewer displaying a notebook in the light theme](docs/images/onenote-viewer-light.png)
-
-### Dark Theme
-
-![OneNote Viewer displaying a notebook in the dark theme](docs/images/onenote-viewer-dark.png)
-
-## Scope
-
-The initial product:
-
-- automatically opens notebook folders under the configurable
-  `$XDG_DOCUMENTS_DIR/OneNoteViewer` default notebooks location;
-- opens local notebook directories containing `.onetoc2` and `.one` files;
-- opens standalone `.one` sections;
-- accepts `.onepkg` export packages through a one-time, managed extraction to
-  a normal directory tree of `.onetoc2` and `.one` files;
-- reads both desktop revision-store files and locally downloaded FSSHTTP
-  packaged files, without contacting OneDrive;
-- renders source-native OneNote pages as a spatial, freeform canvas, preserving
-  coordinates, overlap, sizes, backgrounds, and object relationships;
-- preserves explicit OneNote hyperlinks, optionally recognizes plain visible
-  URLs and email addresses, and resolves OneNote page links across open
-  notebooks;
-- searches titles, text, image alternative text, handwriting recognition
-  text, link targets, and attachment names across all open notebooks;
-- extracts attachments only after an explicit user action and opens them with
-  the desktop's registered application.
-
-Cloud synchronization, editing, collaboration, and executing embedded content
-are outside the initial scope. Export or conversion to HTML, Markdown, or PDF
-is also outside the viewer's load/render/index pipeline because it would
-discard or flatten the layout this project exists to preserve.
+See [known limitations](docs/limitations.md) for stable product boundaries.
+Current bugs, compatibility gaps, and planned improvements are tracked in
+[GitHub issues](https://github.com/emsi/OneNoteViewer/issues).
 
 ## Documentation
 
@@ -139,7 +123,7 @@ and document authority. The supporting documents are:
 - [OneNote parsing profile](docs/specs/onenote-format.md)
 - [Public integration API](docs/specs/public-api.md)
 - [Persisted feature inventory](docs/specs/feature-matrix.md)
-- [Known limitations and risks](docs/limitations.md)
+- [Known limitations](docs/limitations.md)
 - [Installation guide](docs/INSTALL.md)
 - [Packaging and release guide](docs/RELEASES.md)
 - [Roadmap and acceptance gates](docs/plans/roadmap.md)
@@ -147,35 +131,24 @@ and document authority. The supporting documents are:
 
 ## Status
 
-**Functional implementation baseline; compatibility and fidelity hardening are
-still in progress.**
+**OneNote Viewer is practical for everyday use.** The project owner uses it to
+access, search, and read 15 years of personal notes. Native notebook loading,
+freeform rendering, multi-notebook navigation and search, `.onepkg` import,
+attachments, links, workspace restoration, and portable Linux packages are all
+working today.
 
-The five-crate workspace now parses native notebook trees, performs bounded
-on-disk `.onepkg` extraction, builds UI-neutral page scenes, renders them in an
-embeddable GTK widget, transactionally indexes multiple sources, exposes a
-versioned JSON Lines query process, and composes those components into a
-persistent multi-notebook GTK viewer. The private regression corpus passes
-extraction, section parsing, page-scene construction, indexing, search,
-standalone renderer, and full-viewer Xvfb tests.
-
-The viewer navigation keeps notebooks, nested section groups, and sections in
-one collapsible tree, with a separately collapsible page list. Page title and
-creation time are shown once above the freeform body. Bundled symbolic action
-icons avoid a dependency on a particular host icon theme. Inline links are
-underlined, pointer-activated, and opened through host-owned link policy rather
-than by the reusable renderer itself.
-
-The regression corpus uses several private notebooks spanning OneNote versions
-from 2010 through modern Microsoft 365, including web-created notes, multiple
-languages, and equation-heavy content. This coverage still does not establish
-compatibility with every OneNote producer or feature. Accessibility, measured
-layout fidelity, hostile-input coverage, source refresh, and manifest-free
-backup aggregation remain in progress. The [roadmap](docs/plans/roadmap.md),
-[risk register](docs/limitations.md), and
-[GitHub issues](https://github.com/emsi/OneNoteViewer/issues) track the remaining
-engineering work and completion evidence.
+Compatibility is exercised with private notebooks created across OneNote 2010
+through modern Microsoft 365 and OneNote for the web. Those notebooks are not
+committed to the repository. The remaining 1.0 blockers are hand-drawn ink
+rendering and freeform page text selection/copy; other current work is tracked
+in [GitHub issues](https://github.com/emsi/OneNoteViewer/issues).
 
 ## Repository Shape
+
+Native parsing, UI-neutral page-scene construction, GTK rendering, and search
+live behind documented component boundaries. Other note-taking and
+knowledge-management applications can render `.one` sections or query relevant
+pages without adopting the complete desktop application.
 
 The code is a modular Cargo workspace:
 
@@ -187,7 +160,6 @@ crates/
   onenote-index/       Rebuildable index and public query API
   onenote-viewer/      GTK4 desktop application/composition root
 docs/               Architecture, decisions, specifications, and plans
-fixtures/           Small redistributable synthetic notebooks
 packaging/          Flatpak and distribution metadata
 scripts/            Reproducible maintenance and validation commands
 ```
@@ -233,7 +205,7 @@ external-action work is tracked explicitly rather than implied complete.
 OneNote Viewer is free software licensed under the
 [GNU General Public License, version 3 or later](LICENSE).
 
-The active OneNote parser fork and retained parser source remain available
+The pinned OneNote parser and retained parser source remain available
 under MPL-2.0 and are additionally distributed under GPL-3.0-or-later as part
 of the combined application under MPL 2.0 section 3.3. Lucide and
 Feather-derived icons retain their ISC/MIT terms. Microsoft reference
@@ -241,3 +213,11 @@ documents are not covered by the project GPL and retain their embedded terms.
 See [third-party notices](THIRD-PARTY-NOTICES.md), the generated
 [dependency license report](THIRD-PARTY-LICENSES.html), and
 [corresponding-source information](SOURCE-CODE.md).
+
+## Trademark Notice
+
+Microsoft, Microsoft 365, OneNote, and Windows are trademarks of the Microsoft
+group of companies. OneNote Viewer is an independent project and is not
+affiliated with, endorsed by, sponsored by, or otherwise associated with
+Microsoft. See Microsoft's
+[Trademark and Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks).
