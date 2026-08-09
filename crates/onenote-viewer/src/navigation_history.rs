@@ -15,6 +15,18 @@ pub(crate) enum HistoryDirection {
     Forward,
 }
 
+impl HistoryDirection {
+    pub(crate) fn from_mouse_button(button: u32) -> Option<Self> {
+        // GDK exposes both X11-compatible side/extra buttons and Linux's
+        // semantic forward/back buttons as distinct numeric identifiers.
+        match button {
+            8 | 11 => Some(Self::Back),
+            9 | 10 => Some(Self::Forward),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct NavigationHistory {
     entries: Vec<PageLocation>,
@@ -161,6 +173,25 @@ mod tests {
         );
         assert!(history.can_go_back());
         assert!(history.can_go_forward());
+    }
+
+    #[test]
+    fn classifies_conventional_and_semantic_navigation_buttons() {
+        for button in [8, 11] {
+            assert_eq!(
+                HistoryDirection::from_mouse_button(button),
+                Some(HistoryDirection::Back)
+            );
+        }
+        for button in [9, 10] {
+            assert_eq!(
+                HistoryDirection::from_mouse_button(button),
+                Some(HistoryDirection::Forward)
+            );
+        }
+        for button in [1, 2, 3, 4, 5, 12] {
+            assert_eq!(HistoryDirection::from_mouse_button(button), None);
+        }
     }
 
     #[test]
