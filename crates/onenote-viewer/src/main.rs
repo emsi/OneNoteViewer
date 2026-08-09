@@ -6,6 +6,7 @@ mod app;
 mod attachment;
 mod dialogs;
 mod navigation;
+mod navigation_history;
 mod navigation_state;
 mod settings;
 #[cfg(test)]

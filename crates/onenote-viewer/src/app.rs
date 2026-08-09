@@ -1,4 +1,5 @@
 use crate::navigation::{NavigationTarget, NotebookTree};
+use crate::navigation_history::{HistoryDirection, NavigationHistory, PageLocation};
 use crate::navigation_state::{location_for_section, preferred_location, SectionLocation};
 use crate::settings::{self, AppSettings, ThemePreference};
 use crate::worker::{self, Command, Event};
@@ -28,6 +29,8 @@ const PAGE_NAVIGATION_WIDTH: i32 = 280;
 const COLLAPSED_NAVIGATION_WIDTH: i32 = 42;
 const NAVIGATION_SEPARATOR_WIDTH: i32 = 1;
 const SEARCH_RESULTS_WIDTH: i32 = 520;
+const MOUSE_BACK_BUTTON: u32 = 8;
+const MOUSE_FORWARD_BUTTON: u32 = 9;
 const APP_ICON_NAME: &str = "io.github.emsi.OneNoteViewer";
 const SYMBOLIC_ICON_NAMES: [&str; 19] = [
     "onenote-chevron-down-symbolic",
@@ -316,6 +319,14 @@ struct State {
     scene_generation: u64,
     pending_reveal: Option<RevealTarget>,
     restore_target: Option<PersistedPageLocation>,
+    history: NavigationHistory,
+}
+
+#[derive(Clone, Copy)]
+enum HistoryUpdate {
+    Record,
+    Replace,
+    Preserve,
 }
 
 struct Viewer {
@@ -343,6 +354,8 @@ struct Viewer {
     operation_progress: gtk::ProgressBar,
     operation_cancel_button: gtk::Button,
     import_package_action: gio::SimpleAction,
+    history_back_action: gio::SimpleAction,
+    history_forward_action: gio::SimpleAction,
     foreground_operation: RefCell<Option<ForegroundOperation>>,
     next_operation_id: Cell<u64>,
     operation_pulsing: Cell<bool>,
@@ -396,6 +409,10 @@ impl Viewer {
         let open_settings = gio::SimpleAction::new("settings", None);
         let show_about = gio::SimpleAction::new("about", None);
         let quit = gio::SimpleAction::new("quit", None);
+        let history_back = gio::SimpleAction::new("history-back", None);
+        history_back.set_enabled(false);
+        let history_forward = gio::SimpleAction::new("history-forward", None);
+        history_forward.set_enabled(false);
         let close_source = icon_button("onenote-close-symbolic", "Close selected notebook");
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Background activity"));
@@ -415,6 +432,10 @@ impl Viewer {
         );
         let application_menu = gio::Menu::new();
         application_menu.append_section(None, &file_menu);
+        let navigation_menu = gio::Menu::new();
+        navigation_menu.append(Some("Back"), Some("win.history-back"));
+        navigation_menu.append(Some("Forward"), Some("win.history-forward"));
+        application_menu.append_section(None, &navigation_menu);
         let preferences_menu = gio::Menu::new();
         preferences_menu.append(Some("Settings"), Some("win.settings"));
         application_menu.append_section(None, &preferences_menu);
@@ -637,6 +658,8 @@ impl Viewer {
             operation_progress,
             operation_cancel_button,
             import_package_action: import_package.clone(),
+            history_back_action: history_back.clone(),
+            history_forward_action: history_forward.clone(),
             foreground_operation: RefCell::default(),
             next_operation_id: Cell::new(1),
             operation_pulsing: Cell::new(false),
@@ -665,11 +688,15 @@ impl Viewer {
         viewer.window.add_action(&open_settings);
         viewer.window.add_action(&show_about);
         viewer.window.add_action(&quit);
+        viewer.window.add_action(&history_back);
+        viewer.window.add_action(&history_forward);
         application.set_accels_for_action("win.open-file", &["<Primary>o"]);
         application.set_accels_for_action("win.open-folder", &["<Primary><Shift>o"]);
         application.set_accels_for_action("win.import-package", &["<Primary><Shift>i"]);
         application.set_accels_for_action("win.settings", &["<Primary>comma"]);
         application.set_accels_for_action("win.quit", &["<Primary>q"]);
+        application.set_accels_for_action("win.history-back", &["<Alt>Left"]);
+        application.set_accels_for_action("win.history-forward", &["<Alt>Right"]);
         viewer.connect_header(
             &open_file,
             &open_folder,
@@ -679,6 +706,7 @@ impl Viewer {
             &close_source,
         );
         viewer.connect_about(&show_about);
+        viewer.connect_history();
         viewer.connect_system_theme();
         viewer.connect_operation_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
@@ -737,6 +765,43 @@ impl Viewer {
                 },
             ));
         });
+    }
+
+    fn connect_history(self: &Rc<Self>) {
+        let weak = Rc::downgrade(self);
+        self.history_back_action.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.navigate_history(HistoryDirection::Back);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.history_forward_action.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.navigate_history(HistoryDirection::Forward);
+            }
+        });
+
+        let mouse_back = gtk::GestureClick::new();
+        mouse_back.set_button(MOUSE_BACK_BUTTON);
+        mouse_back.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(self);
+        mouse_back.connect_released(move |_, _, _, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.history_back_action.activate(None);
+            }
+        });
+        self.window.add_controller(mouse_back);
+
+        let mouse_forward = gtk::GestureClick::new();
+        mouse_forward.set_button(MOUSE_FORWARD_BUTTON);
+        mouse_forward.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(self);
+        mouse_forward.connect_released(move |_, _, _, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.history_forward_action.activate(None);
+            }
+        });
+        self.window.add_controller(mouse_forward);
     }
 
     fn connect_header(
@@ -1106,7 +1171,7 @@ impl Viewer {
         };
         if let Some((source_id, location)) = destination {
             self.cancel_pending_restore();
-            self.activate_location(&source_id, &location, None);
+            self.activate_location(&source_id, &location, None, HistoryUpdate::Record);
         } else {
             self.show_error(
                 "OneNote page is not available",
@@ -1517,6 +1582,12 @@ impl Viewer {
             .map(|source| source.loaded.notebook.clone())
             .expect("inserted source");
         let active_source = state.active.as_ref().map(|active| active.source.clone());
+        {
+            let State {
+                sources, history, ..
+            } = &mut *state;
+            history.retain(|location| page_location_exists(sources, location));
+        }
         if restoring {
             state.restore_target = None;
         }
@@ -1528,7 +1599,14 @@ impl Viewer {
                 .as_ref()
                 .is_none_or(|active| active == &source_id)
         {
-            self.activate_source(&source_id);
+            let history_update = if restoring || active_source.is_none() {
+                HistoryUpdate::Replace
+            } else {
+                HistoryUpdate::Record
+            };
+            self.activate_source(&source_id, history_update);
+        } else {
+            self.refresh_history_actions();
         }
         self.schedule_workspace_save();
         self.status
@@ -1578,14 +1656,14 @@ impl Viewer {
         match self.notebook_tree.selected_target() {
             Some(NavigationTarget::Notebook { source_id }) => {
                 self.cancel_pending_restore();
-                self.activate_source(&source_id);
+                self.activate_source(&source_id, HistoryUpdate::Record);
             }
             Some(NavigationTarget::Section {
                 source_id,
                 section_id,
             }) => {
                 self.cancel_pending_restore();
-                self.activate_section(&source_id, &section_id);
+                self.activate_section(&source_id, &section_id, HistoryUpdate::Record);
             }
             Some(NavigationTarget::Group { .. }) | None => {}
         }
@@ -1596,7 +1674,7 @@ impl Viewer {
             return;
         }
         self.cancel_pending_restore();
-        self.activate_page(position as usize, None);
+        self.activate_page(position as usize, None, HistoryUpdate::Record);
     }
 
     fn result_selection_changed(self: &Rc<Self>, position: u32) {
@@ -1607,7 +1685,48 @@ impl Viewer {
         self.activate_result(position as usize);
     }
 
-    fn activate_source(self: &Rc<Self>, source_id: &SourceId) {
+    fn navigate_history(self: &Rc<Self>, direction: HistoryDirection) {
+        self.cancel_pending_restore();
+        let target = {
+            let mut state = self.state.borrow_mut();
+            let State {
+                sources, history, ..
+            } = &mut *state;
+            history.retain(|location| page_location_exists(sources, location));
+            history.step(direction)
+        };
+        self.refresh_history_actions();
+        let Some(target) = target else {
+            return;
+        };
+
+        self.synchronize_selections(|| self.result_selection.set_selected(NO_SELECTION));
+        let activated = self.activate_location(
+            &target.source,
+            &SectionLocation {
+                section_id: target.section.clone(),
+                page_id: Some(target.page.clone()),
+            },
+            None,
+            HistoryUpdate::Preserve,
+        );
+        if !activated {
+            let mut state = self.state.borrow_mut();
+            state.history.retain(|location| location != &target);
+            drop(state);
+            self.refresh_history_actions();
+        }
+    }
+
+    fn refresh_history_actions(&self) {
+        let state = self.state.borrow();
+        self.history_back_action
+            .set_enabled(state.history.can_go_back());
+        self.history_forward_action
+            .set_enabled(state.history.can_go_forward());
+    }
+
+    fn activate_source(self: &Rc<Self>, source_id: &SourceId, history_update: HistoryUpdate) {
         let location = {
             let mut state = self.state.borrow_mut();
             let Some(source) = state
@@ -1626,7 +1745,7 @@ impl Viewer {
             location
         };
         if let Some(location) = location {
-            self.activate_location(source_id, &location, None);
+            self.activate_location(source_id, &location, None, history_update);
         } else {
             self.clear_page_content();
             self.synchronize_selections(|| {
@@ -1637,7 +1756,12 @@ impl Viewer {
         }
     }
 
-    fn activate_section(self: &Rc<Self>, source_id: &SourceId, section_id: &SectionId) {
+    fn activate_section(
+        self: &Rc<Self>,
+        source_id: &SourceId,
+        section_id: &SectionId,
+        history_update: HistoryUpdate,
+    ) {
         let location = {
             let state = self.state.borrow();
             state
@@ -1653,7 +1777,7 @@ impl Viewer {
                 })
         };
         if let Some(location) = location {
-            self.activate_location(source_id, &location, None);
+            self.activate_location(source_id, &location, None, history_update);
         }
     }
 
@@ -1662,7 +1786,8 @@ impl Viewer {
         source_id: &SourceId,
         requested: &SectionLocation,
         reveal: Option<RevealTarget>,
-    ) {
+        history_update: HistoryUpdate,
+    ) -> bool {
         let (pages, location) = {
             let state = self.state.borrow();
             let Some(source) = state
@@ -1670,14 +1795,14 @@ impl Viewer {
                 .iter()
                 .find(|source| source.loaded.notebook.source_id == *source_id)
             else {
-                return;
+                return false;
             };
             let Some(location) = location_for_section(
                 &source.loaded.notebook,
                 Some(requested),
                 &requested.section_id,
             ) else {
-                return;
+                return false;
             };
             let pages = source
                 .loaded
@@ -1699,7 +1824,7 @@ impl Viewer {
                 .iter_mut()
                 .find(|source| source.loaded.notebook.source_id == *source_id)
             else {
-                return;
+                return false;
             };
             source.last_location = Some(location.clone());
             state.active = Some(ActiveLocation {
@@ -1735,14 +1860,20 @@ impl Viewer {
         });
 
         if let Some(position) = page_position {
-            self.activate_page(position, reveal);
+            self.activate_page(position, reveal, history_update)
         } else {
             self.clear_rendered_page();
             self.schedule_workspace_save();
+            false
         }
     }
 
-    fn activate_page(self: &Rc<Self>, position: usize, reveal: Option<RevealTarget>) {
+    fn activate_page(
+        self: &Rc<Self>,
+        position: usize,
+        reveal: Option<RevealTarget>,
+        history_update: HistoryUpdate,
+    ) -> bool {
         let value = (|| {
             let state = self.state.borrow();
             let row = state.pages.get(position)?;
@@ -1772,11 +1903,11 @@ impl Viewer {
         let Some((source_id, section_id, page_id, page, loaded, notebook_name, section_path)) =
             value
         else {
-            return;
+            return false;
         };
         let location = SectionLocation {
             section_id: section_id.clone(),
-            page_id: Some(page_id),
+            page_id: Some(page_id.clone()),
         };
         {
             let mut state = self.state.borrow_mut();
@@ -1791,6 +1922,16 @@ impl Viewer {
                 source: source_id.clone(),
                 section: Some(location),
             });
+            let history_location = PageLocation {
+                source: source_id.clone(),
+                section: section_id.clone(),
+                page: page_id,
+            };
+            match history_update {
+                HistoryUpdate::Record => state.history.record(history_location),
+                HistoryUpdate::Replace => state.history.replace_current(history_location),
+                HistoryUpdate::Preserve => {}
+            }
         }
         self.synchronize_selections(|| {
             self.notebook_tree.select_section(&source_id, &section_id);
@@ -1825,6 +1966,8 @@ impl Viewer {
         *self.scene_cancel.borrow_mut() = Some(cancel.clone());
         self.set_busy("Laying out page");
         worker::build_scene(generation, page, cancel, self.events.clone());
+        self.refresh_history_actions();
+        true
     }
 
     fn clear_page_content(&self) {
@@ -1926,6 +2069,7 @@ impl Viewer {
                 object_id: hit.object_id,
                 bounds,
             }),
+            HistoryUpdate::Record,
         );
     }
 
@@ -1945,7 +2089,15 @@ impl Viewer {
             state.active = None;
             state.pages.clear();
             state.restore_target = None;
-            (position, state.sources.remove(position))
+            let removed = state.sources.remove(position);
+            {
+                let State {
+                    sources, history, ..
+                } = &mut *state;
+                history.retain(|location| page_location_exists(sources, location));
+            }
+            let history_target = state.history.current().cloned();
+            (position, removed, history_target)
         };
         let removed_source_id = removed.1.loaded.notebook.source_id.clone();
         let _ignored = self
@@ -1958,6 +2110,20 @@ impl Viewer {
             clear_model(&self.page_model);
         });
         self.clear_rendered_page();
+        self.refresh_history_actions();
+        if let Some(target) = removed.2.as_ref() {
+            if self.activate_location(
+                &target.source,
+                &SectionLocation {
+                    section_id: target.section.clone(),
+                    page_id: Some(target.page.clone()),
+                },
+                None,
+                HistoryUpdate::Preserve,
+            ) {
+                return;
+            }
+        }
         let fallback = {
             let state = self.state.borrow();
             let position = removed.0.min(state.sources.len().saturating_sub(1));
@@ -1967,7 +2133,7 @@ impl Viewer {
                 .map(|source| source.loaded.notebook.source_id.clone())
         };
         if let Some(source_id) = fallback {
-            self.activate_source(&source_id);
+            self.activate_source(&source_id, HistoryUpdate::Replace);
         } else {
             self.status.set_label("No notebooks open");
             self.schedule_workspace_save();
@@ -3205,6 +3371,14 @@ fn same_source_path(left: &std::path::Path, right: &std::path::Path) -> bool {
         (Ok(left), Ok(right)) => left == right,
         _ => left == right,
     }
+}
+
+fn page_location_exists(sources: &[Source], location: &PageLocation) -> bool {
+    sources
+        .iter()
+        .find(|source| source.loaded.notebook.source_id == location.source)
+        .and_then(|source| source.loaded.notebook.section(&location.section))
+        .is_some_and(|section| section.pages.iter().any(|page| page.id == location.page))
 }
 
 fn restore_location_for_source(

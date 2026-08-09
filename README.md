@@ -48,6 +48,14 @@ directory. Additional notebook directories join the same searchable workspace
 without being moved. Notebook folders copied under the configurable default
 notebooks location open automatically on the next launch.
 
+## Navigate Viewed Pages
+
+Use `Alt+Left` and `Alt+Right`, the mouse Back and Forward buttons, or the Back
+and Forward commands in the application menu to move through pages viewed in
+the current session. History works across all open notebooks, search results,
+and internal OneNote page links. Closing a notebook removes its pages from the
+history.
+
 ## Screenshots
 
 ### Light Theme
