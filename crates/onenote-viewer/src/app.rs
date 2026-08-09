@@ -1,3 +1,4 @@
+use crate::input::{focus_initial_navigation, history_mouse_controller};
 use crate::navigation::{NavigationTarget, NotebookTree};
 use crate::navigation_history::{HistoryDirection, NavigationHistory, PageLocation};
 use crate::navigation_state::{location_for_section, preferred_location, SectionLocation};
@@ -29,8 +30,6 @@ const PAGE_NAVIGATION_WIDTH: i32 = 280;
 const COLLAPSED_NAVIGATION_WIDTH: i32 = 42;
 const NAVIGATION_SEPARATOR_WIDTH: i32 = 1;
 const SEARCH_RESULTS_WIDTH: i32 = 520;
-const MOUSE_BACK_BUTTON: u32 = 8;
-const MOUSE_FORWARD_BUTTON: u32 = 9;
 const APP_ICON_NAME: &str = "io.github.emsi.OneNoteViewer";
 const SYMBOLIC_ICON_NAMES: [&str; 19] = [
     "onenote-chevron-down-symbolic",
@@ -106,6 +105,7 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
             instance.discover(source.clone());
         }
         instance.window.present();
+        focus_initial_navigation(instance.window.upcast_ref(), &instance.notebook_tree.view);
         if let Some(delay) = smoke_quit_delay() {
             let application = application.clone();
             glib::timeout_add_local_once(delay, move || application.quit());
@@ -695,8 +695,8 @@ impl Viewer {
         application.set_accels_for_action("win.import-package", &["<Primary><Shift>i"]);
         application.set_accels_for_action("win.settings", &["<Primary>comma"]);
         application.set_accels_for_action("win.quit", &["<Primary>q"]);
-        application.set_accels_for_action("win.history-back", &["<Alt>Left"]);
-        application.set_accels_for_action("win.history-forward", &["<Alt>Right"]);
+        application.set_accels_for_action("win.history-back", &["<Alt>Left", "Back"]);
+        application.set_accels_for_action("win.history-forward", &["<Alt>Right", "Forward"]);
         viewer.connect_header(
             &open_file,
             &open_folder,
@@ -781,27 +781,16 @@ impl Viewer {
             }
         });
 
-        let mouse_back = gtk::GestureClick::new();
-        mouse_back.set_button(MOUSE_BACK_BUTTON);
-        mouse_back.set_propagation_phase(gtk::PropagationPhase::Capture);
         let weak = Rc::downgrade(self);
-        mouse_back.connect_released(move |_, _, _, _| {
+        let mouse_history = history_mouse_controller(move |direction| {
             if let Some(viewer) = weak.upgrade() {
-                viewer.history_back_action.activate(None);
+                match direction {
+                    HistoryDirection::Back => viewer.history_back_action.activate(None),
+                    HistoryDirection::Forward => viewer.history_forward_action.activate(None),
+                }
             }
         });
-        self.window.add_controller(mouse_back);
-
-        let mouse_forward = gtk::GestureClick::new();
-        mouse_forward.set_button(MOUSE_FORWARD_BUTTON);
-        mouse_forward.set_propagation_phase(gtk::PropagationPhase::Capture);
-        let weak = Rc::downgrade(self);
-        mouse_forward.connect_released(move |_, _, _, _| {
-            if let Some(viewer) = weak.upgrade() {
-                viewer.history_forward_action.activate(None);
-            }
-        });
-        self.window.add_controller(mouse_forward);
+        self.window.add_controller(mouse_history);
     }
 
     fn connect_header(

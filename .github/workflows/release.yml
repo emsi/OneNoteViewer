@@ -20,7 +20,7 @@ jobs:
       - name: Install GTK build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libgtk-4-dev xvfb
+          sudo apt-get install --yes libgtk-4-dev xdotool xvfb
 
       - name: Install license audit tool
         run: cargo +stable install cargo-about --version 0.9.1 --locked --features cli

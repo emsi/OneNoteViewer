@@ -5,6 +5,7 @@
 mod app;
 mod attachment;
 mod dialogs;
+mod input;
 mod navigation;
 mod navigation_history;
 mod navigation_state;
