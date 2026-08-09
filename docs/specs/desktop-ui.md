@@ -113,11 +113,9 @@ replace one current entry so asynchronous load order does not appear as user
 history.
 
 `Alt+Left` moves backward and `Alt+Right` moves forward, matching OneNote.
-Standard `Back` and `Forward` key events and conventional mouse Back and
-Forward buttons invoke the same application actions. Both X11-compatible
-side/extra button numbers and Linux semantic back/forward button numbers are
-recognized. The actions are also present in the main menu and are disabled
-when there is no valid destination.
+Conventional mouse Back and Forward buttons invoke the same application
+actions. The actions are also present in the main menu and are disabled when
+there is no valid destination.
 
 History traversal commits through the ordinary page activation path. It
 synchronizes the notebook, section, and page selections, cancels superseded
