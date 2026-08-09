@@ -109,7 +109,8 @@ pipeline phase in a persistent activity surface, supports cancellation through
 the core process-reaping path, and opens the resulting directory through
 normal discovery. The resource checks listed immediately above and
 byte-accurate extractor progress are not implemented. The exact completion
-work is tracked in [remaining work](../REMAINING-WORK.md).
+work is tracked in
+[issue #41](https://github.com/emsi/OneNoteViewer/issues/41).
 
 ## Consequences
 

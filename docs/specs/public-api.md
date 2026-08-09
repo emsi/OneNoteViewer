@@ -200,7 +200,8 @@ The library boundaries, Rustdoc comments, standalone GTK example, independent
 JSONL process client, structured errors, typed locators, resource limits, and
 cancellation tests exist. They are usable implementation boundaries but are
 not yet published/stable public artifacts. Missing quality-contract items are
-tracked in [remaining work](../REMAINING-WORK.md), especially malformed-input
+tracked in [issue #45](https://github.com/emsi/OneNoteViewer/issues/45),
+especially malformed-input
 breadth, callback/thread documentation, golden protocol fixtures, semantic
 versioning guidance, and GObject introspection. The GPL-3.0-or-later project
 license permits reuse and redistribution but does not make the pre-1.0

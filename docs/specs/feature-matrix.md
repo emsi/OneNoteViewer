@@ -22,8 +22,9 @@ Delivery levels:
 
 This is a target inventory, not an implementation-status table. The current
 code covers only a subset of rows even when their target level is MVP. See
-[remaining work](../REMAINING-WORK.md) and the roadmap before making a support
-claim.
+the [roadmap](../plans/roadmap.md), [risk register](../limitations.md), and
+[GitHub issues](https://github.com/emsi/OneNoteViewer/issues) before making a
+support claim.
 
 ## Notebook and Navigation
 

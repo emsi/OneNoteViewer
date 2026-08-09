@@ -86,7 +86,7 @@ running it through `uv`.
 ## Release Boundaries
 
 These are unsigned preview/test artifacts, not a claim of stable OneNote
-compatibility or store readiness. Signed artifacts, AppStream metadata,
-cross-distribution and portal test coverage, and the remaining
-security/accessibility/fidelity gates are still required for a public stable
-release.
+compatibility or store readiness. AppStream metadata is included. Signed
+artifacts, MIME associations, cross-distribution and portal test coverage,
+reproducibility comparison, and the remaining security/accessibility/fidelity
+gates are still required for a public stable release.

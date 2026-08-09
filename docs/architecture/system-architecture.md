@@ -116,7 +116,10 @@ renders that scene rather than creating one GTK child per text run:
   adapter;
 - the GTK adapter resolves exact Pango and asynchronous math heights into one
   generation-cached geometry map, preserving source gaps within each flow;
-- GSK snapshots draw backgrounds, text, images, table lines, tags, and ink.
+- GSK snapshots draw backgrounds, text, images, table lines, links,
+  attachments, and equations. Tag and ink completion are tracked in
+  [issues #47](https://github.com/emsi/OneNoteViewer/issues/47) and
+  [#6](https://github.com/emsi/OneNoteViewer/issues/6).
 - Interactive objects such as links and attachments expose hit regions and
   accessibility nodes.
 - A spatial index identifies visible and clickable objects.

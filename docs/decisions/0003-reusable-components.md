@@ -88,7 +88,7 @@ exports.
 These are pre-1.0 implementation boundaries, not published stable artifacts.
 Generated documentation publication, fuller contract tests, GObject
 introspection, and callback/thread compatibility guarantees remain in
-[the release-gap register](../REMAINING-WORK.md).
+[issue #45](https://github.com/emsi/OneNoteViewer/issues/45).
 
 ## Rejected Alternatives
 

@@ -39,7 +39,7 @@ normative.
 - [Roadmap and milestone gates](plans/roadmap.md)
 - [Reusable backup-folder loader plan](plans/backup-folder-loader.md)
 - [Potential limitations](limitations.md)
-- [Current remaining work](REMAINING-WORK.md)
+- [Actionable implementation work](https://github.com/emsi/OneNoteViewer/issues)
 - [Developer packaging and release guide](RELEASES.md)
 - [Project and third-party licensing](../THIRD-PARTY-NOTICES.md)
 - [Corresponding-source information](../SOURCE-CODE.md)

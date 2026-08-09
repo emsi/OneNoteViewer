@@ -781,7 +781,8 @@ behavior before the public API is stabilized:
   snapshot selection, and diagnostics.
 - Update `limitations.md` with tested producers/locales and unresolved
   conventions.
-- Update `REMAINING-WORK.md` and the master plan's current evidence.
+- Update [issue #39](https://github.com/emsi/OneNoteViewer/issues/39) and the
+  master plan's current evidence.
 - Add migration notes before changing persisted workspace source descriptors.
 
 ## Definition of Done

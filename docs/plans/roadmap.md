@@ -30,9 +30,9 @@ Implementation compatibility is explicitly not claimed by this milestone.
 All three workstreams produced retained product components rather than
 throwaway code. Parser, scene, GTK, index, standalone-client, and private-corpus
 tests pass. The original performance, visual-oracle, accessibility, and broad
-corpus gates remain open and are listed in
-[remaining work](../REMAINING-WORK.md); therefore this milestone does not
-authorize a broad compatibility claim.
+corpus gates remain open and are tracked as
+[GitHub issues](https://github.com/emsi/OneNoteViewer/issues); therefore this
+milestone does not authorize a broad compatibility claim.
 
 ### Parser Spike
 
@@ -49,17 +49,20 @@ authorize a broad compatibility claim.
 - [x] Identify upstream API gaps for unknown objects, history, and resource
   limits.
 
-**Gate status:** the complete private desktop notebook loads without panic and
-projects page/title/text, images, attachments, tables, and ink. Producer breadth,
-tag-specific fixtures, broader malformed inputs, and measurements remain open.
-The private math fixture covers typed OfficeMath projection, structured native
-rendering, fallback text, and search, but not every rare operator family.
+**Gate status:** private regression notebooks spanning OneNote versions from
+2010 through modern Microsoft 365 load without panic and project page/title/text,
+images, attachments, and tables. Redistributable producer breadth, tags, ink,
+broader malformed inputs, and measurements remain open. Private equation-heavy
+fixtures cover typed OfficeMath projection, structured native rendering,
+fallback text, and search, but not every rare operator family.
 
 ### Canvas Spike
 
 - [x] Build `onenote-render` as a headless scene builder and
   `onenote-render-gtk` as a GTK4 custom widget consuming its synthetic scene.
-- [x] Render Pango rich text, images, tables, links, attachments, and ink.
+- [x] Render Pango rich text, images, tables, links, and attachments.
+- [ ] Render hand-drawn ink from representative notebook sources
+  ([issue #6](https://github.com/emsi/OneNoteViewer/issues/6)).
 - [x] Implement viewport culling, pan/zoom, hit testing, and UI-neutral
   accessibility semantics.
 - [x] Embed the GTK component in a minimal host that does not depend on
@@ -101,7 +104,7 @@ independent protocol fixtures pass. Recorded latency targets remain open.
 - [ ] Complete `.onepkg` resource limits and preflight: expanded-size and
   free-space checks, early missing-tool reporting, and destination naming.
 - [x] Active-page freeform canvas with rich text, lists, tables, lazy images,
-  attachments, ink, placeholders, pan, and zoom.
+  attachments, placeholders, pan, and zoom.
 - [x] Viewer title/date chrome without duplicate native title-area rendering;
   reusable scene construction retains a full-page option.
 - [x] Preserve and pointer-activate inline web, mail, file, and OneNote page
@@ -131,8 +134,10 @@ independent protocol fixtures pass. Recorded latency targets remain open.
   pass;
 - `cargo fmt`, clippy, tests, and dependency/license audit pass.
 
-Current implementation and evidence gaps are itemized in
-[`docs/REMAINING-WORK.md`](../REMAINING-WORK.md).
+Current implementation tasks and acceptance criteria are tracked as
+[GitHub issues](https://github.com/emsi/OneNoteViewer/issues). The
+[risk register](../limitations.md) records evidence gaps and accepted
+boundaries.
 
 ## Milestone 3: Compatibility and Fidelity
 
@@ -158,8 +163,8 @@ use an unqualified "supports OneNote."
   preview artifacts.
 - [ ] Flatpak installation, portal, no-network, notebook-tree, and package
   onboarding smoke tests.
-- [ ] Complete AppStream metadata, MIME associations, and reproducibility
-  comparison.
+- [x] Add versioned AppStream metadata.
+- [ ] Complete MIME associations and reproducibility comparison.
 - [ ] Performance, accessibility, security, and privacy review.
 - [ ] Signed stable release artifacts and a documented update process.
 - [ ] Versioned library artifacts, API documentation, integration examples, and

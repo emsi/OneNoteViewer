@@ -27,10 +27,11 @@ reject_text() {
 }
 
 require_text README.md 'docs/MASTER-PLAN.md'
+require_text README.md '## Highlights'
+require_text README.md '## Current Limitations'
 require_text docs/README.md 'MASTER-PLAN.md'
 require_text docs/MASTER-PLAN.md 'canonical entry point and master plan'
-require_text docs/MASTER-PLAN.md 'REMAINING-WORK.md'
-require_text docs/REMAINING-WORK.md 'Active release-gap register'
+require_text docs/MASTER-PLAN.md 'github.com/emsi/OneNoteViewer/issues'
 require_text docs/plans/roadmap.md '../MASTER-PLAN.md'
 
 reject_text 'Specification complete; implementation not started.'

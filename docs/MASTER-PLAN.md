@@ -138,9 +138,11 @@ The detailed milestone sequence and exit gates are in the
 - `onenote-render` builds deterministic UI-neutral scenes, and
   `onenote-render-gtk` provides an independently runnable Pango/GSK page view
   with culling, pan, zoom, hit testing, bounded asynchronous image decoding,
-  Cairo ink/line primitives, and asynchronous native OfficeMath typesetting
-  through a replaceable UI-neutral backend contract. Math source remains a
-  typed domain AST and its marker-free linear form is indexed.
+  Cairo line primitives, and asynchronous native OfficeMath typesetting through
+  a replaceable UI-neutral backend contract. End-to-end notebook ink rendering
+  remains tracked in [issue #6](https://github.com/emsi/OneNoteViewer/issues/6).
+  Math source remains a typed domain AST and its marker-free linear form is
+  indexed.
 - `onenote-index` provides transactional multi-source FTS5 indexing,
   structured result locators, snippets, filtering, integrity checks, and a
   versioned JSON Lines query adapter with an independent process test.
@@ -180,7 +182,10 @@ The detailed milestone sequence and exit gates are in the
   integrity checks pass.
 - This evidence is deliberately narrow. It does not prove release-grade
   fidelity, accessibility, security, producer breadth, or distribution.
-  [Remaining work](REMAINING-WORK.md) is the authoritative completion-gap list.
+  The [roadmap](plans/roadmap.md) defines execution order, the
+  [risk register](limitations.md) defines evidence gaps and accepted boundaries,
+  and [GitHub issues](https://github.com/emsi/OneNoteViewer/issues) track
+  actionable implementation work.
 
 ### Next Execution Order
 
@@ -200,9 +205,10 @@ The detailed milestone sequence and exit gates are in the
    allocation, path, and process-lifecycle risks with repeatable evidence.
 6. Benchmark and optimize cold parse/index, warm search, pan/zoom, image cache,
    and large workspace memory.
-7. Upstream or retire the documented parser compatibility patches, publish API
-   documentation, and complete stable Flatpak packaging. GPL-3.0-or-later and
-   third-party/corresponding-source packaging are already established.
+7. Publish API documentation and complete portable-package integration,
+   reproducibility, and signing. The parser compatibility patches are available
+   in upstream v2.0.0; GPL-3.0-or-later and third-party/corresponding-source
+   packaging are already established.
 
 ## Definition of Success
 
@@ -242,8 +248,8 @@ Read the project documents in this order:
    contracts.
 6. **[Limitations](limitations.md):** open risks, accepted boundaries, and
    release blockers.
-7. **[Remaining work](REMAINING-WORK.md):** current implementation gaps and the
-   evidence required to close them.
+7. **[GitHub issues](https://github.com/emsi/OneNoteViewer/issues):** actionable
+   implementation work and its acceptance criteria.
 8. **[Completion audit](plans/completion-audit.md):** historical evidence that
    the documentation baseline was assembled; it is not the current plan.
 

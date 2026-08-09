@@ -48,13 +48,44 @@ directory. Additional notebook directories join the same searchable workspace
 without being moved. Notebook folders copied under the configurable default
 notebooks location open automatically on the next launch.
 
-## Navigate Viewed Pages
+## Highlights
 
-Use `Alt+Left` and `Alt+Right`, the mouse Back and Forward buttons, or the Back
-and Forward commands in the application menu to move through pages viewed in
-the current session. History works across all open notebooks, search results,
-and internal OneNote page links. Closing a notebook removes its pages from the
-history.
+- Reconstructs the native freeform page canvas, including positioned and
+  overlapping rich text, lists, tables, images, printouts, and OfficeMath
+  equations, without converting notebooks to a linear document format.
+- Keeps multiple notebooks open in one workspace with nested section groups,
+  collapsible navigation, and one search across page titles and stored content.
+- Preserves explicit OneNote links, optionally recognizes visible URLs and email
+  addresses, and resolves internal page links across open notebooks.
+- Displays stored attachment icons and previews, and can save or open the
+  original files through the desktop with progress and cancellation.
+- Restores the workspace and last viewed page, remembers the zoom level, and
+  provides persistent light, dark, and system theme choices.
+- The current development build adds Back and Forward history across notebooks,
+  search results, and internal links through the application menu,
+  `Alt+Left`/`Alt+Right`, and mouse navigation buttons. This will be included in
+  the next release after 0.1.5.
+
+## Current Limitations
+
+- Hand-drawn ink strokes are not rendered yet, although stored handwriting
+  recognition text can participate in search
+  ([issue #6](https://github.com/emsi/OneNoteViewer/issues/6)).
+- Text in the freeform page body cannot yet be selected or copied; page titles,
+  dates, and notebook paths can be copied
+  ([issue #8](https://github.com/emsi/OneNoteViewer/issues/8)).
+- A backup directory without a root `.onetoc2` is currently discovered as
+  separate section files instead of one notebook with reconstructed groups.
+- Notebook files changed externally are not monitored or refreshed
+  automatically. Reopen the source or restart the application to reload them.
+- Search includes stored notebook text and metadata, but not text hidden inside
+  attached documents or image text that OneNote did not store.
+- Password-protected sections and unconverted OneNote 2003/2007 files are not
+  supported. Cloud synchronization and live Microsoft 365 features are outside
+  the application scope.
+
+See [known limitations and risks](docs/limitations.md) for the detailed
+compatibility and engineering status.
 
 ## Screenshots
 
@@ -79,11 +110,11 @@ The initial product:
 - reads both desktop revision-store files and locally downloaded FSSHTTP
   packaged files, without contacting OneDrive;
 - renders source-native OneNote pages as a spatial, freeform canvas, preserving
-  coordinates, overlap, sizes, backgrounds, ink, and object relationships;
+  coordinates, overlap, sizes, backgrounds, and object relationships;
 - preserves explicit OneNote hyperlinks, optionally recognizes plain visible
   URLs and email addresses, and resolves OneNote page links across open
   notebooks;
-- searches titles, text, tags, image alternative text, handwriting recognition
+- searches titles, text, image alternative text, handwriting recognition
   text, link targets, and attachment names across all open notebooks;
 - extracts attachments only after an explicit user action and opens them with
   the desktop's registered application.
@@ -109,7 +140,6 @@ and document authority. The supporting documents are:
 - [Public integration API](docs/specs/public-api.md)
 - [Persisted feature inventory](docs/specs/feature-matrix.md)
 - [Known limitations and risks](docs/limitations.md)
-- [Remaining release work](docs/REMAINING-WORK.md)
 - [Installation guide](docs/INSTALL.md)
 - [Packaging and release guide](docs/RELEASES.md)
 - [Roadmap and acceptance gates](docs/plans/roadmap.md)
@@ -124,9 +154,9 @@ The five-crate workspace now parses native notebook trees, performs bounded
 on-disk `.onepkg` extraction, builds UI-neutral page scenes, renders them in an
 embeddable GTK widget, transactionally indexes multiple sources, exposes a
 versioned JSON Lines query process, and composes those components into a
-persistent multi-notebook GTK viewer. The supplied private package passes
-extraction, all-section parse, all-page scene, indexing, search, standalone
-renderer, and full viewer Xvfb tests.
+persistent multi-notebook GTK viewer. The private regression corpus passes
+extraction, section parsing, page-scene construction, indexing, search,
+standalone renderer, and full-viewer Xvfb tests.
 
 The viewer navigation keeps notebooks, nested section groups, and sections in
 one collapsible tree, with a separately collapsible page list. Page title and
@@ -135,11 +165,15 @@ icons avoid a dependency on a particular host icon theme. Inline links are
 underlined, pointer-activated, and opened through host-owned link policy rather
 than by the reusable renderer itself.
 
-The tested corpus is still one private desktop package. Accessibility, measured
-layout fidelity, hostile-input coverage, several user actions, refresh, and
-stable packaging remain release blockers. See
-[remaining work](docs/REMAINING-WORK.md) for the exact gaps and completion
-evidence required.
+The regression corpus uses several private notebooks spanning OneNote versions
+from 2010 through modern Microsoft 365, including web-created notes, multiple
+languages, and equation-heavy content. This coverage still does not establish
+compatibility with every OneNote producer or feature. Accessibility, measured
+layout fidelity, hostile-input coverage, source refresh, and manifest-free
+backup aggregation remain in progress. The [roadmap](docs/plans/roadmap.md),
+[risk register](docs/limitations.md), and
+[GitHub issues](https://github.com/emsi/OneNoteViewer/issues) track the remaining
+engineering work and completion evidence.
 
 ## Repository Shape
 

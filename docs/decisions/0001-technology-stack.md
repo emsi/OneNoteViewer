@@ -16,8 +16,11 @@ dependency.
 This does not close the five GTK fallback gates below. Frame pacing,
 mixed-script fixtures, GTK accessible canvas children, stable-memory
 measurements, and GNOME/KDE appearance still need recorded evidence. Qt is
-therefore a contingency, not an active parallel implementation. See
-[remaining work](../REMAINING-WORK.md).
+therefore a contingency, not an active parallel implementation. Visual,
+accessibility, and performance evidence are tracked in
+[issues #35](https://github.com/emsi/OneNoteViewer/issues/35),
+[#36](https://github.com/emsi/OneNoteViewer/issues/36), and
+[#44](https://github.com/emsi/OneNoteViewer/issues/44).
 
 ## Decision
 

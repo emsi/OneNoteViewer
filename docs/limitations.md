@@ -12,18 +12,20 @@ contains the user-facing behavior.
 
 ## Critical Feasibility Risks
 
-### L-001: Incomplete representative notebook corpus
+### L-001: Incomplete redistributable notebook corpus
 
 - **Status:** Open
 - **Impact:** Compatibility and visual fidelity claims cannot yet be verified
   across producers and the full feature matrix.
-- **Evidence:** One private user package is structurally extracted, all 32
-  sections parse, every page builds a scene, and the root's 637 pages index.
-  It is not redistributable and does not establish producer or feature breadth.
+- **Evidence:** Private regression notebooks span OneNote versions from 2010
+  through modern Microsoft 365, including web-created notes, multiple languages,
+  and equation-heavy content. They do not establish complete producer or
+  feature breadth or provide public CI evidence.
 - **Mitigation:** Build the producer/feature matrix in
   [the corpus specification](specs/test-corpus.md) before beta.
-- **Release gate:** All MVP rows have at least one legal positive fixture;
-  desktop inputs include both OneNote 2016 and current Microsoft 365.
+- **Release gate:** All MVP rows have at least one legal positive fixture and
+  producer coverage is recorded as specified in
+  [issue #42](https://github.com/emsi/OneNoteViewer/issues/42).
 
 ### L-002: Desktop parser support is available in a stable release
 
@@ -54,11 +56,13 @@ contains the user-facing behavior.
 ### L-004: Ink and OfficeMath are unofficially specified
 
 - **Status:** Open
-- **Impact:** Rare stroke dimensions, pen styles, nested ink, and exotic math
-  operators can render incorrectly.
+- **Impact:** Hand-drawn ink is not yet rendered from representative notebook
+  sources, and exotic math operators can render incorrectly.
 - **Mitigation:** Use the pinned `onenote.rs` informal specifications and
   implementation as evidence, preserve unknown operators, and create hostile
-  and visual fixtures. The current OfficeMath path preserves a typed AST,
+  and visual fixtures. End-to-end ink rendering is tracked in
+  [issue #6](https://github.com/emsi/OneNoteViewer/issues/6). The current
+  OfficeMath path preserves a typed AST,
   renders through an offline embedded-font backend, indexes marker-free linear
   text, and visibly falls back on malformed or unsupported expressions. The
   private math regression fixture covers common structured operators only.
@@ -205,8 +209,8 @@ are not recreated unless their final output is ordinary persisted content.
 
 Effect pens, pen-pressure nuance, ink smoothing, Linked Notes metadata, and
 ink-to-shape extension objects can also exceed the documented static model.
-The viewer renders their persisted basic ink/image/text/link form and reports
-lost effects.
+Ordinary persisted image, text, and link content remains renderable; static ink
+rendering is not claimed until issue #6 is resolved.
 
 ### L-018: Accessibility of a custom canvas
 
