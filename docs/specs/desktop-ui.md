@@ -16,8 +16,8 @@ The header contains:
   bundled application icon rather than a second manually packed image;
 - the OneNote Viewer identity;
 - global notebook search;
-- one main menu beside search for file, import, settings, and application
-  commands; and
+- one main menu beside search for file, import, page-history navigation,
+  settings, and application commands; and
 - native minimize, maximize, and close controls supplied by the desktop.
 
 Frequently repeated, context-specific controls may remain beside their
@@ -79,8 +79,8 @@ Persisted identifiers are hints and must be validated against the loaded
 notebook. A missing page falls back to the first page in its section, a missing
 section falls back to the first available section and page, and an unavailable
 source leaves the normal deterministic fallback active. Closing a notebook
-removes it from both the workspace and restoration state; history alone must
-never reopen a source the user closed.
+removes it from both the workspace and restoration state; a navigation-history
+entry must never reopen a source the user closed.
 
 Workspace navigation writes are debounced and atomically published, with a
 final flush during clean shutdown. The workspace currently persists only the
@@ -96,6 +96,36 @@ their own fallback without rewriting the scene or explicit source formatting.
 Standard window-control fallbacks and the application icon are bundled so the
 native, AppImage, and Flatpak headers do not depend on different host icon
 inventories.
+
+## Page Navigation History
+
+The viewer maintains a bounded, session-only history of committed page
+selections. Each entry contains stable source, section, and page identifiers;
+it contains no title, content, search query, reveal target, scroll position,
+zoom, or tree state. Workspace restoration continues to persist only the last
+active page and does not serialize the history.
+
+Deliberate navigation from the notebook tree, page list, search results, or an
+internal OneNote page link records the resulting page. Consecutive visits to
+the same page are coalesced. Navigating normally after moving backward removes
+the former forward branch. Provisional startup selection and later restoration
+replace one current entry so asynchronous load order does not appear as user
+history.
+
+`Alt+Left` moves backward and `Alt+Right` moves forward, matching OneNote.
+Standard `Back` and `Forward` key events and conventional mouse Back and
+Forward buttons invoke the same application actions. Both generic side/extra
+buttons and Linux semantic back/forward buttons are recognized on X11 and
+Wayland. Unrelated pointer events must continue to their target widgets without
+changing history. The actions are also present in the main menu and are
+disabled when there is no valid destination.
+
+History traversal commits through the ordinary page activation path. It
+synchronizes the notebook, section, and page selections, cancels superseded
+scene construction, and does not add another history entry. Closing a notebook
+removes all of its entries. Reloading a source removes entries for pages or
+sections that no longer exist. Traversal skips invalid entries and never loads
+or reopens a source merely because it occurs in history.
 
 ## Page Context Header
 
