@@ -2,9 +2,20 @@
 
 ## User Contract
 
-Search operates across all currently open notebooks without network access.
-Results appear incrementally, are ranked, show notebook/section/page context
-and a highlighted snippet, and navigate to the matching page/object.
+Workspace search operates across all currently open notebooks without network
+access. The user can narrow it to the active notebook, nearest section group,
+or section without changing the underlying index. Results are ranked, show the
+complete notebook/group/section path and matched-field context, and navigate
+to the matching page/object. The magnifier attached to the search field opens
+the scope chooser; `Ctrl+E` selects the workspace search field without changing
+the active scope.
+
+Find in Page is a separate transient tool inside the current page pane. It
+searches the page title, displayed page text, mathematical fallbacks, and
+searchable metadata already represented by the renderer. `Ctrl+F` opens it;
+Enter/F3 and Shift+Enter/Shift+F3 move between matches. Case, whole-word,
+diacritic, and highlight-all options are visible as checkboxes on the same
+single-row bar and apply only to the current page.
 
 Source notebooks remain authoritative. The index is disposable derived data.
 
@@ -80,6 +91,15 @@ input returns a user-readable parse error, never interpolated SQL.
 Library and protocol callers submit the same structured query model. They do
 not supply raw SQL or depend on FTS5 syntax unless a separately versioned
 advanced-query field is introduced.
+
+Workspace scope selection compiles to stable source and section ID filters.
+Notebook, group, and section names remain display values rather than identity.
+
+Find in Page is literal rather than FTS-backed. The GTK renderer normalizes
+Unicode while retaining byte-to-layout mappings, so highlighting remains
+aligned with the displayed text. Whole-word matching uses Unicode letters and
+numbers, and diacritic sensitivity is explicit rather than inferred from the
+workspace tokenizer.
 
 ## Results and Navigation
 

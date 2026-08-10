@@ -1773,6 +1773,7 @@ dependencies = [
  "typst-as-lib",
  "typst-assets",
  "typst-render",
+ "unicode-normalization",
 ]
 
 [[package]]

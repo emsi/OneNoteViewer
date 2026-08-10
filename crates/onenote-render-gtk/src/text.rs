@@ -1,4 +1,5 @@
 use crate::math_cache::{MathKey, MathSize};
+use crate::FindTextRange;
 use gtk::pango;
 use num_traits::ToPrimitive;
 use onenote_core::{MathSpan, TextAlignment, TextBlock, TextStyle};
@@ -48,6 +49,43 @@ impl TextLayout {
             .iter()
             .find(|link| index >= link.start && index < link.end)
             .map(|link| link.target.as_str())
+    }
+
+    pub(crate) fn match_rectangles(&self, range: FindTextRange) -> Vec<onenote_core::Rect> {
+        let Ok(start) = i32::try_from(range.start_byte) else {
+            return Vec::new();
+        };
+        let Ok(end) = i32::try_from(range.end_byte) else {
+            return Vec::new();
+        };
+        let mut rectangles = Vec::new();
+        for line_index in 0..self.layout.line_count() {
+            let Some(line) = self.layout.line_readonly(line_index) else {
+                continue;
+            };
+            let line_start = line.start_index();
+            let line_end = line_start.saturating_add(line.length());
+            let intersection_start = start.max(line_start);
+            let intersection_end = end.min(line_end);
+            if intersection_start >= intersection_end {
+                continue;
+            }
+            let position = self.layout.index_to_pos(intersection_start);
+            for horizontal in line
+                .x_ranges(intersection_start, intersection_end)
+                .chunks_exact(2)
+            {
+                let x = from_pango_units(horizontal[0].min(horizontal[1]));
+                let width = from_pango_units((horizontal[1] - horizontal[0]).abs()).max(1.0);
+                rectangles.push(onenote_core::Rect {
+                    x,
+                    y: from_pango_units(position.y()),
+                    width,
+                    height: from_pango_units(position.height()).max(1.0),
+                });
+            }
+        }
+        rectangles
     }
 }
 

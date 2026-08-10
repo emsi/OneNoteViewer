@@ -2,6 +2,7 @@ use crate::image_cache::{self, DecodedImage, ImageDecodeFailure, MAX_TEXTURE_CAC
 use crate::math_cache::{self, MathKey, MathSize, TypstMathBackend};
 use crate::resolved_layout::ResolvedLayout;
 use crate::text;
+use crate::{FindMatch, FindOptions};
 use gtk::gdk;
 use gtk::glib;
 use gtk::graphene;
@@ -28,10 +29,17 @@ pub const MIN_ZOOM: f32 = 0.25;
 pub const MAX_ZOOM: f32 = 4.0;
 type ActionHandler = Rc<dyn Fn(HitAction)>;
 
+#[derive(Default)]
+struct FindHighlights {
+    matches: Vec<FindMatch>,
+    active: Option<usize>,
+    highlight_all: bool,
+}
+
 mod imp {
     use super::{
-        gdk, glib, ActionHandler, Arc, Cell, HashMap, HashSet, ImageDecodeFailure, MathKey,
-        MathLayoutBackend, OnceLock, PageScene, Rc, RefCell, ResolvedLayout, ResourceId,
+        gdk, glib, ActionHandler, Arc, Cell, FindHighlights, HashMap, HashSet, ImageDecodeFailure,
+        MathKey, MathLayoutBackend, OnceLock, PageScene, Rc, RefCell, ResolvedLayout, ResourceId,
         ResourceStore, SceneNodeId, TypstMathBackend, CANVAS_MARGIN, DEFAULT_ZOOM, MAX_ZOOM,
         MIN_ZOOM,
     };
@@ -61,6 +69,7 @@ mod imp {
         pub(super) math_texture_bytes: Cell<usize>,
         pub(super) math_backend: RefCell<Arc<dyn MathLayoutBackend>>,
         pub(super) math_generation: Cell<u64>,
+        pub(super) find_highlights: RefCell<FindHighlights>,
         #[cfg(test)]
         pub(super) viewport_redraw_requests: Cell<u64>,
     }
@@ -89,6 +98,7 @@ mod imp {
                 math_texture_bytes: Cell::default(),
                 math_backend: RefCell::new(Arc::new(TypstMathBackend::new())),
                 math_generation: Cell::default(),
+                find_highlights: RefCell::default(),
                 #[cfg(test)]
                 viewport_redraw_requests: Cell::default(),
             }
@@ -242,6 +252,7 @@ impl PageCanvas {
         *imp.scene.borrow_mut() = scene;
         imp.hovered_attachment.borrow_mut().take();
         imp.focused_attachment.set(None);
+        *imp.find_highlights.borrow_mut() = FindHighlights::default();
         self.invalidate_text_geometry();
         imp.textures.borrow_mut().clear();
         imp.pending.borrow_mut().clear();
@@ -262,6 +273,144 @@ impl PageCanvas {
     /// Current scene.
     pub fn scene(&self) -> Option<Arc<PageScene>> {
         self.imp().scene.borrow().clone()
+    }
+
+    /// Find literal occurrences in displayed text and searchable page metadata.
+    pub fn find(&self, query: &str, options: FindOptions, limit: usize) -> Vec<FindMatch> {
+        let Some(scene) = self.scene() else {
+            return Vec::new();
+        };
+        let resolved = self.resolved_layout(&scene);
+        let mut matches = Vec::new();
+        for node in &scene.nodes {
+            if matches.len() >= limit {
+                break;
+            }
+            let node_bounds = resolved.node_bounds(node);
+            matches.extend(self.find_in_node(
+                node,
+                node_bounds,
+                query,
+                options,
+                limit - matches.len(),
+            ));
+        }
+        matches
+    }
+
+    fn find_in_node(
+        &self,
+        node: &SceneNode,
+        node_bounds: Rect,
+        query: &str,
+        options: FindOptions,
+        limit: usize,
+    ) -> Vec<FindMatch> {
+        let mut matches = Vec::new();
+        match &node.primitive {
+            ScenePrimitive::Text { block, marker } => {
+                let layout = self.text_layout(node, block, marker.as_deref());
+                for range in
+                    crate::find_text_ranges(layout.layout.text().as_str(), query, options, limit)
+                {
+                    let bounds = layout
+                        .match_rectangles(range)
+                        .into_iter()
+                        .map(|bounds| translate_rect(bounds, node_bounds.x, node_bounds.y))
+                        .collect();
+                    if let Some(found) = FindMatch::new(bounds) {
+                        matches.push(found);
+                    }
+                }
+                for math in &layout.math {
+                    if matches.len() >= limit {
+                        break;
+                    }
+                    if !crate::find_text_ranges(&math.fallback, query, options, 1).is_empty() {
+                        matches.push(FindMatch {
+                            bounds: vec![Rect {
+                                x: node_bounds.x + math.x,
+                                y: node_bounds.y + math.y,
+                                width: math.width,
+                                height: math.height,
+                            }],
+                        });
+                    }
+                }
+                for link in &block.links {
+                    if matches.len() >= limit {
+                        break;
+                    }
+                    if !crate::find_text_ranges(&link.target, query, options, 1).is_empty() {
+                        matches.push(FindMatch {
+                            bounds: vec![node_bounds],
+                        });
+                    }
+                }
+            }
+            ScenePrimitive::Image(image) => {
+                append_metadata_match(
+                    &mut matches,
+                    limit,
+                    node_bounds,
+                    [
+                        image.alt_text.as_deref(),
+                        image.search_text.as_deref(),
+                        image.hyperlink.as_deref(),
+                        Some(image.resource.name.as_str()),
+                    ],
+                    query,
+                    options,
+                );
+            }
+            ScenePrimitive::Attachment(attachment) => {
+                append_metadata_match(
+                    &mut matches,
+                    limit,
+                    node_bounds,
+                    [
+                        Some(attachment.resource.name.as_str()),
+                        Some(attachment.resource.media_type.as_str()),
+                        None,
+                        None,
+                    ],
+                    query,
+                    options,
+                );
+            }
+            ScenePrimitive::Ink { .. } | ScenePrimitive::Placeholder { .. } => {
+                append_metadata_match(
+                    &mut matches,
+                    limit,
+                    node_bounds,
+                    [
+                        Some(node.accessibility.label.as_str()),
+                        node.accessibility.description.as_deref(),
+                        None,
+                        None,
+                    ],
+                    query,
+                    options,
+                );
+            }
+            ScenePrimitive::Fill { .. } | ScenePrimitive::Line { .. } => {}
+        }
+        matches
+    }
+
+    /// Replace the page highlights without changing the scene or viewport.
+    pub fn set_find_highlights(
+        &self,
+        matches: Vec<FindMatch>,
+        active: Option<usize>,
+        highlight_all: bool,
+    ) {
+        *self.imp().find_highlights.borrow_mut() = FindHighlights {
+            matches,
+            active,
+            highlight_all,
+        };
+        self.queue_draw();
     }
 
     /// Supply the lazy resources belonging to the scene's loaded notebook.
@@ -629,7 +778,27 @@ impl PageCanvas {
         for node in resolved.visible_nodes(&scene, viewport, VIEWPORT_OVERSCAN) {
             self.snapshot_node(snapshot, node, resolved.node_bounds(node));
         }
+        self.snapshot_find_highlights(snapshot, viewport);
         snapshot.restore();
+    }
+
+    fn snapshot_find_highlights(&self, snapshot: &gtk::Snapshot, viewport: Rect) {
+        let highlights = self.imp().find_highlights.borrow();
+        for (index, found) in highlights.matches.iter().enumerate() {
+            if !highlights.highlight_all && Some(index) != highlights.active {
+                continue;
+            }
+            let color = if Some(index) == highlights.active {
+                gdk::RGBA::new(1.0, 0.55, 0.05, 0.58)
+            } else {
+                gdk::RGBA::new(1.0, 0.82, 0.10, 0.34)
+            };
+            for bounds in &found.bounds {
+                if rects_intersect(*bounds, viewport) {
+                    snapshot.append_color(&color, &graphene_rect(*bounds));
+                }
+            }
+        }
     }
 
     fn logical_viewport(&self, scene_bounds: Rect) -> Rect {
@@ -1260,6 +1429,41 @@ fn graphene_rect(rect: Rect) -> graphene::Rect {
     graphene::Rect::new(rect.x, rect.y, rect.width, rect.height)
 }
 
+fn translate_rect(rect: Rect, x: f32, y: f32) -> Rect {
+    Rect {
+        x: rect.x + x,
+        y: rect.y + y,
+        ..rect
+    }
+}
+
+fn append_metadata_match(
+    matches: &mut Vec<FindMatch>,
+    limit: usize,
+    bounds: Rect,
+    values: [Option<&str>; 4],
+    query: &str,
+    options: FindOptions,
+) {
+    if matches.len() < limit
+        && values
+            .into_iter()
+            .flatten()
+            .any(|value| !crate::find_text_ranges(value, query, options, 1).is_empty())
+    {
+        matches.push(FindMatch {
+            bounds: vec![bounds],
+        });
+    }
+}
+
+fn rects_intersect(left: Rect, right: Rect) -> bool {
+    left.x < right.x + right.width
+        && left.x + left.width > right.x
+        && left.y < right.y + right.height
+        && left.y + left.height > right.y
+}
+
 fn contains(rect: Rect, x: f32, y: f32) -> bool {
     x >= rect.x && x <= rect.x + rect.width && y >= rect.y && y <= rect.y + rect.height
 }
@@ -1318,6 +1522,7 @@ mod tests {
         image_failure_label, next_attachment_index, normalize_zoom, ImageDecodeFailure, PageCanvas,
         DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
     };
+    use crate::FindOptions;
     use gtk::prelude::*;
     use gtk::subclass::prelude::ObjectSubclassIsExt;
     use onenote_core::{
@@ -1427,6 +1632,10 @@ mod tests {
         };
         let canvas = PageCanvas::new();
         canvas.set_scene(Some(Arc::new(scene)));
+        let attachment_matches = canvas.find("MANUAL", FindOptions::default(), 10);
+        assert_eq!(attachment_matches.len(), 1);
+        assert_eq!(attachment_matches[0].bounds, vec![bounds]);
+        canvas.set_find_highlights(attachment_matches, Some(0), true);
         for color in [gtk::gdk::RGBA::BLACK, gtk::gdk::RGBA::WHITE] {
             canvas.set_default_text_color(&color);
             let snapshot = gtk::Snapshot::new();

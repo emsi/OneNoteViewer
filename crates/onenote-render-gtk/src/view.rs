@@ -1,4 +1,4 @@
-use crate::{normalize_zoom, PageCanvas};
+use crate::{normalize_zoom, FindMatch, FindOptions, PageCanvas};
 use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::*;
@@ -103,6 +103,29 @@ impl PageView {
     /// Current fallback for text whose `OneNote` style uses automatic color.
     pub fn default_text_color(&self) -> gdk::RGBA {
         self.canvas.default_text_color()
+    }
+
+    /// Find occurrences using the renderer's displayed text and resolved geometry.
+    pub fn find(&self, query: &str, options: FindOptions, limit: usize) -> Vec<FindMatch> {
+        self.canvas.find(query, options, limit)
+    }
+
+    /// Show current-page find highlights.
+    pub fn set_find_highlights(
+        &self,
+        matches: Vec<FindMatch>,
+        active: Option<usize>,
+        highlight_all: bool,
+    ) {
+        self.canvas
+            .set_find_highlights(matches, active, highlight_all);
+    }
+
+    /// Reveal one current-page find occurrence.
+    pub fn reveal_find_match(&self, found: &FindMatch) {
+        if let Some(bounds) = found.primary_bounds() {
+            self.reveal(bounds);
+        }
     }
 
     /// Scroll a logical object rectangle into view.

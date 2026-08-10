@@ -15,7 +15,9 @@ use onenote_core::{
 };
 use onenote_index::{MatchedField, SearchHit, SearchQuery, TextRange};
 use onenote_render::{HitAction, ScenePrimitive};
-use onenote_render_gtk::{PageView, DEFAULT_ZOOM};
+use onenote_render_gtk::{
+    find_text_ranges, FindMatch, FindOptions, FindTextRange, PageView, DEFAULT_ZOOM,
+};
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -30,11 +32,14 @@ const PAGE_NAVIGATION_WIDTH: i32 = 280;
 const COLLAPSED_NAVIGATION_WIDTH: i32 = 42;
 const NAVIGATION_SEPARATOR_WIDTH: i32 = 1;
 const SEARCH_RESULTS_WIDTH: i32 = 520;
+const PAGE_FIND_LIMIT: usize = 5_000;
 const APP_ICON_NAME: &str = "io.github.emsi.OneNoteViewer";
-const SYMBOLIC_ICON_NAMES: [&str; 20] = [
+const SYMBOLIC_ICON_NAMES: [&str; 22] = [
     "onenote-chevron-down-symbolic",
     "onenote-chevron-right-symbolic",
     "onenote-close-symbolic",
+    "onenote-find-next-symbolic",
+    "onenote-find-previous-symbolic",
     "onenote-folder-symbolic",
     "onenote-import-package-symbolic",
     "onenote-menu-symbolic",
@@ -325,6 +330,19 @@ struct SearchResultRow {
     matched_field: MatchedField,
 }
 
+#[derive(Default)]
+struct PageFindState {
+    title_matches: Vec<FindTextRange>,
+    page_matches: Vec<FindMatch>,
+    active: Option<usize>,
+}
+
+impl PageFindState {
+    fn len(&self) -> usize {
+        self.title_matches.len() + self.page_matches.len()
+    }
+}
+
 #[derive(Clone)]
 struct RevealTarget {
     object_id: Option<ObjectId>,
@@ -404,6 +422,15 @@ struct Viewer {
     page_context: gtk::Label,
     search_entry: gtk::Entry,
     search_scope: WorkspaceSearchControls,
+    page_find_revealer: gtk::Revealer,
+    page_find_entry: gtk::SearchEntry,
+    page_find_count: gtk::Label,
+    page_find_previous: gtk::Button,
+    page_find_next: gtk::Button,
+    page_find_case: gtk::CheckButton,
+    page_find_words: gtk::CheckButton,
+    page_find_diacritics: gtk::CheckButton,
+    page_find_highlight_all: gtk::CheckButton,
     status: gtk::Label,
     spinner: gtk::Spinner,
     zoom_label: gtk::Label,
@@ -413,6 +440,7 @@ struct Viewer {
     operation_progress: gtk::ProgressBar,
     operation_cancel_button: gtk::Button,
     import_package_action: gio::SimpleAction,
+    page_find_action: gio::SimpleAction,
     history_back_action: gio::SimpleAction,
     history_forward_action: gio::SimpleAction,
     foreground_operation: RefCell<Option<ForegroundOperation>>,
@@ -430,6 +458,8 @@ struct Viewer {
     events: mpsc::Sender<Event>,
     receiver: RefCell<mpsc::Receiver<Event>>,
     search_timer: RefCell<Option<glib::SourceId>>,
+    page_find_timer: RefCell<Option<glib::SourceId>>,
+    page_find_state: RefCell<PageFindState>,
     workspace_search_scope: Cell<WorkspaceSearchScope>,
     workspace_save_timer: RefCell<Option<glib::SourceId>>,
     settings_save_timer: RefCell<Option<glib::SourceId>>,
@@ -519,6 +549,10 @@ impl Viewer {
         let history_forward = gio::SimpleAction::new("history-forward", None);
         history_forward.set_enabled(false);
         let focus_search = gio::SimpleAction::new("focus-search", None);
+        let page_find = gio::SimpleAction::new("find-page", None);
+        page_find.set_enabled(false);
+        let page_find_next_action = gio::SimpleAction::new("find-page-next", None);
+        let page_find_previous_action = gio::SimpleAction::new("find-page-previous", None);
         let close_source = icon_button("onenote-close-symbolic", "Close selected notebook");
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Background activity"));
@@ -538,6 +572,7 @@ impl Viewer {
         let navigation_menu = gio::Menu::new();
         navigation_menu.append(Some("Back"), Some("win.history-back"));
         navigation_menu.append(Some("Forward"), Some("win.history-forward"));
+        navigation_menu.append(Some("Find in Page"), Some("win.find-page"));
         application_menu.append_section(None, &navigation_menu);
         let preferences_menu = gio::Menu::new();
         preferences_menu.append(Some("Settings"), Some("win.settings"));
@@ -604,6 +639,58 @@ impl Viewer {
         title_box.append(&page_date);
         title_box.append(&page_context);
 
+        let page_find_entry = gtk::SearchEntry::builder()
+            .placeholder_text("Find text on this page")
+            .hexpand(true)
+            .width_request(140)
+            .build();
+        let page_find_count = gtk::Label::new(Some("No matches"));
+        page_find_count.add_css_class("page-find-count");
+        let page_find_previous = icon_button(
+            "onenote-find-previous-symbolic",
+            "Previous match (Shift+F3)",
+        );
+        let page_find_next = icon_button("onenote-find-next-symbolic", "Next match (F3)");
+        page_find_previous.set_sensitive(false);
+        page_find_next.set_sensitive(false);
+        let page_find_case = gtk::CheckButton::with_label("Case");
+        page_find_case.set_tooltip_text(Some("Match case"));
+        let page_find_words = gtk::CheckButton::with_label("Whole words");
+        page_find_words.set_tooltip_text(Some("Match whole words"));
+        let page_find_diacritics = gtk::CheckButton::with_label("Diacritics");
+        page_find_diacritics.set_tooltip_text(Some("Match diacritics"));
+        let page_find_highlight_all = gtk::CheckButton::with_label("Highlight");
+        page_find_highlight_all.set_tooltip_text(Some("Highlight all matches"));
+        page_find_highlight_all.set_active(true);
+        for toggle in [
+            &page_find_case,
+            &page_find_words,
+            &page_find_diacritics,
+            &page_find_highlight_all,
+        ] {
+            toggle.add_css_class("page-find-option");
+        }
+        let close_page_find = icon_button("onenote-close-symbolic", "Close Find in Page");
+        let page_find_bar = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        page_find_bar.set_margin_start(6);
+        page_find_bar.set_margin_end(4);
+        page_find_bar.set_margin_top(4);
+        page_find_bar.set_margin_bottom(4);
+        page_find_bar.append(&page_find_entry);
+        page_find_bar.append(&page_find_count);
+        page_find_bar.append(&page_find_previous);
+        page_find_bar.append(&page_find_next);
+        page_find_bar.append(&page_find_highlight_all);
+        page_find_bar.append(&page_find_case);
+        page_find_bar.append(&page_find_diacritics);
+        page_find_bar.append(&page_find_words);
+        page_find_bar.append(&close_page_find);
+        page_find_bar.add_css_class("page-find-bar");
+        let page_find_revealer = gtk::Revealer::builder()
+            .transition_type(gtk::RevealerTransitionType::SlideUp)
+            .child(&page_find_bar)
+            .build();
+
         let empty = gtk::Box::new(gtk::Orientation::Vertical, 12);
         empty.set_halign(gtk::Align::Center);
         empty.set_valign(gtk::Align::Center);
@@ -623,6 +710,7 @@ impl Viewer {
         document.append(&title_box);
         document.append(&separator_horizontal());
         document.append(page_view.widget());
+        document.append(&page_find_revealer);
         let canvas_stack = gtk::Stack::builder()
             .hexpand(true)
             .vexpand(true)
@@ -753,6 +841,15 @@ impl Viewer {
             page_context,
             search_entry,
             search_scope,
+            page_find_revealer,
+            page_find_entry,
+            page_find_count,
+            page_find_previous,
+            page_find_next,
+            page_find_case,
+            page_find_words,
+            page_find_diacritics,
+            page_find_highlight_all,
             status,
             spinner,
             zoom_label,
@@ -762,6 +859,7 @@ impl Viewer {
             operation_progress,
             operation_cancel_button,
             import_package_action: import_package.clone(),
+            page_find_action: page_find.clone(),
             history_back_action: history_back.clone(),
             history_forward_action: history_forward.clone(),
             foreground_operation: RefCell::default(),
@@ -782,6 +880,8 @@ impl Viewer {
             events: event_sender,
             receiver: RefCell::new(event_receiver),
             search_timer: RefCell::default(),
+            page_find_timer: RefCell::default(),
+            page_find_state: RefCell::default(),
             workspace_search_scope: Cell::new(WorkspaceSearchScope::AllNotebooks),
             workspace_save_timer: RefCell::default(),
             settings_save_timer: RefCell::default(),
@@ -796,6 +896,9 @@ impl Viewer {
         viewer.window.add_action(&history_back);
         viewer.window.add_action(&history_forward);
         viewer.window.add_action(&focus_search);
+        viewer.window.add_action(&page_find);
+        viewer.window.add_action(&page_find_next_action);
+        viewer.window.add_action(&page_find_previous_action);
         application.set_accels_for_action("win.open-file", &["<Primary>o"]);
         application.set_accels_for_action("win.open-folder", &["<Primary><Shift>o"]);
         application.set_accels_for_action("win.import-package", &["<Primary><Shift>i"]);
@@ -804,6 +907,9 @@ impl Viewer {
         application.set_accels_for_action("win.history-back", &["<Alt>Left", "Back"]);
         application.set_accels_for_action("win.history-forward", &["<Alt>Right", "Forward"]);
         application.set_accels_for_action("win.focus-search", &["<Primary>e"]);
+        application.set_accels_for_action("win.find-page", &["<Primary>f"]);
+        application.set_accels_for_action("win.find-page-next", &["F3"]);
+        application.set_accels_for_action("win.find-page-previous", &["<Shift>F3"]);
         viewer.connect_header(
             &open_file,
             &open_folder,
@@ -815,6 +921,12 @@ impl Viewer {
         viewer.connect_about(&show_about);
         viewer.connect_history();
         viewer.connect_workspace_search(&focus_search);
+        viewer.connect_page_find(
+            &page_find,
+            &page_find_next_action,
+            &page_find_previous_action,
+            &close_page_find,
+        );
         viewer.connect_system_theme();
         viewer.connect_operation_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
@@ -912,6 +1024,102 @@ impl Viewer {
             });
         }
         self.refresh_workspace_search_scope();
+    }
+
+    fn connect_page_find(
+        self: &Rc<Self>,
+        find: &gio::SimpleAction,
+        next: &gio::SimpleAction,
+        previous: &gio::SimpleAction,
+        close: &gtk::Button,
+    ) {
+        let weak = Rc::downgrade(self);
+        find.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.show_page_find();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        next.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.navigate_page_find(1);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        previous.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.navigate_page_find(-1);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.page_find_previous.connect_clicked(move |_| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.navigate_page_find(-1);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.page_find_next.connect_clicked(move |_| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.navigate_page_find(1);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        close.connect_clicked(move |_| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.close_page_find();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.page_find_entry.connect_search_changed(move |_| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.schedule_page_find();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        self.page_find_entry.connect_stop_search(move |_| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.close_page_find();
+            }
+        });
+        for toggle in [
+            &self.page_find_case,
+            &self.page_find_words,
+            &self.page_find_diacritics,
+        ] {
+            let weak = Rc::downgrade(self);
+            toggle.connect_toggled(move |_| {
+                if let Some(viewer) = weak.upgrade() {
+                    viewer.schedule_page_find();
+                }
+            });
+        }
+        let weak = Rc::downgrade(self);
+        self.page_find_highlight_all.connect_toggled(move |_| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.apply_page_find_state(true);
+            }
+        });
+        let keys = gtk::EventControllerKey::new();
+        let weak = Rc::downgrade(self);
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
+            let Some(viewer) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            match key {
+                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => viewer.navigate_page_find(
+                    if modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
+                        -1
+                    } else {
+                        1
+                    },
+                ),
+                gtk::gdk::Key::Escape => viewer.close_page_find(),
+                _ => return glib::Propagation::Proceed,
+            }
+            glib::Propagation::Stop
+        });
+        self.page_find_entry.add_controller(keys);
+        self.refresh_page_find_action();
     }
 
     fn connect_history(self: &Rc<Self>) {
@@ -1473,6 +1681,10 @@ impl Viewer {
                     Ok(scene) => {
                         self.page_view.set_scene(Some(scene));
                         self.canvas_stack.set_visible_child_name("document");
+                        self.refresh_page_find_action();
+                        if self.page_find_revealer.reveals_child() {
+                            self.recompute_page_find(true);
+                        }
                         self.reveal_pending_target();
                         self.status.set_label("Page ready");
                     }
@@ -2077,6 +2289,7 @@ impl Viewer {
         self.schedule_workspace_save();
         let display_title = display_title(&page);
         let title = gtk_text(&display_title);
+        self.page_title.set_attributes(None);
         self.page_title.set_label(&title);
         let date = display_timestamp(&page.created_at);
         self.page_date.set_label(&date);
@@ -2089,6 +2302,7 @@ impl Viewer {
         self.page_view
             .set_resources(Some(Arc::new(loaded.resources.clone())));
         self.page_view.set_scene(None);
+        self.prepare_page_find_for_page_load();
         let generation = {
             let mut state = self.state.borrow_mut();
             state.scene_generation = state.scene_generation.wrapping_add(1);
@@ -2104,7 +2318,17 @@ impl Viewer {
         worker::build_scene(generation, page, cancel, self.events.clone());
         self.refresh_history_actions();
         self.refresh_workspace_search_scope();
+        self.refresh_page_find_action();
         true
+    }
+
+    fn prepare_page_find_for_page_load(&self) {
+        if self.page_find_revealer.reveals_child() {
+            *self.page_find_state.borrow_mut() = PageFindState::default();
+            self.page_find_count.set_label("Loading page...");
+            self.page_find_previous.set_sensitive(false);
+            self.page_find_next.set_sensitive(false);
+        }
     }
 
     fn clear_page_content(&self) {
@@ -2136,6 +2360,149 @@ impl Viewer {
         self.page_context.set_label("");
         self.page_view.set_scene(None);
         self.canvas_stack.set_visible_child_name("empty");
+        self.close_page_find();
+        self.refresh_page_find_action();
+    }
+
+    fn refresh_page_find_action(&self) {
+        self.page_find_action
+            .set_enabled(self.page_view.canvas().scene().is_some());
+    }
+
+    fn show_page_find(self: &Rc<Self>) {
+        if !self.page_find_action.is_enabled() {
+            return;
+        }
+        self.page_find_revealer.set_reveal_child(true);
+        self.page_find_entry.grab_focus();
+        self.page_find_entry.select_region(0, -1);
+        if !self.page_find_entry.text().is_empty() {
+            self.recompute_page_find(false);
+        }
+    }
+
+    fn close_page_find(&self) {
+        self.page_find_revealer.set_reveal_child(false);
+        self.page_find_entry.set_text("");
+        if let Some(timer) = self.page_find_timer.borrow_mut().take() {
+            timer.remove();
+        }
+        *self.page_find_state.borrow_mut() = PageFindState::default();
+        self.page_find_count.set_label("No matches");
+        self.page_find_previous.set_sensitive(false);
+        self.page_find_next.set_sensitive(false);
+        self.page_title.set_attributes(None);
+        self.page_view.set_find_highlights(Vec::new(), None, false);
+        if self.page_view.canvas().scene().is_some() {
+            self.page_view.canvas().grab_focus();
+        }
+    }
+
+    fn schedule_page_find(self: &Rc<Self>) {
+        if let Some(timer) = self.page_find_timer.borrow_mut().take() {
+            timer.remove();
+        }
+        let weak = Rc::downgrade(self);
+        *self.page_find_timer.borrow_mut() = Some(glib::timeout_add_local_once(
+            Duration::from_millis(120),
+            move || {
+                if let Some(viewer) = weak.upgrade() {
+                    viewer.page_find_timer.borrow_mut().take();
+                    viewer.recompute_page_find(true);
+                }
+            },
+        ));
+    }
+
+    fn page_find_options(&self) -> FindOptions {
+        FindOptions {
+            case_sensitive: self.page_find_case.is_active(),
+            whole_word: self.page_find_words.is_active(),
+            match_diacritics: self.page_find_diacritics.is_active(),
+        }
+    }
+
+    fn recompute_page_find(&self, reset_active: bool) {
+        let query = self.page_find_entry.text();
+        if query.is_empty() || self.page_view.canvas().scene().is_none() {
+            *self.page_find_state.borrow_mut() = PageFindState::default();
+            self.apply_page_find_state(false);
+            return;
+        }
+        let options = self.page_find_options();
+        let title_matches = find_text_ranges(
+            self.page_title.text().as_str(),
+            query.as_str(),
+            options,
+            PAGE_FIND_LIMIT,
+        );
+        let page_matches = self.page_view.find(
+            query.as_str(),
+            options,
+            PAGE_FIND_LIMIT.saturating_sub(title_matches.len()),
+        );
+        let mut state = self.page_find_state.borrow_mut();
+        let previous_active = state.active;
+        state.title_matches = title_matches;
+        state.page_matches = page_matches;
+        state.active = if state.len() == 0 {
+            None
+        } else if reset_active {
+            Some(0)
+        } else {
+            Some(previous_active.unwrap_or(0).min(state.len() - 1))
+        };
+        drop(state);
+        self.apply_page_find_state(true);
+    }
+
+    fn navigate_page_find(self: &Rc<Self>, direction: i32) {
+        if !self.page_find_revealer.reveals_child() {
+            self.show_page_find();
+        }
+        let mut state = self.page_find_state.borrow_mut();
+        let count = state.len();
+        if count == 0 {
+            return;
+        }
+        let current = state.active.unwrap_or(0);
+        state.active = Some(if direction < 0 {
+            current.checked_sub(1).unwrap_or(count - 1)
+        } else {
+            (current + 1) % count
+        });
+        drop(state);
+        self.apply_page_find_state(true);
+    }
+
+    fn apply_page_find_state(&self, reveal_active: bool) {
+        let state = self.page_find_state.borrow();
+        let count = state.len();
+        let highlight_all = self.page_find_highlight_all.is_active();
+        let title_active = state
+            .active
+            .filter(|index| *index < state.title_matches.len());
+        let title_attributes =
+            page_find_title_attributes(&state.title_matches, title_active, highlight_all);
+        self.page_title.set_attributes(title_attributes.as_ref());
+        let page_active = state
+            .active
+            .and_then(|index| index.checked_sub(state.title_matches.len()));
+        self.page_view
+            .set_find_highlights(state.page_matches.clone(), page_active, highlight_all);
+        match state.active {
+            Some(active) => self
+                .page_find_count
+                .set_label(&format!("{} of {count}", active + 1)),
+            None => self.page_find_count.set_label("No matches"),
+        }
+        self.page_find_previous.set_sensitive(count > 0);
+        self.page_find_next.set_sensitive(count > 0);
+        if reveal_active {
+            if let Some(found) = page_active.and_then(|index| state.page_matches.get(index)) {
+                self.page_view.reveal_find_match(found);
+            }
+        }
     }
 
     fn set_workspace_search_scope(self: &Rc<Self>, scope: WorkspaceSearchScope) {
@@ -3097,6 +3464,37 @@ fn search_highlight_attributes(
     applied.then_some(attributes)
 }
 
+fn page_find_title_attributes(
+    matches: &[FindTextRange],
+    active: Option<usize>,
+    highlight_all: bool,
+) -> Option<gtk::pango::AttrList> {
+    let attributes = gtk::pango::AttrList::new();
+    let mut applied = false;
+    for (index, range) in matches.iter().enumerate() {
+        if !highlight_all && Some(index) != active {
+            continue;
+        }
+        let (Ok(start), Ok(end)) = (
+            u32::try_from(range.start_byte),
+            u32::try_from(range.end_byte),
+        ) else {
+            continue;
+        };
+        let (red, green, blue) = if Some(index) == active {
+            (u16::MAX, 34_000, 4_000)
+        } else {
+            (u16::MAX, 52_000, 7_000)
+        };
+        let mut background = gtk::pango::AttrColor::new_background(red, green, blue);
+        background.set_start_index(start);
+        background.set_end_index(end);
+        attributes.insert(background);
+        applied = true;
+    }
+    applied.then_some(attributes)
+}
+
 fn selectable_page_header_label(css_class: &str) -> gtk::Label {
     let label = gtk::Label::builder()
         .xalign(0.0)
@@ -3690,6 +4088,19 @@ fn theme_css(theme: EffectiveTheme) -> String {
             line-height: 1.2;
             color: @text;
         }}
+        .page-find-bar {{
+            background-color: @navigation_bg;
+            border-top: 1px solid @border;
+            color: @text;
+            font-size: 12px;
+        }}
+        .page-find-count, .page-find-count:backdrop {{
+            min-width: 60px;
+            color: @muted;
+        }}
+        .page-find-option, .page-find-option:backdrop {{
+            color: @text;
+        }}
         .page-title, .page-title:backdrop {{
             font-size: 20px;
             font-weight: 650;
@@ -4147,6 +4558,7 @@ mod tests {
                 "button.suggested-action",
                 "label selection",
                 ".error-detail text selection",
+                ".page-find-option:backdrop",
             ] {
                 assert!(css.contains(required), "theme CSS is missing {required}");
             }

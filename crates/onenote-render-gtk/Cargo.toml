@@ -19,6 +19,7 @@ typst.workspace = true
 typst-as-lib.workspace = true
 typst-assets.workspace = true
 typst-render.workspace = true
+unicode-normalization.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
