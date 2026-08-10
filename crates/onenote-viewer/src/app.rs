@@ -31,7 +31,7 @@ const COLLAPSED_NAVIGATION_WIDTH: i32 = 42;
 const NAVIGATION_SEPARATOR_WIDTH: i32 = 1;
 const SEARCH_RESULTS_WIDTH: i32 = 520;
 const APP_ICON_NAME: &str = "io.github.emsi.OneNoteViewer";
-const SYMBOLIC_ICON_NAMES: [&str; 19] = [
+const SYMBOLIC_ICON_NAMES: [&str; 20] = [
     "onenote-chevron-down-symbolic",
     "onenote-chevron-right-symbolic",
     "onenote-close-symbolic",
@@ -44,6 +44,7 @@ const SYMBOLIC_ICON_NAMES: [&str; 19] = [
     "onenote-panel-collapse-symbolic",
     "onenote-panel-expand-symbolic",
     "onenote-settings-symbolic",
+    "onenote-search-symbolic",
     "onenote-zoom-in-symbolic",
     "onenote-zoom-out-symbolic",
     "onenote-zoom-reset-symbolic",
@@ -296,6 +297,26 @@ impl WorkspaceSearchScope {
 }
 
 #[derive(Clone)]
+struct WorkspaceSearchControls {
+    button: gtk::MenuButton,
+    all_notebooks: gtk::CheckButton,
+    notebook: gtk::CheckButton,
+    section_group: gtk::CheckButton,
+    section: gtk::CheckButton,
+}
+
+impl WorkspaceSearchControls {
+    fn choice(&self, scope: WorkspaceSearchScope) -> &gtk::CheckButton {
+        match scope {
+            WorkspaceSearchScope::AllNotebooks => &self.all_notebooks,
+            WorkspaceSearchScope::Notebook => &self.notebook,
+            WorkspaceSearchScope::SectionGroup => &self.section_group,
+            WorkspaceSearchScope::Section => &self.section,
+        }
+    }
+}
+
+#[derive(Clone)]
 struct SearchResultRow {
     title: String,
     path: String,
@@ -381,8 +402,8 @@ struct Viewer {
     page_title: gtk::Label,
     page_date: gtk::Label,
     page_context: gtk::Label,
-    search_entry: gtk::SearchEntry,
-    search_scope_button: gtk::MenuButton,
+    search_entry: gtk::Entry,
+    search_scope: WorkspaceSearchControls,
     status: gtk::Label,
     spinner: gtk::Spinner,
     zoom_label: gtk::Label,
@@ -392,9 +413,6 @@ struct Viewer {
     operation_progress: gtk::ProgressBar,
     operation_cancel_button: gtk::Button,
     import_package_action: gio::SimpleAction,
-    search_notebook_action: gio::SimpleAction,
-    search_section_group_action: gio::SimpleAction,
-    search_section_action: gio::SimpleAction,
     history_back_action: gio::SimpleAction,
     history_forward_action: gio::SimpleAction,
     foreground_operation: RefCell<Option<ForegroundOperation>>,
@@ -439,11 +457,56 @@ impl Viewer {
         page_view.set_zoom(settings.zoom);
         page_view
             .set_default_text_color(&theme_default_text_color(effective_theme(settings.theme)));
-        let search_entry = gtk::SearchEntry::builder()
+        let search_entry = gtk::Entry::builder()
             .placeholder_text("Search all notebooks")
             .hexpand(true)
             .width_request(320)
             .build();
+        search_entry.set_secondary_icon_activatable(true);
+        search_entry.set_secondary_icon_tooltip_text(Some("Clear search"));
+
+        let search_scope_all = gtk::CheckButton::with_label("All notebooks");
+        let search_scope_notebook = gtk::CheckButton::with_label("This notebook");
+        let search_scope_group = gtk::CheckButton::with_label("This section group");
+        let search_scope_section = gtk::CheckButton::with_label("This section");
+        search_scope_notebook.set_group(Some(&search_scope_all));
+        search_scope_group.set_group(Some(&search_scope_all));
+        search_scope_section.set_group(Some(&search_scope_all));
+        search_scope_all.set_active(true);
+        let search_scope_choices = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        search_scope_choices.set_margin_start(8);
+        search_scope_choices.set_margin_end(8);
+        search_scope_choices.set_margin_top(8);
+        search_scope_choices.set_margin_bottom(8);
+        for choice in [
+            &search_scope_all,
+            &search_scope_notebook,
+            &search_scope_group,
+            &search_scope_section,
+        ] {
+            choice.set_halign(gtk::Align::Start);
+            search_scope_choices.append(choice);
+        }
+        let search_scope_popover = gtk::Popover::builder().child(&search_scope_choices).build();
+        let search_scope_button = gtk::MenuButton::builder()
+            .icon_name("onenote-search-symbolic")
+            .always_show_arrow(true)
+            .popover(&search_scope_popover)
+            .build();
+        search_scope_button.add_css_class("search-scope");
+        search_scope_button.set_tooltip_text(Some("Search scope: All notebooks"));
+        let search_scope = WorkspaceSearchControls {
+            button: search_scope_button,
+            all_notebooks: search_scope_all,
+            notebook: search_scope_notebook,
+            section_group: search_scope_group,
+            section: search_scope_section,
+        };
+        let workspace_search = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        workspace_search.add_css_class("linked");
+        workspace_search.add_css_class("workspace-search");
+        workspace_search.append(&search_scope.button);
+        workspace_search.append(&search_entry);
 
         let open_file = gio::SimpleAction::new("open-file", None);
         let open_folder = gio::SimpleAction::new("open-folder", None);
@@ -455,34 +518,13 @@ impl Viewer {
         history_back.set_enabled(false);
         let history_forward = gio::SimpleAction::new("history-forward", None);
         history_forward.set_enabled(false);
-        let search_all = gio::SimpleAction::new("search-all", None);
-        let search_notebook = gio::SimpleAction::new("search-notebook", None);
-        search_notebook.set_enabled(false);
-        let search_section_group = gio::SimpleAction::new("search-section-group", None);
-        search_section_group.set_enabled(false);
-        let search_section = gio::SimpleAction::new("search-section", None);
-        search_section.set_enabled(false);
+        let focus_search = gio::SimpleAction::new("focus-search", None);
         let close_source = icon_button("onenote-close-symbolic", "Close selected notebook");
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Background activity"));
 
-        let header_title = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let brand = gtk::Label::new(Some("OneNote Viewer"));
         brand.add_css_class("brand");
-        header_title.append(&brand);
-        let search_scope_menu = gio::Menu::new();
-        search_scope_menu.append(Some("All notebooks"), Some("win.search-all"));
-        search_scope_menu.append(Some("This notebook"), Some("win.search-notebook"));
-        search_scope_menu.append(Some("This section group"), Some("win.search-section-group"));
-        search_scope_menu.append(Some("This section"), Some("win.search-section"));
-        let search_scope_button = gtk::MenuButton::builder()
-            .label(WorkspaceSearchScope::AllNotebooks.label())
-            .menu_model(&search_scope_menu)
-            .build();
-        search_scope_button.add_css_class("search-scope");
-        search_scope_button.set_tooltip_text(Some("Search scope"));
-        header_title.append(&search_scope_button);
-        header_title.append(&search_entry);
 
         let file_menu = gio::Menu::new();
         file_menu.append(Some("Open OneNote File..."), Some("win.open-file"));
@@ -515,11 +557,11 @@ impl Viewer {
         menu.set_width_request(36);
         menu.set_margin_end(10);
         menu.set_tooltip_text(Some("Main menu"));
-        header_title.append(&menu);
-
         let header = gtk::HeaderBar::new();
         header.set_show_title_buttons(true);
-        header.set_title_widget(Some(&header_title));
+        header.pack_start(&brand);
+        header.set_title_widget(Some(&workspace_search));
+        header.pack_end(&menu);
 
         let notebooks = CollapsibleNavigationBand::new(
             "NOTEBOOKS",
@@ -710,7 +752,7 @@ impl Viewer {
             page_date,
             page_context,
             search_entry,
-            search_scope_button,
+            search_scope,
             status,
             spinner,
             zoom_label,
@@ -720,9 +762,6 @@ impl Viewer {
             operation_progress,
             operation_cancel_button,
             import_package_action: import_package.clone(),
-            search_notebook_action: search_notebook.clone(),
-            search_section_group_action: search_section_group.clone(),
-            search_section_action: search_section.clone(),
             history_back_action: history_back.clone(),
             history_forward_action: history_forward.clone(),
             foreground_operation: RefCell::default(),
@@ -756,10 +795,7 @@ impl Viewer {
         viewer.window.add_action(&quit);
         viewer.window.add_action(&history_back);
         viewer.window.add_action(&history_forward);
-        viewer.window.add_action(&search_all);
-        viewer.window.add_action(&search_notebook);
-        viewer.window.add_action(&search_section_group);
-        viewer.window.add_action(&search_section);
+        viewer.window.add_action(&focus_search);
         application.set_accels_for_action("win.open-file", &["<Primary>o"]);
         application.set_accels_for_action("win.open-folder", &["<Primary><Shift>o"]);
         application.set_accels_for_action("win.import-package", &["<Primary><Shift>i"]);
@@ -767,7 +803,7 @@ impl Viewer {
         application.set_accels_for_action("win.quit", &["<Primary>q"]);
         application.set_accels_for_action("win.history-back", &["<Alt>Left", "Back"]);
         application.set_accels_for_action("win.history-forward", &["<Alt>Right", "Forward"]);
-        application.set_accels_for_action("win.search-all", &["<Primary>e"]);
+        application.set_accels_for_action("win.focus-search", &["<Primary>e"]);
         viewer.connect_header(
             &open_file,
             &open_folder,
@@ -778,12 +814,7 @@ impl Viewer {
         );
         viewer.connect_about(&show_about);
         viewer.connect_history();
-        viewer.connect_workspace_search_actions(
-            &search_all,
-            &search_notebook,
-            &search_section_group,
-            &search_section,
-        );
+        viewer.connect_workspace_search(&focus_search);
         viewer.connect_system_theme();
         viewer.connect_operation_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
@@ -817,11 +848,19 @@ impl Viewer {
             });
 
         let weak = Rc::downgrade(self);
-        self.search_entry.connect_search_changed(move |_| {
+        self.search_entry.connect_changed(move |entry| {
             let Some(viewer) = weak.upgrade() else {
                 return;
             };
+            entry.set_secondary_icon_name(
+                (!entry.text().is_empty()).then_some("onenote-close-symbolic"),
+            );
             viewer.workspace_search_text_changed();
+        });
+        self.search_entry.connect_icon_press(|entry, position| {
+            if position == gtk::EntryIconPosition::Secondary {
+                entry.set_text("");
+            }
         });
 
         let keys = gtk::EventControllerKey::new();
@@ -842,27 +881,37 @@ impl Viewer {
         self.search_entry.add_controller(keys);
     }
 
-    fn connect_workspace_search_actions(
-        self: &Rc<Self>,
-        search_all: &gio::SimpleAction,
-        search_notebook: &gio::SimpleAction,
-        search_section_group: &gio::SimpleAction,
-        search_section: &gio::SimpleAction,
-    ) {
-        for (action, scope) in [
-            (search_all, WorkspaceSearchScope::AllNotebooks),
-            (search_notebook, WorkspaceSearchScope::Notebook),
-            (search_section_group, WorkspaceSearchScope::SectionGroup),
-            (search_section, WorkspaceSearchScope::Section),
+    fn connect_workspace_search(self: &Rc<Self>, focus: &gio::SimpleAction) {
+        let weak = Rc::downgrade(self);
+        focus.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.search_entry.grab_focus();
+                viewer.search_entry.select_region(0, -1);
+            }
+        });
+        for (choice, scope) in [
+            (
+                &self.search_scope.all_notebooks,
+                WorkspaceSearchScope::AllNotebooks,
+            ),
+            (&self.search_scope.notebook, WorkspaceSearchScope::Notebook),
+            (
+                &self.search_scope.section_group,
+                WorkspaceSearchScope::SectionGroup,
+            ),
+            (&self.search_scope.section, WorkspaceSearchScope::Section),
         ] {
             let weak = Rc::downgrade(self);
-            action.connect_activate(move |_, _| {
-                if let Some(viewer) = weak.upgrade() {
+            choice.connect_toggled(move |choice| {
+                if choice.is_active() {
+                    let Some(viewer) = weak.upgrade() else {
+                        return;
+                    };
                     viewer.set_workspace_search_scope(scope);
                 }
             });
         }
-        self.refresh_workspace_search_actions();
+        self.refresh_workspace_search_scope();
     }
 
     fn connect_history(self: &Rc<Self>) {
@@ -2054,7 +2103,7 @@ impl Viewer {
         self.set_busy("Laying out page");
         worker::build_scene(generation, page, cancel, self.events.clone());
         self.refresh_history_actions();
-        self.refresh_workspace_search_actions();
+        self.refresh_workspace_search_scope();
         true
     }
 
@@ -2070,7 +2119,7 @@ impl Viewer {
             self.page_selection.set_selected(NO_SELECTION);
         });
         self.clear_rendered_page();
-        self.refresh_workspace_search_actions();
+        self.refresh_workspace_search_scope();
     }
 
     fn clear_rendered_page(&self) {
@@ -2091,7 +2140,11 @@ impl Viewer {
 
     fn set_workspace_search_scope(self: &Rc<Self>, scope: WorkspaceSearchScope) {
         self.workspace_search_scope.set(scope);
-        self.search_scope_button.set_label(scope.label());
+        self.search_scope.choice(scope).set_active(true);
+        self.search_scope
+            .button
+            .set_tooltip_text(Some(&format!("Search scope: {}", scope.label())));
+        self.search_scope.button.popdown();
         self.search_entry
             .set_placeholder_text(Some(&format!("Search {}", scope.status_label())));
         self.search_entry.grab_focus();
@@ -2099,7 +2152,7 @@ impl Viewer {
         self.workspace_search_text_changed();
     }
 
-    fn refresh_workspace_search_actions(&self) {
+    fn refresh_workspace_search_scope(&self) {
         let (has_notebook, has_section, has_section_group) = {
             let state = self.state.borrow();
             let active = state.active.as_ref();
@@ -2120,10 +2173,27 @@ impl Viewer {
                 .is_some_and(|groups| !groups.is_empty());
             (source.is_some(), section_id.is_some(), has_group)
         };
-        self.search_notebook_action.set_enabled(has_notebook);
-        self.search_section_action.set_enabled(has_section);
-        self.search_section_group_action
-            .set_enabled(has_section_group);
+        self.search_scope.notebook.set_sensitive(has_notebook);
+        self.search_scope.section.set_sensitive(has_section);
+        self.search_scope
+            .section_group
+            .set_sensitive(has_section_group);
+        let scope_available = match self.workspace_search_scope.get() {
+            WorkspaceSearchScope::AllNotebooks => true,
+            WorkspaceSearchScope::Notebook => has_notebook,
+            WorkspaceSearchScope::SectionGroup => has_section_group,
+            WorkspaceSearchScope::Section => has_section,
+        };
+        if !scope_available {
+            self.workspace_search_scope
+                .set(WorkspaceSearchScope::AllNotebooks);
+            self.search_scope.all_notebooks.set_active(true);
+            self.search_scope
+                .button
+                .set_tooltip_text(Some("Search scope: All notebooks"));
+            self.search_entry
+                .set_placeholder_text(Some("Search all notebooks"));
+        }
     }
 
     fn workspace_search_text_changed(self: &Rc<Self>) {
@@ -2323,7 +2393,7 @@ impl Viewer {
         });
         self.clear_rendered_page();
         self.refresh_history_actions();
-        self.refresh_workspace_search_actions();
+        self.refresh_workspace_search_scope();
         if let Some(target) = removed.2.as_ref() {
             if self.activate_location(
                 &target.source,
@@ -3523,9 +3593,13 @@ fn theme_css(theme: EffectiveTheme) -> String {
             min-width: 36px;
         }}
         .search-scope {{
+            min-width: 42px;
             min-height: 34px;
-            padding-left: 10px;
-            padding-right: 10px;
+            padding-left: 6px;
+            padding-right: 6px;
+        }}
+        .workspace-search entry {{
+            min-width: 320px;
         }}
         .brand, .brand:backdrop {{
             font-size: 16px;
@@ -3544,7 +3618,8 @@ fn theme_css(theme: EffectiveTheme) -> String {
             background: transparent;
             color: @text;
         }}
-        searchentry image, searchentry image:backdrop {{
+        searchentry image, searchentry image:backdrop,
+        entry image, entry image:backdrop {{
             color: @muted;
         }}
         popover contents, popover contents:backdrop {{
