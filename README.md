@@ -42,6 +42,8 @@ updates, removal, and the AppImage alternative.
   on-disk process with progress and cancellation.
 - Keeps multiple notebooks open in one workspace with nested section groups,
   collapsible navigation, and one search across page titles and stored content.
+- Searches OneNote's stored image alternative and recognition text without
+  adding that metadata to the displayed page.
 - Preserves explicit OneNote links, optionally recognizes visible URLs and email
   addresses, and resolves internal page links across open notebooks.
 - Displays stored attachment icons and previews, and can save or open the
