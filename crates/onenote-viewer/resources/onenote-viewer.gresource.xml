@@ -8,6 +8,8 @@
     <file alias="onenote-chevron-right-symbolic.svg">icons/scalable/actions/onenote-chevron-right-symbolic.svg</file>
     <file alias="onenote-close-symbolic.svg">icons/scalable/actions/onenote-close-symbolic.svg</file>
     <file alias="onenote-folder-symbolic.svg">icons/scalable/actions/onenote-folder-symbolic.svg</file>
+    <file alias="onenote-find-next-symbolic.svg">icons/scalable/actions/onenote-find-next-symbolic.svg</file>
+    <file alias="onenote-find-previous-symbolic.svg">icons/scalable/actions/onenote-find-previous-symbolic.svg</file>
     <file alias="onenote-import-package-symbolic.svg">icons/scalable/actions/onenote-import-package-symbolic.svg</file>
     <file alias="onenote-menu-symbolic.svg">icons/scalable/actions/onenote-menu-symbolic.svg</file>
     <file alias="onenote-notebook-symbolic.svg">icons/scalable/actions/onenote-notebook-symbolic.svg</file>

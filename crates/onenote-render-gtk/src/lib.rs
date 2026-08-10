@@ -3,6 +3,7 @@
 #![forbid(unsafe_code)]
 
 mod canvas;
+mod find;
 mod image_cache;
 mod math_cache;
 mod resolved_layout;
@@ -10,6 +11,7 @@ mod text;
 mod view;
 
 pub use canvas::{normalize_zoom, PageCanvas, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM};
+pub use find::{find_text_ranges, FindMatch, FindOptions, FindTextRange};
 pub use math_cache::TypstMathBackend;
 pub use view::PageView;
 
