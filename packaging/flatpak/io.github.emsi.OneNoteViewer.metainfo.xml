@@ -36,6 +36,16 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.2.0" date="2026-08-10">
+      <description>
+        <p>
+          Add scoped workspace search with complete result paths, a compact
+          Find in Page bar with Unicode-aware matching options, and Back and
+          Forward navigation across notebooks, links, and search results.
+        </p>
+      </description>
+      <url type="details">https://github.com/emsi/OneNoteViewer/releases/tag/v0.2.0</url>
+    </release>
     <release version="0.1.5" date="2026-08-08">
       <description>
         <p>

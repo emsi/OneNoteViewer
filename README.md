@@ -10,13 +10,13 @@ format.
 
 Flatpak is the primary release channel.
 
-1. [Download OneNote Viewer 0.1.5](https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-0.1.5-linux-x86_64.flatpak).
+1. [Download OneNote Viewer 0.2.0](https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-0.2.0-linux-x86_64.flatpak).
 2. Open the downloaded file with your software center and install it.
 
 Alternatively, install it from a terminal opened in the download folder:
 
 ```bash
-flatpak install --user --or-update ./OneNoteViewer-0.1.5-linux-x86_64.flatpak
+flatpak install --user --or-update ./OneNoteViewer-0.2.0-linux-x86_64.flatpak
 ```
 
 Start **OneNote Viewer** from the desktop application menu. Flatpak and the
@@ -41,7 +41,10 @@ updates, removal, and the AppImage alternative.
 - Imports complete `.onepkg` notebook exports through a guided, validated,
   on-disk process with progress and cancellation.
 - Keeps multiple notebooks open in one workspace with nested section groups,
-  collapsible navigation, and one search across page titles and stored content.
+  collapsible navigation, scoped search, complete result paths, and indexing of
+  page titles and stored content.
+- Finds text within the current page with wrapping navigation, match counts,
+  highlighting, and case, whole-word, and diacritic options.
 - Searches OneNote's stored image alternative and recognition text.
 - Preserves explicit OneNote links, optionally recognizes visible URLs and email
   addresses, and resolves internal page links across open notebooks.
@@ -49,10 +52,9 @@ updates, removal, and the AppImage alternative.
   original files through the desktop with progress and cancellation.
 - Restores the workspace and last viewed page, remembers the zoom level, and
   provides persistent light, dark, and system theme choices.
-- The current development build adds Back and Forward history across notebooks,
-  search results, and internal links through the application menu,
-  `Alt+Left`/`Alt+Right`, and mouse navigation buttons. This will be included in
-  the next release after 0.1.5.
+- Provides Back and Forward history across notebooks, search results, and
+  internal links through the application menu, `Alt+Left`/`Alt+Right`, and
+  mouse navigation buttons.
 
 ## Open Notebooks
 
