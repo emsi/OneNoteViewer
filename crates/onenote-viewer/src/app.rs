@@ -10,10 +10,10 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use onenote_core::{
-    ExtractionPhase, LoadOptions, LoadedNotebook, ObjectId, Page, PageId, Rect, ResourceId,
-    ResourceRef, SectionId, SourceId,
+    ExtractionPhase, LoadOptions, LoadedNotebook, Notebook, ObjectId, Page, PageId, Rect,
+    ResourceId, ResourceRef, SectionId, SourceId,
 };
-use onenote_index::SearchHit;
+use onenote_index::{MatchedField, SearchHit, SearchQuery, TextRange};
 use onenote_render::{HitAction, ScenePrimitive};
 use onenote_render_gtk::{PageView, DEFAULT_ZOOM};
 use std::borrow::Cow;
@@ -267,6 +267,43 @@ struct ActiveLocation {
     section: Option<SectionLocation>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WorkspaceSearchScope {
+    AllNotebooks,
+    Notebook,
+    SectionGroup,
+    Section,
+}
+
+impl WorkspaceSearchScope {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::AllNotebooks => "All notebooks",
+            Self::Notebook => "This notebook",
+            Self::SectionGroup => "This section group",
+            Self::Section => "This section",
+        }
+    }
+
+    const fn status_label(self) -> &'static str {
+        match self {
+            Self::AllNotebooks => "all open notebooks",
+            Self::Notebook => "this notebook",
+            Self::SectionGroup => "this section group",
+            Self::Section => "this section",
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SearchResultRow {
+    title: String,
+    path: String,
+    snippet: String,
+    highlights: Vec<TextRange>,
+    matched_field: MatchedField,
+}
+
 #[derive(Clone)]
 struct RevealTarget {
     object_id: Option<ObjectId>,
@@ -334,7 +371,7 @@ struct Viewer {
     notebook_tree: NotebookTree,
     page_model: gtk::StringList,
     page_selection: gtk::SingleSelection,
-    result_model: gtk::StringList,
+    result_model: gio::ListStore,
     result_selection: gtk::SingleSelection,
     navigation_stack: gtk::Stack,
     content_paned: gtk::Paned,
@@ -345,6 +382,7 @@ struct Viewer {
     page_date: gtk::Label,
     page_context: gtk::Label,
     search_entry: gtk::SearchEntry,
+    search_scope_button: gtk::MenuButton,
     status: gtk::Label,
     spinner: gtk::Spinner,
     zoom_label: gtk::Label,
@@ -354,6 +392,9 @@ struct Viewer {
     operation_progress: gtk::ProgressBar,
     operation_cancel_button: gtk::Button,
     import_package_action: gio::SimpleAction,
+    search_notebook_action: gio::SimpleAction,
+    search_section_group_action: gio::SimpleAction,
+    search_section_action: gio::SimpleAction,
     history_back_action: gio::SimpleAction,
     history_forward_action: gio::SimpleAction,
     foreground_operation: RefCell<Option<ForegroundOperation>>,
@@ -371,6 +412,7 @@ struct Viewer {
     events: mpsc::Sender<Event>,
     receiver: RefCell<mpsc::Receiver<Event>>,
     search_timer: RefCell<Option<glib::SourceId>>,
+    workspace_search_scope: Cell<WorkspaceSearchScope>,
     workspace_save_timer: RefCell<Option<glib::SourceId>>,
     settings_save_timer: RefCell<Option<glib::SourceId>>,
 }
@@ -391,7 +433,7 @@ impl Viewer {
         let notebook_tree = NotebookTree::new();
         let page_model = gtk::StringList::new(&[]);
         let (page_selection, page_list) = list_view(&page_model, "page-list");
-        let result_model = gtk::StringList::new(&[]);
+        let result_model = gio::ListStore::new::<glib::BoxedAnyObject>();
         let (result_selection, result_list) = result_list(&result_model);
         let page_view = PageView::new();
         page_view.set_zoom(settings.zoom);
@@ -413,6 +455,13 @@ impl Viewer {
         history_back.set_enabled(false);
         let history_forward = gio::SimpleAction::new("history-forward", None);
         history_forward.set_enabled(false);
+        let search_all = gio::SimpleAction::new("search-all", None);
+        let search_notebook = gio::SimpleAction::new("search-notebook", None);
+        search_notebook.set_enabled(false);
+        let search_section_group = gio::SimpleAction::new("search-section-group", None);
+        search_section_group.set_enabled(false);
+        let search_section = gio::SimpleAction::new("search-section", None);
+        search_section.set_enabled(false);
         let close_source = icon_button("onenote-close-symbolic", "Close selected notebook");
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Background activity"));
@@ -421,6 +470,18 @@ impl Viewer {
         let brand = gtk::Label::new(Some("OneNote Viewer"));
         brand.add_css_class("brand");
         header_title.append(&brand);
+        let search_scope_menu = gio::Menu::new();
+        search_scope_menu.append(Some("All notebooks"), Some("win.search-all"));
+        search_scope_menu.append(Some("This notebook"), Some("win.search-notebook"));
+        search_scope_menu.append(Some("This section group"), Some("win.search-section-group"));
+        search_scope_menu.append(Some("This section"), Some("win.search-section"));
+        let search_scope_button = gtk::MenuButton::builder()
+            .label(WorkspaceSearchScope::AllNotebooks.label())
+            .menu_model(&search_scope_menu)
+            .build();
+        search_scope_button.add_css_class("search-scope");
+        search_scope_button.set_tooltip_text(Some("Search scope"));
+        header_title.append(&search_scope_button);
         header_title.append(&search_entry);
 
         let file_menu = gio::Menu::new();
@@ -649,6 +710,7 @@ impl Viewer {
             page_date,
             page_context,
             search_entry,
+            search_scope_button,
             status,
             spinner,
             zoom_label,
@@ -658,6 +720,9 @@ impl Viewer {
             operation_progress,
             operation_cancel_button,
             import_package_action: import_package.clone(),
+            search_notebook_action: search_notebook.clone(),
+            search_section_group_action: search_section_group.clone(),
+            search_section_action: search_section.clone(),
             history_back_action: history_back.clone(),
             history_forward_action: history_forward.clone(),
             foreground_operation: RefCell::default(),
@@ -678,6 +743,7 @@ impl Viewer {
             events: event_sender,
             receiver: RefCell::new(event_receiver),
             search_timer: RefCell::default(),
+            workspace_search_scope: Cell::new(WorkspaceSearchScope::AllNotebooks),
             workspace_save_timer: RefCell::default(),
             settings_save_timer: RefCell::default(),
         });
@@ -690,6 +756,10 @@ impl Viewer {
         viewer.window.add_action(&quit);
         viewer.window.add_action(&history_back);
         viewer.window.add_action(&history_forward);
+        viewer.window.add_action(&search_all);
+        viewer.window.add_action(&search_notebook);
+        viewer.window.add_action(&search_section_group);
+        viewer.window.add_action(&search_section);
         application.set_accels_for_action("win.open-file", &["<Primary>o"]);
         application.set_accels_for_action("win.open-folder", &["<Primary><Shift>o"]);
         application.set_accels_for_action("win.import-package", &["<Primary><Shift>i"]);
@@ -697,6 +767,7 @@ impl Viewer {
         application.set_accels_for_action("win.quit", &["<Primary>q"]);
         application.set_accels_for_action("win.history-back", &["<Alt>Left", "Back"]);
         application.set_accels_for_action("win.history-forward", &["<Alt>Right", "Forward"]);
+        application.set_accels_for_action("win.search-all", &["<Primary>e"]);
         viewer.connect_header(
             &open_file,
             &open_folder,
@@ -707,6 +778,12 @@ impl Viewer {
         );
         viewer.connect_about(&show_about);
         viewer.connect_history();
+        viewer.connect_workspace_search_actions(
+            &search_all,
+            &search_notebook,
+            &search_section_group,
+            &search_section,
+        );
         viewer.connect_system_theme();
         viewer.connect_operation_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
@@ -740,31 +817,52 @@ impl Viewer {
             });
 
         let weak = Rc::downgrade(self);
-        self.search_entry.connect_search_changed(move |entry| {
+        self.search_entry.connect_search_changed(move |_| {
             let Some(viewer) = weak.upgrade() else {
                 return;
             };
-            if let Some(timer) = viewer.search_timer.borrow_mut().take() {
-                timer.remove();
-            }
-            let text = entry.text().trim().to_owned();
-            if text.is_empty() {
-                viewer.navigation_stack.set_visible_child_name("pages");
-                viewer.set_navigation_width(viewer.page_navigation_width.get());
-                viewer.result_selection.set_selected(NO_SELECTION);
-                return;
-            }
-            let weak = Rc::downgrade(&viewer);
-            *viewer.search_timer.borrow_mut() = Some(glib::timeout_add_local_once(
-                Duration::from_millis(250),
-                move || {
-                    if let Some(viewer) = weak.upgrade() {
-                        viewer.start_search(text);
-                        viewer.search_timer.borrow_mut().take();
-                    }
-                },
-            ));
+            viewer.workspace_search_text_changed();
         });
+
+        let keys = gtk::EventControllerKey::new();
+        let weak = Rc::downgrade(self);
+        keys.connect_key_pressed(move |_, key, _, _| {
+            let Some(viewer) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            match key {
+                gtk::gdk::Key::Down => viewer.move_search_result(1),
+                gtk::gdk::Key::Up => viewer.move_search_result(-1),
+                gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter => viewer.commit_search_result(),
+                gtk::gdk::Key::Escape => viewer.dismiss_workspace_search(),
+                _ => return glib::Propagation::Proceed,
+            }
+            glib::Propagation::Stop
+        });
+        self.search_entry.add_controller(keys);
+    }
+
+    fn connect_workspace_search_actions(
+        self: &Rc<Self>,
+        search_all: &gio::SimpleAction,
+        search_notebook: &gio::SimpleAction,
+        search_section_group: &gio::SimpleAction,
+        search_section: &gio::SimpleAction,
+    ) {
+        for (action, scope) in [
+            (search_all, WorkspaceSearchScope::AllNotebooks),
+            (search_notebook, WorkspaceSearchScope::Notebook),
+            (search_section_group, WorkspaceSearchScope::SectionGroup),
+            (search_section, WorkspaceSearchScope::Section),
+        ] {
+            let weak = Rc::downgrade(self);
+            action.connect_activate(move |_, _| {
+                if let Some(viewer) = weak.upgrade() {
+                    viewer.set_workspace_search_scope(scope);
+                }
+            });
+        }
+        self.refresh_workspace_search_actions();
     }
 
     fn connect_history(self: &Rc<Self>) {
@@ -1956,6 +2054,7 @@ impl Viewer {
         self.set_busy("Laying out page");
         worker::build_scene(generation, page, cancel, self.events.clone());
         self.refresh_history_actions();
+        self.refresh_workspace_search_actions();
         true
     }
 
@@ -1971,6 +2070,7 @@ impl Viewer {
             self.page_selection.set_selected(NO_SELECTION);
         });
         self.clear_rendered_page();
+        self.refresh_workspace_search_actions();
     }
 
     fn clear_rendered_page(&self) {
@@ -1989,32 +2089,120 @@ impl Viewer {
         self.canvas_stack.set_visible_child_name("empty");
     }
 
+    fn set_workspace_search_scope(self: &Rc<Self>, scope: WorkspaceSearchScope) {
+        self.workspace_search_scope.set(scope);
+        self.search_scope_button.set_label(scope.label());
+        self.search_entry
+            .set_placeholder_text(Some(&format!("Search {}", scope.status_label())));
+        self.search_entry.grab_focus();
+        self.search_entry.select_region(0, -1);
+        self.workspace_search_text_changed();
+    }
+
+    fn refresh_workspace_search_actions(&self) {
+        let (has_notebook, has_section, has_section_group) = {
+            let state = self.state.borrow();
+            let active = state.active.as_ref();
+            let source = active.and_then(|active| {
+                state
+                    .sources
+                    .iter()
+                    .find(|source| source.loaded.notebook.source_id == active.source)
+            });
+            let section_id = active
+                .and_then(|active| active.section.as_ref())
+                .map(|location| &location.section_id);
+            let has_group = source
+                .zip(section_id)
+                .and_then(|(source, section_id)| {
+                    source.loaded.notebook.section_group_ancestry(section_id)
+                })
+                .is_some_and(|groups| !groups.is_empty());
+            (source.is_some(), section_id.is_some(), has_group)
+        };
+        self.search_notebook_action.set_enabled(has_notebook);
+        self.search_section_action.set_enabled(has_section);
+        self.search_section_group_action
+            .set_enabled(has_section_group);
+    }
+
+    fn workspace_search_text_changed(self: &Rc<Self>) {
+        if let Some(timer) = self.search_timer.borrow_mut().take() {
+            timer.remove();
+        }
+        {
+            let mut state = self.state.borrow_mut();
+            state.search_generation = state.search_generation.wrapping_add(1);
+        }
+        let text = self.search_entry.text().trim().to_owned();
+        if text.is_empty() {
+            self.spinner.stop();
+            self.navigation_stack.set_visible_child_name("pages");
+            self.set_navigation_width(self.page_navigation_width.get());
+            self.synchronize_selections(|| self.result_selection.set_selected(NO_SELECTION));
+            self.result_model.remove_all();
+            self.state.borrow_mut().search_hits.clear();
+            return;
+        }
+        let weak = Rc::downgrade(self);
+        *self.search_timer.borrow_mut() = Some(glib::timeout_add_local_once(
+            Duration::from_millis(250),
+            move || {
+                if let Some(viewer) = weak.upgrade() {
+                    viewer.start_search(text);
+                    viewer.search_timer.borrow_mut().take();
+                }
+            },
+        ));
+    }
+
     fn start_search(&self, text: String) {
+        let query = {
+            let state = self.state.borrow();
+            let active = state.active.as_ref();
+            let source = active.and_then(|active| {
+                state
+                    .sources
+                    .iter()
+                    .find(|source| source.loaded.notebook.source_id == active.source)
+            });
+            let section_id = active
+                .and_then(|active| active.section.as_ref())
+                .map(|location| &location.section_id);
+            scoped_search_query(
+                self.workspace_search_scope.get(),
+                text,
+                source.map(|source| &source.loaded.notebook),
+                section_id,
+            )
+        };
+        let Ok(query) = query else {
+            self.status
+                .set_label("The selected search scope is not available");
+            return;
+        };
         let generation = {
             let mut state = self.state.borrow_mut();
             state.search_generation = state.search_generation.wrapping_add(1);
             state.search_generation
         };
-        self.set_busy("Searching all open notebooks");
+        self.set_busy(&format!(
+            "Searching {}",
+            self.workspace_search_scope.get().status_label()
+        ));
         worker::search(
             self.index_path.clone(),
             generation,
-            text,
+            query,
             self.events.clone(),
         );
     }
 
     fn show_search_results(&self, hits: Vec<SearchHit>) {
-        clear_model(&self.result_model);
+        self.result_model.remove_all();
         for hit in &hits {
-            let snippet = hit.snippet.text.replace('\n', " ");
-            append_model(
-                &self.result_model,
-                &format!(
-                    "{}\n{}  /  {}    {}",
-                    hit.page_title, hit.notebook_name, hit.section_name, snippet
-                ),
-            );
+            self.result_model
+                .append(&glib::BoxedAnyObject::new(search_result_row(hit)));
         }
         let count = hits.len();
         self.state.borrow_mut().search_hits = hits;
@@ -2024,6 +2212,41 @@ impl Viewer {
             "{count} search result{}",
             if count == 1 { "" } else { "s" }
         ));
+    }
+
+    fn move_search_result(&self, direction: i32) {
+        let count = self.state.borrow().search_hits.len();
+        if count == 0 {
+            return;
+        }
+        let selected = self.result_selection.selected();
+        let next = if selected == NO_SELECTION {
+            if direction < 0 {
+                count - 1
+            } else {
+                0
+            }
+        } else if direction < 0 {
+            usize::try_from(selected).unwrap_or(0).saturating_sub(1)
+        } else {
+            (usize::try_from(selected).unwrap_or(0) + 1).min(count - 1)
+        };
+        self.result_selection
+            .set_selected(u32::try_from(next).unwrap_or(NO_SELECTION));
+    }
+
+    fn commit_search_result(self: &Rc<Self>) {
+        let selected = self.result_selection.selected();
+        if selected == NO_SELECTION {
+            return;
+        }
+        self.activate_result(usize::try_from(selected).unwrap_or(0));
+        self.dismiss_workspace_search();
+    }
+
+    fn dismiss_workspace_search(&self) {
+        self.search_entry.set_text("");
+        self.page_view.canvas().grab_focus();
     }
 
     fn activate_result(self: &Rc<Self>, position: usize) {
@@ -2100,6 +2323,7 @@ impl Viewer {
         });
         self.clear_rendered_page();
         self.refresh_history_actions();
+        self.refresh_workspace_search_actions();
         if let Some(target) = removed.2.as_ref() {
             if self.activate_location(
                 &target.source,
@@ -2680,7 +2904,7 @@ fn list_view(model: &gtk::StringList, css_class: &str) -> (gtk::SingleSelection,
     (selection, list)
 }
 
-fn result_list(model: &gtk::StringList) -> (gtk::SingleSelection, gtk::ListView) {
+fn result_list(model: &gio::ListStore) -> (gtk::SingleSelection, gtk::ListView) {
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     selection.set_autoselect(false);
     let list = gtk::ListView::builder()
@@ -2691,22 +2915,116 @@ fn result_list(model: &gtk::StringList) -> (gtk::SingleSelection, gtk::ListView)
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
-        let label = gtk::Label::builder()
+        let title = gtk::Label::builder()
             .xalign(0.0)
-            .wrap(true)
-            .wrap_mode(gtk::pango::WrapMode::WordChar)
-            .lines(3)
             .ellipsize(gtk::pango::EllipsizeMode::End)
             .build();
-        label.set_margin_start(14);
-        label.set_margin_end(12);
-        label.set_margin_top(10);
-        label.set_margin_bottom(10);
-        item.set_child(Some(&label));
+        title.add_css_class("result-title");
+        let path = gtk::Label::builder()
+            .xalign(0.0)
+            .ellipsize(gtk::pango::EllipsizeMode::Middle)
+            .build();
+        path.add_css_class("result-path");
+        let field = gtk::Label::builder().xalign(0.0).build();
+        field.add_css_class("result-field");
+        let snippet = gtk::Label::builder()
+            .xalign(0.0)
+            .hexpand(true)
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .lines(2)
+            .ellipsize(gtk::pango::EllipsizeMode::End)
+            .build();
+        snippet.add_css_class("result-snippet");
+        let excerpt = gtk::Box::new(gtk::Orientation::Horizontal, 5);
+        excerpt.append(&field);
+        excerpt.append(&snippet);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 2);
+        content.set_margin_start(14);
+        content.set_margin_end(12);
+        content.set_margin_top(9);
+        content.set_margin_bottom(9);
+        content.append(&title);
+        content.append(&path);
+        content.append(&excerpt);
+        item.set_child(Some(&content));
     });
-    factory.connect_bind(|_, item| bind_string(item, true));
+    factory.connect_bind(|_, item| bind_search_result(item));
     list.set_factory(Some(&factory));
     (selection, list)
+}
+
+fn bind_search_result(item: &glib::Object) {
+    let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
+    let Some(value) = item.item().and_downcast::<glib::BoxedAnyObject>() else {
+        return;
+    };
+    let content = item
+        .child()
+        .and_downcast::<gtk::Box>()
+        .expect("result content");
+    let title = content
+        .first_child()
+        .and_downcast::<gtk::Label>()
+        .expect("result title");
+    let path = title
+        .next_sibling()
+        .and_downcast::<gtk::Label>()
+        .expect("result path");
+    let excerpt = path
+        .next_sibling()
+        .and_downcast::<gtk::Box>()
+        .expect("result excerpt");
+    let field = excerpt
+        .first_child()
+        .and_downcast::<gtk::Label>()
+        .expect("result field");
+    let snippet = field
+        .next_sibling()
+        .and_downcast::<gtk::Label>()
+        .expect("result snippet");
+    let row = value.borrow::<SearchResultRow>();
+    title.set_label(&row.title);
+    path.set_label(&row.path);
+    let field_text = matched_field_label(row.matched_field);
+    field.set_label(field_text);
+    field.set_visible(!field_text.is_empty());
+    snippet.set_label(&row.snippet);
+    let attributes = search_highlight_attributes(&row.snippet, &row.highlights);
+    snippet.set_attributes(attributes.as_ref());
+}
+
+fn search_highlight_attributes(
+    text: &str,
+    highlights: &[TextRange],
+) -> Option<gtk::pango::AttrList> {
+    let attributes = gtk::pango::AttrList::new();
+    let mut applied = false;
+    for range in highlights {
+        if range.start_byte >= range.end_byte
+            || range.end_byte > text.len()
+            || !text.is_char_boundary(range.start_byte)
+            || !text.is_char_boundary(range.end_byte)
+        {
+            continue;
+        }
+        let (Ok(start), Ok(end)) = (
+            u32::try_from(range.start_byte),
+            u32::try_from(range.end_byte),
+        ) else {
+            continue;
+        };
+        let mut weight = gtk::pango::AttrInt::new_weight(gtk::pango::Weight::Bold);
+        weight.set_start_index(start);
+        weight.set_end_index(end);
+        attributes.insert(weight);
+        let mut underline = gtk::pango::AttrInt::new_underline(gtk::pango::Underline::Single);
+        underline.set_start_index(start);
+        underline.set_end_index(end);
+        attributes.insert(underline);
+        applied = true;
+    }
+    applied.then_some(attributes)
 }
 
 fn selectable_page_header_label(css_class: &str) -> gtk::Label {
@@ -2912,6 +3230,68 @@ fn clear_model(model: &gtk::StringList) {
 fn append_model(model: &gtk::StringList, value: &str) {
     let value = gtk_text(value);
     model.append(&value);
+}
+
+fn scoped_search_query(
+    scope: WorkspaceSearchScope,
+    text: String,
+    notebook: Option<&Notebook>,
+    section_id: Option<&SectionId>,
+) -> std::result::Result<SearchQuery, ()> {
+    let mut query = SearchQuery::simple(text);
+    if scope == WorkspaceSearchScope::AllNotebooks {
+        return Ok(query);
+    }
+    let notebook = notebook.ok_or(())?;
+    query.filters.source_ids = vec![notebook.source_id.clone()];
+    match scope {
+        WorkspaceSearchScope::AllNotebooks | WorkspaceSearchScope::Notebook => {}
+        WorkspaceSearchScope::Section => {
+            query.filters.section_ids = vec![section_id.ok_or(())?.clone()];
+        }
+        WorkspaceSearchScope::SectionGroup => {
+            let group = notebook
+                .section_group_ancestry(section_id.ok_or(())?)
+                .and_then(|groups| groups.last().copied())
+                .ok_or(())?;
+            query.filters.section_ids =
+                group.sections().map(|section| section.id.clone()).collect();
+        }
+    }
+    Ok(query)
+}
+
+fn search_result_row(hit: &SearchHit) -> SearchResultRow {
+    let original = hit.snippet.text.replace('\n', " ");
+    let snippet = gtk_text(&original).into_owned();
+    let highlights = if snippet == original {
+        hit.snippet.highlights.clone()
+    } else {
+        Vec::new()
+    };
+    let path = if hit.path.trim().is_empty() {
+        format!("{} / {}", hit.notebook_name, hit.section_name)
+    } else {
+        hit.path.clone()
+    };
+    SearchResultRow {
+        title: gtk_text(&hit.page_title).into_owned(),
+        path: gtk_text(&path).into_owned(),
+        snippet,
+        highlights,
+        matched_field: hit.matched_field,
+    }
+}
+
+const fn matched_field_label(field: MatchedField) -> &'static str {
+    match field {
+        MatchedField::AltText => "Image text:",
+        MatchedField::InkText => "Handwriting:",
+        MatchedField::Attachment => "Attachment:",
+        MatchedField::Link => "Link:",
+        MatchedField::Path => "Location:",
+        MatchedField::Title | MatchedField::Body | MatchedField::Other => "",
+    }
 }
 
 fn gtk_text(value: &str) -> Cow<'_, str> {
@@ -3142,6 +3522,11 @@ fn theme_css(theme: EffectiveTheme) -> String {
         .main-menu {{
             min-width: 36px;
         }}
+        .search-scope {{
+            min-height: 34px;
+            padding-left: 10px;
+            padding-right: 10px;
+        }}
         .brand, .brand:backdrop {{
             font-size: 16px;
             font-weight: 700;
@@ -3217,7 +3602,19 @@ fn theme_css(theme: EffectiveTheme) -> String {
         .group-row {{ font-weight: 500; }}
         .notebook-tree row:selected {{ border-left: 3px solid @accent; }}
         .page-list row:selected {{ border-left: 3px solid @page_accent; }}
-        .result-row {{ line-height: 1.25; }}
+        .result-title {{
+            font-weight: 650;
+            color: @text;
+        }}
+        .result-path, .result-field {{
+            font-size: 12px;
+            color: @muted;
+        }}
+        .result-field {{ font-weight: 650; }}
+        .result-snippet {{
+            line-height: 1.2;
+            color: @text;
+        }}
         .page-title, .page-title:backdrop {{
             font-size: 20px;
             font-weight: 650;
@@ -3458,6 +3855,82 @@ mod tests {
 
         settings.detect_plain_text_links = false;
         assert!(!load_options(&settings).detect_plain_text_links);
+    }
+
+    #[test]
+    fn workspace_search_scopes_resolve_to_stable_source_and_section_ids() {
+        let nested = SectionId::new("nested");
+        let sibling = SectionId::new("sibling");
+        let root = SectionId::new("root");
+        let notebook = Notebook {
+            source_id: SourceId::new("source"),
+            fingerprint: onenote_core::SourceFingerprint::new("fingerprint"),
+            name: "Notebook".to_owned(),
+            color: None,
+            entries: vec![
+                onenote_core::NotebookEntry::Group(onenote_core::SectionGroup {
+                    id: SectionId::new("group"),
+                    name: "Group".to_owned(),
+                    entries: vec![
+                        onenote_core::NotebookEntry::Section(empty_section(nested.clone())),
+                        onenote_core::NotebookEntry::Section(empty_section(sibling.clone())),
+                    ],
+                }),
+                onenote_core::NotebookEntry::Section(empty_section(root)),
+            ],
+            diagnostics: Vec::new(),
+        };
+
+        let all = scoped_search_query(
+            WorkspaceSearchScope::AllNotebooks,
+            "term".to_owned(),
+            None,
+            None,
+        )
+        .expect("all notebooks");
+        assert!(all.filters.source_ids.is_empty());
+        assert!(all.filters.section_ids.is_empty());
+
+        let notebook_query = scoped_search_query(
+            WorkspaceSearchScope::Notebook,
+            "term".to_owned(),
+            Some(&notebook),
+            Some(&nested),
+        )
+        .expect("notebook");
+        assert_eq!(
+            notebook_query.filters.source_ids,
+            vec![notebook.source_id.clone()]
+        );
+        assert!(notebook_query.filters.section_ids.is_empty());
+
+        let section = scoped_search_query(
+            WorkspaceSearchScope::Section,
+            "term".to_owned(),
+            Some(&notebook),
+            Some(&nested),
+        )
+        .expect("section");
+        assert_eq!(section.filters.section_ids, vec![nested.clone()]);
+
+        let group = scoped_search_query(
+            WorkspaceSearchScope::SectionGroup,
+            "term".to_owned(),
+            Some(&notebook),
+            Some(&nested),
+        )
+        .expect("section group");
+        assert_eq!(group.filters.section_ids, vec![nested, sibling]);
+    }
+
+    fn empty_section(id: SectionId) -> onenote_core::Section {
+        onenote_core::Section {
+            id,
+            name: "Section".to_owned(),
+            color: None,
+            pages: Vec::new(),
+            diagnostics: Vec::new(),
+        }
     }
 
     #[test]

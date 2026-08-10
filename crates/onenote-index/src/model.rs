@@ -127,6 +127,9 @@ pub struct SearchHit {
     pub section_id: SectionId,
     /// Section display context.
     pub section_name: String,
+    /// Full notebook/group/section breadcrumb for display, never identity.
+    #[serde(default)]
+    pub path: String,
     /// Stable page locator.
     pub page_id: PageId,
     /// Page display title.
