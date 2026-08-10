@@ -174,6 +174,33 @@ impl Notebook {
         locate(&self.entries, id, &mut path).then_some(path)
     }
 
+    /// Return the outer-to-inner section groups containing a section.
+    pub fn section_group_ancestry(&self, id: &SectionId) -> Option<Vec<&SectionGroup>> {
+        fn locate<'a>(
+            entries: &'a [NotebookEntry],
+            id: &SectionId,
+            groups: &mut Vec<&'a SectionGroup>,
+        ) -> bool {
+            for entry in entries {
+                match entry {
+                    NotebookEntry::Section(section) if section.id == *id => return true,
+                    NotebookEntry::Section(_) => {}
+                    NotebookEntry::Group(group) => {
+                        groups.push(group);
+                        if locate(&group.entries, id, groups) {
+                            return true;
+                        }
+                        groups.pop();
+                    }
+                }
+            }
+            false
+        }
+
+        let mut groups = Vec::new();
+        locate(&self.entries, id, &mut groups).then_some(groups)
+    }
+
     /// Visit every page in notebook order.
     pub fn pages(&self) -> impl Iterator<Item = &Page> {
         self.sections().flat_map(|section| section.pages.iter())
@@ -199,6 +226,24 @@ pub struct SectionGroup {
     pub name: String,
     /// Ordered children.
     pub entries: Vec<NotebookEntry>,
+}
+
+impl SectionGroup {
+    /// Visit every descendant section in notebook order.
+    pub fn sections(&self) -> impl Iterator<Item = &Section> {
+        fn append<'a>(entries: &'a [NotebookEntry], output: &mut Vec<&'a Section>) {
+            for entry in entries {
+                match entry {
+                    NotebookEntry::Section(section) => output.push(section),
+                    NotebookEntry::Group(group) => append(&group.entries, output),
+                }
+            }
+        }
+
+        let mut sections = Vec::new();
+        append(&self.entries, &mut sections);
+        sections.into_iter()
+    }
 }
 
 /// A native `OneNote` section.
@@ -801,6 +846,23 @@ mod tests {
         assert_eq!(
             notebook.section_path(&section_id),
             Some(vec!["Nested Group", "Nested Section"])
+        );
+        let groups = notebook
+            .section_group_ancestry(&section_id)
+            .expect("section ancestry");
+        assert_eq!(
+            groups
+                .iter()
+                .map(|group| group.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Nested Group"]
+        );
+        assert_eq!(
+            groups[0]
+                .sections()
+                .map(|section| section.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Nested Section"]
         );
     }
 

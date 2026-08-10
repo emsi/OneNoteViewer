@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"
+     viewBox="0 0 16 16" fill="none" stroke="#2e3436" stroke-width="2"
+     stroke-linecap="round" stroke-linejoin="round">
+  <circle class="transparent-fill foreground-stroke" cx="7" cy="7" r="4"/>
+  <path class="transparent-fill foreground-stroke" d="m10 10 3 3"/>
+</svg>

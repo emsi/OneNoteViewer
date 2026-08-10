@@ -272,6 +272,7 @@ impl SearchIndex {
             notebook_name: hit.notebook_name,
             section_id: SectionId::new(hit.section_id),
             section_name: hit.section_name,
+            path: hit.path,
             page_id: PageId::new(hit.page_id),
             page_title: hit.title,
             object_id,
@@ -628,6 +629,9 @@ mod tests {
         assert_eq!(hits.len(), 2);
         assert!(hits.iter().all(|hit| hit.object_id.is_some()));
         assert!(hits.iter().all(|hit| !hit.snippet.highlights.is_empty()));
+        assert!(hits
+            .iter()
+            .all(|hit| hit.path == format!("{} / Section", hit.notebook_name)));
 
         let mut filtered = SearchQuery::simple("\"searchable phrase\"");
         filtered.filters.source_ids = vec![first.source_id.clone()];

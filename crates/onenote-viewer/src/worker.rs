@@ -134,12 +134,12 @@ pub(crate) fn start_index_worker(
 pub(crate) fn search(
     index_path: PathBuf,
     generation: u64,
-    text: String,
+    query: SearchQuery,
     events: mpsc::Sender<Event>,
 ) {
     std::thread::spawn(move || {
         let result = SearchIndex::open(index_path)
-            .and_then(|index| index.search(&SearchQuery::simple(text), &AtomicBool::new(false)))
+            .and_then(|index| index.search(&query, &AtomicBool::new(false)))
             .map_err(|error| error.to_string());
         let _ignored = events.send(Event::Search { generation, result });
     });
