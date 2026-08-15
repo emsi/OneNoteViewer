@@ -50,8 +50,9 @@ updates, removal, and the AppImage alternative.
   addresses, and resolves internal page links across open notebooks.
 - Displays stored attachment icons and previews, and can save or open the
   original files through the desktop with progress and cancellation.
-- Restores the workspace and last viewed page, remembers the zoom level, and
-  provides persistent light, dark, and system theme choices.
+- Restores the workspace, last viewed page, navigation expansion, and collapsed
+  panes; remembers the zoom level; and provides persistent light, dark, and
+  system theme choices.
 - Provides Back and Forward history across notebooks, search results, and
   internal links through the application menu, `Alt+Left`/`Alt+Right`, and
   mouse navigation buttons.

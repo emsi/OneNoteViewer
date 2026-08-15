@@ -1,10 +1,13 @@
 use crate::input::{focus_initial_navigation, history_mouse_controller};
-use crate::navigation::{NavigationTarget, NotebookTree};
+use crate::navigation::{NavigationTarget, NotebookTree, SourceTreeExpansion};
 use crate::navigation_history::{HistoryDirection, NavigationHistory, PageLocation};
 use crate::navigation_state::{location_for_section, preferred_location, SectionLocation};
 use crate::settings::{self, AppSettings, ThemePreference};
 use crate::worker::{self, Command, Event};
-use crate::workspace::{self, PersistedPageLocation, WorkspaceConfig, WorkspaceNavigation};
+use crate::workspace::{
+    self, PersistedPageLocation, PersistedPaneState, PersistedSourceTreeState, WorkspaceConfig,
+    WorkspaceNavigation, WorkspaceUiState,
+};
 use anyhow::Result;
 use gtk::gio;
 use gtk::glib;
@@ -20,6 +23,7 @@ use onenote_render_gtk::{
 };
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -80,6 +84,20 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
             &notebooks_location,
         )
     });
+    let restore_ui = persisted.ui.map(|mut ui| {
+        ui.sources.retain(|source| {
+            workspace::source_is_in_workspace(
+                &source.source_path,
+                &configured_sources,
+                &notebooks_location,
+            )
+        });
+        ui
+    });
+    let restore = WorkspaceRestore {
+        page: restore_target,
+        ui: restore_ui,
+    };
     let initial_sources: Vec<_> = configured_sources
         .into_iter()
         .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
@@ -103,7 +121,7 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
             index_path.clone(),
             settings_path.clone(),
             persisted_settings.clone(),
-            restore_target.clone(),
+            restore.clone(),
             style_provider,
         );
         instance.open_notebooks_location();
@@ -235,7 +253,8 @@ fn transparent_probe(name: &str) -> Option<(usize, usize)> {
 
 fn collapsed_navigation_minimum_width() -> i32 {
     let (_, page_list) = list_view(&gtk::StringList::new(&[]), "page-list");
-    let pages = CollapsibleNavigationBand::new("PAGES", &page_list, PAGE_NAVIGATION_WIDTH, None);
+    let pages =
+        CollapsibleNavigationBand::new("PAGES", &page_list, PAGE_NAVIGATION_WIDTH, None, false);
     pages.connect_width_changed(|_| {});
     pages.toggle.emit_clicked();
     let (minimum, _, _, _) = pages.root.measure(gtk::Orientation::Horizontal, -1);
@@ -395,7 +414,14 @@ struct State {
     scene_generation: u64,
     pending_reveal: Option<RevealTarget>,
     restore_target: Option<PersistedPageLocation>,
+    pending_expansions: BTreeMap<SourceId, PersistedSourceTreeState>,
     history: NavigationHistory,
+}
+
+#[derive(Clone)]
+struct WorkspaceRestore {
+    page: Option<PersistedPageLocation>,
+    ui: Option<WorkspaceUiState>,
 }
 
 #[derive(Clone, Copy)]
@@ -415,6 +441,8 @@ struct Viewer {
     navigation_stack: gtk::Stack,
     content_paned: gtk::Paned,
     page_navigation_width: Rc<Cell<i32>>,
+    notebooks_collapsed: Rc<Cell<bool>>,
+    pages_collapsed: Rc<Cell<bool>>,
     page_view: PageView,
     canvas_stack: gtk::Stack,
     page_title: gtk::Label,
@@ -475,9 +503,19 @@ impl Viewer {
         index_path: PathBuf,
         settings_path: PathBuf,
         settings: AppSettings,
-        restore_target: Option<PersistedPageLocation>,
+        restore: WorkspaceRestore,
         style_provider: gtk::CssProvider,
     ) -> Rc<Self> {
+        let restored_panes = restore.ui.as_ref().map(|ui| ui.panes).unwrap_or_default();
+        let pending_expansions = restore
+            .ui
+            .map(|ui| {
+                ui.sources
+                    .into_iter()
+                    .map(|source| (source.source_id.clone(), source))
+                    .collect()
+            })
+            .unwrap_or_default();
         let notebook_tree = NotebookTree::new();
         let page_model = gtk::StringList::new(&[]);
         let (page_selection, page_list) = list_view(&page_model, "page-list");
@@ -603,9 +641,15 @@ impl Viewer {
             &notebook_tree.view,
             NOTEBOOK_NAVIGATION_WIDTH,
             Some(&close_source),
+            restored_panes.notebooks_collapsed,
         );
-        let pages =
-            CollapsibleNavigationBand::new("PAGES", &page_list, PAGE_NAVIGATION_WIDTH, None);
+        let pages = CollapsibleNavigationBand::new(
+            "PAGES",
+            &page_list,
+            PAGE_NAVIGATION_WIDTH,
+            None,
+            restored_panes.pages_collapsed,
+        );
         let results = navigation_band("SEARCH RESULTS", &result_list, SEARCH_RESULTS_WIDTH);
 
         let navigation_stack = gtk::Stack::builder()
@@ -620,7 +664,7 @@ impl Viewer {
         navigation_stack.add_named(&results, Some("results"));
         navigation_stack.set_visible_child_name("pages");
         let initial_navigation_width =
-            NOTEBOOK_NAVIGATION_WIDTH + PAGE_NAVIGATION_WIDTH + NAVIGATION_SEPARATOR_WIDTH;
+            notebooks.width() + pages.width() + NAVIGATION_SEPARATOR_WIDTH;
         navigation_stack.set_width_request(initial_navigation_width);
 
         let page_title = selectable_page_header_label("page-title");
@@ -787,8 +831,8 @@ impl Viewer {
             .shrink_start_child(true)
             .position(initial_navigation_width)
             .build();
-        let notebook_width = Rc::new(Cell::new(NOTEBOOK_NAVIGATION_WIDTH));
-        let page_width = Rc::new(Cell::new(PAGE_NAVIGATION_WIDTH));
+        let notebook_width = Rc::new(Cell::new(notebooks.width()));
+        let page_width = Rc::new(Cell::new(pages.width()));
         let page_navigation_width = Rc::new(Cell::new(initial_navigation_width));
         connect_navigation_band_width(
             &notebooks,
@@ -834,6 +878,8 @@ impl Viewer {
             navigation_stack,
             content_paned,
             page_navigation_width,
+            notebooks_collapsed: Rc::clone(&notebooks.collapsed),
+            pages_collapsed: Rc::clone(&pages.collapsed),
             page_view,
             canvas_stack,
             page_title,
@@ -868,7 +914,8 @@ impl Viewer {
             scene_cancel: RefCell::default(),
             selection_syncing: Cell::new(false),
             state: RefCell::new(State {
-                restore_target,
+                restore_target: restore.page,
+                pending_expansions,
                 ..State::default()
             }),
             workspace_path,
@@ -887,6 +934,20 @@ impl Viewer {
             settings_save_timer: RefCell::default(),
         });
         viewer.connect_navigation();
+        let weak = Rc::downgrade(&viewer);
+        viewer.notebook_tree.connect_expansion_changed(move || {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.schedule_workspace_save();
+            }
+        });
+        for toggle in [&notebooks.toggle, &pages.toggle] {
+            let weak = Rc::downgrade(&viewer);
+            toggle.connect_clicked(move |_| {
+                if let Some(viewer) = weak.upgrade() {
+                    viewer.schedule_workspace_save();
+                }
+            });
+        }
         viewer.window.add_action(&open_file);
         viewer.window.add_action(&open_folder);
         viewer.window.add_action(&import_package);
@@ -1903,8 +1964,12 @@ impl Viewer {
     fn add_source(self: &Rc<Self>, path: PathBuf, loaded: Arc<LoadedNotebook>) {
         let source_id = loaded.notebook.source_id.clone();
         let mut state = self.state.borrow_mut();
+        let restored_tree = state
+            .pending_expansions
+            .remove(&source_id)
+            .map(source_tree_expansion);
         let restored_location =
-            restore_location_for_source(state.restore_target.as_ref(), &source_id);
+            restore_location_for_source(state.restore_target.as_ref(), &loaded.notebook);
         let restoring = restored_location.is_some();
         if let Some(existing) = state
             .sources
@@ -1941,7 +2006,7 @@ impl Viewer {
         }
         drop(state);
 
-        self.synchronize_selections(|| self.notebook_tree.upsert(&notebook));
+        self.synchronize_selections(|| self.notebook_tree.upsert(&notebook, restored_tree.clone()));
         if restoring
             || active_source
                 .as_ref()
@@ -1956,32 +2021,72 @@ impl Viewer {
         } else {
             self.refresh_history_actions();
         }
+        if let Some(expansion) = restored_tree {
+            let (source_is_active, active_section) = {
+                let state = self.state.borrow();
+                let active = state
+                    .active
+                    .as_ref()
+                    .filter(|active| active.source == source_id);
+                (
+                    active.is_some(),
+                    active
+                        .and_then(|active| active.section.as_ref())
+                        .map(|location| location.section_id.clone()),
+                )
+            };
+            self.synchronize_selections(|| {
+                self.notebook_tree.restore_expansion(&source_id, expansion);
+                if source_is_active
+                    && active_section.as_ref().is_none_or(|section_id| {
+                        self.notebook_tree
+                            .select_visible_section(&source_id, section_id)
+                            .is_none()
+                    })
+                {
+                    self.notebook_tree.select_notebook(&source_id);
+                }
+            });
+        }
         self.schedule_workspace_save();
         self.status
             .set_label("Notebook opened; building search index");
     }
 
     fn finish_restore_discovery(self: &Rc<Self>, requested: &std::path::Path, paths: &[PathBuf]) {
-        let unavailable = restore_missing_from_discovery(
-            self.state.borrow().restore_target.as_ref(),
-            requested,
-            paths,
-        );
-        if unavailable {
-            self.state.borrow_mut().restore_target = None;
+        let mut state = self.state.borrow_mut();
+        let page_unavailable =
+            restore_missing_from_discovery(state.restore_target.as_ref(), requested, paths);
+        if page_unavailable {
+            state.restore_target = None;
+        }
+        let before = state.pending_expansions.len();
+        state
+            .pending_expansions
+            .retain(|_, source| !tree_state_missing_from_discovery(source, requested, paths));
+        let tree_unavailable = before != state.pending_expansions.len();
+        drop(state);
+        if page_unavailable || tree_unavailable {
             self.schedule_workspace_save();
         }
     }
 
     fn finish_restore_load(self: &Rc<Self>, path: &std::path::Path) {
-        let unavailable = self
-            .state
-            .borrow()
+        let mut state = self.state.borrow_mut();
+        let page_unavailable = state
             .restore_target
             .as_ref()
             .is_some_and(|target| same_source_path(path, &target.source_path));
-        if unavailable {
-            self.state.borrow_mut().restore_target = None;
+        if page_unavailable {
+            state.restore_target = None;
+        }
+        let before = state.pending_expansions.len();
+        state
+            .pending_expansions
+            .retain(|_, source| !same_source_path(path, &source.source_path));
+        let tree_unavailable = before != state.pending_expansions.len();
+        drop(state);
+        if page_unavailable || tree_unavailable {
             self.schedule_workspace_save();
         }
     }
@@ -2825,6 +2930,27 @@ impl Viewer {
         WorkspaceConfig {
             sources,
             navigation: WorkspaceNavigation { last_page },
+            ui: Some(WorkspaceUiState::new(
+                PersistedPaneState {
+                    notebooks_collapsed: self.notebooks_collapsed.get(),
+                    pages_collapsed: self.pages_collapsed.get(),
+                },
+                state
+                    .sources
+                    .iter()
+                    .filter_map(|source| {
+                        self.notebook_tree
+                            .expansion_state(&source.loaded.notebook.source_id)
+                            .map(|expansion| PersistedSourceTreeState {
+                                source_path: source.path.clone(),
+                                source_id: source.loaded.notebook.source_id.clone(),
+                                notebook_expanded: expansion.notebook_expanded,
+                                expanded_groups: expansion.expanded_groups.into_iter().collect(),
+                            })
+                    })
+                    .chain(state.pending_expansions.values().cloned())
+                    .collect(),
+            )),
         }
     }
 
@@ -3529,6 +3655,7 @@ struct CollapsibleNavigationBand {
     toggle: gtk::Button,
     header_action: Option<gtk::Button>,
     expanded_width: i32,
+    collapsed: Rc<Cell<bool>>,
 }
 
 impl CollapsibleNavigationBand {
@@ -3537,6 +3664,7 @@ impl CollapsibleNavigationBand {
         list: &gtk::ListView,
         expanded_width: i32,
         header_action: Option<&gtk::Button>,
+        collapsed: bool,
     ) -> Self {
         let heading = gtk::Label::builder()
             .label(title)
@@ -3571,7 +3699,7 @@ impl CollapsibleNavigationBand {
         root.add_css_class("navigation-band");
         root.append(&header);
         root.append(&body);
-        Self {
+        let band = Self {
             root,
             header,
             heading,
@@ -3579,7 +3707,49 @@ impl CollapsibleNavigationBand {
             toggle,
             header_action: header_action.cloned(),
             expanded_width,
+            collapsed: Rc::new(Cell::new(false)),
+        };
+        band.apply_collapsed(collapsed);
+        band
+    }
+
+    fn width(&self) -> i32 {
+        if self.collapsed.get() {
+            COLLAPSED_NAVIGATION_WIDTH
+        } else {
+            self.expanded_width
         }
+    }
+
+    fn apply_collapsed(&self, collapsed: bool) {
+        self.body.set_visible(!collapsed);
+        self.heading.set_visible(!collapsed);
+        if let Some(action) = &self.header_action {
+            action.set_visible(!collapsed);
+        }
+        self.header.set_margin_start(if collapsed { 0 } else { 12 });
+        self.header.set_margin_end(if collapsed { 0 } else { 6 });
+        self.header.set_halign(if collapsed {
+            gtk::Align::Center
+        } else {
+            gtk::Align::Fill
+        });
+        self.root.set_width_request(if collapsed {
+            COLLAPSED_NAVIGATION_WIDTH
+        } else {
+            self.expanded_width
+        });
+        self.toggle.set_icon_name(if collapsed {
+            "onenote-panel-expand-symbolic"
+        } else {
+            "onenote-panel-collapse-symbolic"
+        });
+        self.toggle.set_tooltip_text(Some(if collapsed {
+            "Expand navigation"
+        } else {
+            "Collapse navigation"
+        }));
+        self.collapsed.set(collapsed);
     }
 
     fn connect_width_changed<F>(&self, changed: F)
@@ -3592,8 +3762,9 @@ impl CollapsibleNavigationBand {
         let body = self.body.clone();
         let header_action = self.header_action.clone();
         let expanded_width = self.expanded_width;
+        let collapsed = Rc::clone(&self.collapsed);
         self.toggle.connect_clicked(move |button| {
-            let collapse = body.is_visible();
+            let collapse = !collapsed.get();
             body.set_visible(!collapse);
             heading.set_visible(!collapse);
             if let Some(action) = &header_action {
@@ -3619,6 +3790,7 @@ impl CollapsibleNavigationBand {
                 button.set_icon_name("onenote-panel-collapse-symbolic");
                 button.set_tooltip_text(Some("Collapse navigation"));
             }
+            collapsed.set(collapse);
             changed(width);
         });
     }
@@ -4255,14 +4427,28 @@ fn page_location_exists(sources: &[Source], location: &PageLocation) -> bool {
 
 fn restore_location_for_source(
     target: Option<&PersistedPageLocation>,
-    source_id: &SourceId,
+    notebook: &Notebook,
 ) -> Option<SectionLocation> {
-    target
-        .filter(|target| target.source_id == *source_id)
-        .map(|target| SectionLocation {
+    let target = target.filter(|target| target.source_id == notebook.source_id)?;
+    if notebook
+        .section(&target.section_id)
+        .is_some_and(|section| section.pages.iter().any(|page| page.id == target.page_id))
+    {
+        return Some(SectionLocation {
             section_id: target.section_id.clone(),
             page_id: Some(target.page_id.clone()),
-        })
+        });
+    }
+    notebook.sections().find_map(|section| {
+        section
+            .pages
+            .iter()
+            .any(|page| page.id == target.page_id)
+            .then(|| SectionLocation {
+                section_id: section.id.clone(),
+                page_id: Some(target.page_id.clone()),
+            })
+    })
 }
 
 fn restore_missing_from_discovery(
@@ -4276,6 +4462,24 @@ fn restore_missing_from_discovery(
                 .iter()
                 .any(|path| same_source_path(path, &target.source_path))
     })
+}
+
+fn tree_state_missing_from_discovery(
+    state: &PersistedSourceTreeState,
+    requested: &std::path::Path,
+    discovered: &[PathBuf],
+) -> bool {
+    workspace::source_is_in_location(&state.source_path, requested)
+        && !discovered
+            .iter()
+            .any(|path| same_source_path(path, &state.source_path))
+}
+
+fn source_tree_expansion(state: PersistedSourceTreeState) -> SourceTreeExpansion {
+    SourceTreeExpansion {
+        notebook_expanded: state.notebook_expanded,
+        expanded_groups: state.expanded_groups.into_iter().collect(),
+    }
 }
 
 fn load_options(settings: &AppSettings) -> LoadOptions {
@@ -4422,17 +4626,30 @@ mod tests {
     #[test]
     fn startup_restore_matches_stable_source_identity() {
         let target = persisted_page("wanted", "/notes/Wanted.onetoc2");
+        let wanted = restore_notebook("wanted", "section", "page");
+        let other = restore_notebook("other", "section", "page");
 
         assert_eq!(
-            restore_location_for_source(Some(&target), &SourceId::new("wanted")),
+            restore_location_for_source(Some(&target), &wanted),
             Some(SectionLocation {
                 section_id: SectionId::new("section"),
                 page_id: Some(PageId::new("page")),
             })
         );
+        assert_eq!(restore_location_for_source(Some(&target), &other), None);
+    }
+
+    #[test]
+    fn startup_restore_follows_a_stable_page_when_section_identity_changes() {
+        let target = persisted_page("source", "/notes/Notebook.onetoc2");
+        let notebook = restore_notebook("source", "new-section", "page");
+
         assert_eq!(
-            restore_location_for_source(Some(&target), &SourceId::new("other")),
-            None
+            restore_location_for_source(Some(&target), &notebook),
+            Some(SectionLocation {
+                section_id: SectionId::new("new-section"),
+                page_id: Some(PageId::new("page")),
+            })
         );
     }
 
@@ -4458,12 +4675,62 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn pending_tree_restore_is_pruned_only_by_its_discovery_scope() {
+        let state = PersistedSourceTreeState {
+            source_path: PathBuf::from("/notes/Wanted/Open Notebook.onetoc2"),
+            source_id: SourceId::new("wanted"),
+            notebook_expanded: false,
+            expanded_groups: vec![SectionId::new("group")],
+        };
+        let discovered = vec![PathBuf::from("/notes/Wanted/Open Notebook.onetoc2")];
+
+        assert!(!tree_state_missing_from_discovery(
+            &state,
+            std::path::Path::new("/notes"),
+            &discovered,
+        ));
+        assert!(tree_state_missing_from_discovery(
+            &state,
+            std::path::Path::new("/notes"),
+            &[PathBuf::from("/notes/Other/Open Notebook.onetoc2")],
+        ));
+        assert!(!tree_state_missing_from_discovery(
+            &state,
+            std::path::Path::new("/unrelated"),
+            &[],
+        ));
+    }
+
     fn persisted_page(source_id: &str, source_path: &str) -> PersistedPageLocation {
         PersistedPageLocation {
             source_path: PathBuf::from(source_path),
             source_id: SourceId::new(source_id),
             section_id: SectionId::new("section"),
             page_id: PageId::new("page"),
+        }
+    }
+
+    fn restore_notebook(source_id: &str, section_id: &str, page_id: &str) -> Notebook {
+        let mut section = empty_section(SectionId::new(section_id));
+        section.pages.push(Page {
+            id: PageId::new(page_id),
+            native_id: String::new(),
+            title: String::new(),
+            level: 0,
+            created_at: String::new(),
+            updated_at: String::new(),
+            author: None,
+            height: None,
+            objects: Vec::new(),
+        });
+        Notebook {
+            source_id: SourceId::new(source_id),
+            fingerprint: onenote_core::SourceFingerprint::new("fingerprint"),
+            name: "Notebook".to_owned(),
+            color: None,
+            entries: vec![onenote_core::NotebookEntry::Section(section)],
+            diagnostics: Vec::new(),
         }
     }
 
@@ -4601,9 +4868,10 @@ mod tests {
             &notebook_list,
             NOTEBOOK_NAVIGATION_WIDTH,
             Some(&close_source),
+            false,
         );
         let pages =
-            CollapsibleNavigationBand::new("PAGES", &page_list, PAGE_NAVIGATION_WIDTH, None);
+            CollapsibleNavigationBand::new("PAGES", &page_list, PAGE_NAVIGATION_WIDTH, None, false);
         let navigation = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         navigation.append(&notebooks.root);
         navigation.append(&separator());
@@ -4656,5 +4924,36 @@ mod tests {
         );
         assert_eq!(stack.width_request(), total_width.get());
         assert_eq!(paned.position(), total_width.get());
+    }
+
+    #[test]
+    fn restored_bands_apply_all_initial_collapse_combinations() {
+        crate::test_support::run_gtk_test(
+            restored_bands_apply_all_initial_collapse_combinations_gtk,
+        );
+    }
+
+    fn restored_bands_apply_all_initial_collapse_combinations_gtk() {
+        for collapsed in [false, true] {
+            let (_, list) = list_view(&gtk::StringList::new(&[]), "page-list");
+            let band = CollapsibleNavigationBand::new(
+                "PAGES",
+                &list,
+                PAGE_NAVIGATION_WIDTH,
+                None,
+                collapsed,
+            );
+
+            assert_eq!(band.collapsed.get(), collapsed);
+            assert_eq!(band.body.is_visible(), !collapsed);
+            assert_eq!(
+                band.width(),
+                if collapsed {
+                    COLLAPSED_NAVIGATION_WIDTH
+                } else {
+                    PAGE_NAVIGATION_WIDTH
+                }
+            );
+        }
     }
 }

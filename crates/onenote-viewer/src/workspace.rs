@@ -1,11 +1,12 @@
 use anyhow::{bail, Context, Result};
 use onenote_core::{PageId, SectionId, SourceId};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 const MAX_DISCOVERY_ENTRIES: usize = 100_000;
+pub(crate) const WORKSPACE_UI_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct WorkspaceConfig {
@@ -13,6 +14,12 @@ pub(crate) struct WorkspaceConfig {
     pub(crate) sources: Vec<PathBuf>,
     #[serde(default)]
     pub(crate) navigation: WorkspaceNavigation,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_ui_state"
+    )]
+    pub(crate) ui: Option<WorkspaceUiState>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -27,6 +34,70 @@ pub(crate) struct PersistedPageLocation {
     pub(crate) source_id: SourceId,
     pub(crate) section_id: SectionId,
     pub(crate) page_id: PageId,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct WorkspaceUiState {
+    pub(crate) version: u32,
+    #[serde(default)]
+    pub(crate) panes: PersistedPaneState,
+    #[serde(default)]
+    pub(crate) sources: Vec<PersistedSourceTreeState>,
+}
+
+impl WorkspaceUiState {
+    pub(crate) fn new(panes: PersistedPaneState, sources: Vec<PersistedSourceTreeState>) -> Self {
+        Self {
+            version: WORKSPACE_UI_VERSION,
+            panes,
+            sources: normalize_source_states(sources),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PersistedPaneState {
+    #[serde(default)]
+    pub(crate) notebooks_collapsed: bool,
+    #[serde(default)]
+    pub(crate) pages_collapsed: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct PersistedSourceTreeState {
+    pub(crate) source_path: PathBuf,
+    pub(crate) source_id: SourceId,
+    #[serde(default)]
+    pub(crate) notebook_expanded: bool,
+    #[serde(default)]
+    pub(crate) expanded_groups: Vec<SectionId>,
+}
+
+impl PersistedSourceTreeState {
+    pub(crate) fn normalize(&mut self) {
+        self.expanded_groups.sort();
+        self.expanded_groups.dedup();
+    }
+}
+
+fn normalize_source_states(
+    mut sources: Vec<PersistedSourceTreeState>,
+) -> Vec<PersistedSourceTreeState> {
+    for source in &mut sources {
+        source.normalize();
+    }
+    sources.sort_by(|left, right| left.source_id.cmp(&right.source_id));
+    sources.dedup_by(|left, right| left.source_id == right.source_id);
+    sources
+}
+
+fn deserialize_ui_state<'de, D>(deserializer: D) -> Result<Option<WorkspaceUiState>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    let state = serde_json::from_value::<WorkspaceUiState>(value).ok();
+    Ok(state.filter(|state| state.version == WORKSPACE_UI_VERSION))
 }
 
 pub(crate) fn paths() -> Result<(PathBuf, PathBuf)> {
@@ -247,6 +318,18 @@ mod tests {
                     page_id: PageId::new("page"),
                 }),
             },
+            ui: Some(WorkspaceUiState::new(
+                PersistedPaneState {
+                    notebooks_collapsed: true,
+                    pages_collapsed: false,
+                },
+                vec![PersistedSourceTreeState {
+                    source_path: PathBuf::from("/notes/Notebook.onetoc2"),
+                    source_id: SourceId::new("source"),
+                    notebook_expanded: true,
+                    expanded_groups: vec![SectionId::new("nested"), SectionId::new("group")],
+                }],
+            )),
         };
 
         save(&path, &expected).expect("save");
@@ -269,6 +352,106 @@ mod tests {
             vec![PathBuf::from("/notes/Notebook.onetoc2")]
         );
         assert_eq!(actual.navigation, WorkspaceNavigation::default());
+        assert_eq!(actual.ui, None);
+    }
+
+    #[test]
+    fn malformed_optional_ui_does_not_discard_workspace_navigation() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let path = temporary.path().join("workspace.json");
+        fs::write(
+            &path,
+            r#"{
+                "sources":["/notes/Notebook.onetoc2"],
+                "navigation":{"last_page":{
+                    "source_path":"/notes/Notebook.onetoc2",
+                    "source_id":"source",
+                    "section_id":"section",
+                    "page_id":"page"
+                }},
+                "ui":{"version":"invalid","panes":[]}
+            }"#,
+        )
+        .expect("workspace");
+
+        let actual = load(&path).expect("load workspace");
+
+        assert_eq!(actual.sources.len(), 1);
+        assert_eq!(
+            actual
+                .navigation
+                .last_page
+                .as_ref()
+                .map(|page| &page.page_id),
+            Some(&PageId::new("page"))
+        );
+        assert_eq!(actual.ui, None);
+    }
+
+    #[test]
+    fn unknown_ui_schema_version_is_ignored() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let path = temporary.path().join("workspace.json");
+        fs::write(
+            &path,
+            r#"{"sources":["/notes/Notebook.onetoc2"],"ui":{"version":99}}"#,
+        )
+        .expect("workspace");
+
+        let actual = load(&path).expect("load workspace");
+
+        assert_eq!(actual.sources.len(), 1);
+        assert_eq!(actual.ui, None);
+    }
+
+    #[test]
+    fn ui_state_normalizes_duplicate_and_unordered_identifiers() {
+        let ui = WorkspaceUiState::new(
+            PersistedPaneState::default(),
+            vec![
+                PersistedSourceTreeState {
+                    source_path: PathBuf::from("/notes/B.onetoc2"),
+                    source_id: SourceId::new("b"),
+                    notebook_expanded: true,
+                    expanded_groups: vec![SectionId::new("two"), SectionId::new("one")],
+                },
+                PersistedSourceTreeState {
+                    source_path: PathBuf::from("/notes/A.onetoc2"),
+                    source_id: SourceId::new("a"),
+                    notebook_expanded: false,
+                    expanded_groups: vec![SectionId::new("same"), SectionId::new("same")],
+                },
+            ],
+        );
+
+        assert_eq!(ui.sources[0].source_id, SourceId::new("a"));
+        assert_eq!(ui.sources[0].expanded_groups, [SectionId::new("same")]);
+        assert_eq!(
+            ui.sources[1].expanded_groups,
+            [SectionId::new("one"), SectionId::new("two")]
+        );
+    }
+
+    #[test]
+    fn every_pane_collapse_combination_round_trips() {
+        for notebooks_collapsed in [false, true] {
+            for pages_collapsed in [false, true] {
+                let value = WorkspaceConfig {
+                    ui: Some(WorkspaceUiState::new(
+                        PersistedPaneState {
+                            notebooks_collapsed,
+                            pages_collapsed,
+                        },
+                        Vec::new(),
+                    )),
+                    ..WorkspaceConfig::default()
+                };
+                let encoded = serde_json::to_vec(&value).expect("serialize");
+                let decoded: WorkspaceConfig =
+                    serde_json::from_slice(&encoded).expect("deserialize");
+                assert_eq!(decoded, value);
+            }
+        }
     }
 
     #[test]
