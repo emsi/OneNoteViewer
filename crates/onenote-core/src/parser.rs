@@ -253,7 +253,11 @@ impl Projector {
         notebook_diagnostics: &mut Vec<Diagnostic>,
     ) -> Result<SectionGroup> {
         Ok(SectionGroup {
-            id: SectionId::new(self.id("group", key)),
+            id: SectionId::new(native_entry_id(
+                &self.source_id,
+                "group",
+                &group.file_identity().to_string(),
+            )),
             name: group.display_name().to_owned(),
             entries: self.entries(group.entries(), key, notebook_diagnostics)?,
         })
@@ -265,7 +269,11 @@ impl Projector {
             self.section_count <= self.limits.max_sections,
             "section limit exceeded",
         )?;
-        let id = SectionId::new(self.id("section", key));
+        let id = SectionId::new(native_entry_id(
+            &self.source_id,
+            "section",
+            &section.file_identity().to_string(),
+        ));
         let mut pages = Vec::new();
         for (series_index, series) in section.page_series().iter().enumerate() {
             for (page_index, page) in series.pages().iter().enumerate() {
@@ -1210,6 +1218,15 @@ fn stable_id(parts: &[&[u8]]) -> String {
     Uuid::new_v5(&Uuid::NAMESPACE_URL, &bytes).to_string()
 }
 
+fn native_entry_id(source_id: &SourceId, kind: &str, file_identity: &str) -> String {
+    stable_id(&[
+        source_id.as_str().as_bytes(),
+        b"native-entry-v1",
+        kind.as_bytes(),
+        file_identity.as_bytes(),
+    ])
+}
+
 fn source_fingerprint(path: &Path) -> Result<SourceFingerprint> {
     let root = if has_extension(path, "onetoc2") {
         path.parent().unwrap_or(path)
@@ -1345,8 +1362,8 @@ fn host_typed_path(path: &Path) -> TypedPath<'_> {
 #[cfg(test)]
 mod tests {
     use super::{
-        detect_links_in_run, normalize_rich_text_controls, project_list_template, stable_id,
-        style_allows_plain_link_detection, OneNoteLoader,
+        detect_links_in_run, native_entry_id, normalize_rich_text_controls, project_list_template,
+        stable_id, style_allows_plain_link_detection, OneNoteLoader,
     };
     use crate::{Error, ListMarkerPart, ListNumberFormat, LoadOptions, TextLink, TextLinkOrigin};
     use linkify::{LinkFinder, LinkKind};
@@ -1359,6 +1376,20 @@ mod tests {
         let other = stable_id(&[b"page", b"path"]);
         assert_eq!(first, again);
         assert_ne!(first, other);
+    }
+
+    #[test]
+    fn native_entry_ids_are_source_scoped_and_independent_of_display_metadata() {
+        let source = crate::SourceId::new("source");
+        let identity = "00112233-4455-6677-8899-aabbccddeeff";
+        let section = native_entry_id(&source, "section", identity);
+
+        assert_eq!(section, native_entry_id(&source, "section", identity));
+        assert_ne!(section, native_entry_id(&source, "group", identity));
+        assert_ne!(
+            section,
+            native_entry_id(&crate::SourceId::new("other"), "section", identity)
+        );
     }
 
     #[test]
