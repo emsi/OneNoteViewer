@@ -160,6 +160,8 @@ versioned and tested rather than exposing unstable Rust symbols as a C ABI.
 operations cover:
 
 - create/open an index at a caller-selected location;
+- reuse a published source when its identity, fingerprint, schema, document
+  projection version, and caller-defined model configuration match;
 - replace and remove a complete source transactionally;
 - report indexed source generations and verify index integrity;
 - execute bounded structured queries across caller-selected source scopes;
@@ -173,9 +175,13 @@ matched field, bounded source-text snippet, source fingerprint, notebook,
 section, page and object locators, and geometry when known. It never requires a
 caller to inspect SQLite tables or parse display strings.
 
-SQLite schema and FTS syntax are implementation details. Raw SQL is not a
-public interface, and callers cannot rely on the database remaining compatible
-across versions.
+`IndexProfile` records the library's document-projection version together with
+a stable caller-defined description of loader/model options that affect the
+indexed document independently of source bytes. `ensure_source` reports
+whether the generation was reused or rebuilt and performs no writes on an
+exact match. SQLite schema and FTS syntax are implementation details. Raw SQL
+is not a public interface, and callers cannot rely on the database remaining
+compatible across versions.
 
 ### Non-Rust Query Protocol
 

@@ -1,6 +1,46 @@
 use onenote_core::{ObjectId, PageId, Rect, SectionId, SourceFingerprint, SourceId};
 use serde::{Deserialize, Serialize};
 
+/// Inputs, other than source bytes, that determine indexed documents.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct IndexProfile {
+    /// Version of the index library's document projection.
+    pub projection_version: u32,
+    /// Stable caller-defined description of relevant loader/model options.
+    pub configuration: String,
+}
+
+impl IndexProfile {
+    /// Construct a profile for the current document projection.
+    pub fn new(configuration: impl Into<String>) -> Self {
+        Self {
+            projection_version: crate::INDEX_PROJECTION_VERSION,
+            configuration: configuration.into(),
+        }
+    }
+
+    pub(crate) fn from_stored(projection_version: u32, configuration: String) -> Self {
+        Self {
+            projection_version,
+            configuration,
+        }
+    }
+
+    pub(crate) fn unversioned() -> Self {
+        Self::from_stored(0, String::new())
+    }
+}
+
+/// Result of validating and, when necessary, rebuilding one source.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IndexUpdate {
+    /// The published generation already matched every validity input.
+    Reused,
+    /// A new generation was published transactionally.
+    Rebuilt,
+}
+
 /// Progress emitted synchronously while indexing a source.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IndexProgress {
@@ -19,6 +59,8 @@ pub struct SourceStatus {
     pub source_id: SourceId,
     /// Fingerprint of the fully published generation.
     pub fingerprint: SourceFingerprint,
+    /// Projection and caller configuration used by this generation.
+    pub profile: IndexProfile,
     /// Notebook display name.
     pub notebook_name: String,
     /// Indexed pages.

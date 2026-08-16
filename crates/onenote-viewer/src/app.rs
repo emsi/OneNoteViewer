@@ -3,7 +3,7 @@ use crate::navigation::{NavigationTarget, NotebookTree, SourceTreeExpansion};
 use crate::navigation_history::{HistoryDirection, NavigationHistory, PageLocation};
 use crate::navigation_state::{location_for_section, preferred_location, SectionLocation};
 use crate::settings::{self, AppSettings, ThemePreference};
-use crate::worker::{self, Command, Event};
+use crate::worker::{self, Event, IndexCommand, SourceCommand};
 use crate::workspace::{
     self, PersistedPageLocation, PersistedPaneState, PersistedSourceTreeState, WorkspaceConfig,
     WorkspaceNavigation, WorkspaceUiState,
@@ -16,7 +16,7 @@ use onenote_core::{
     ExtractionPhase, LoadOptions, LoadedNotebook, Notebook, ObjectId, Page, PageId, Rect,
     ResourceId, ResourceRef, SectionId, SourceId,
 };
-use onenote_index::{MatchedField, SearchHit, SearchQuery, TextRange};
+use onenote_index::{IndexProfile, IndexUpdate, MatchedField, SearchHit, SearchQuery, TextRange};
 use onenote_render::{HitAction, ScenePrimitive};
 use onenote_render_gtk::{
     find_text_ranges, FindMatch, FindOptions, FindTextRange, PageView, DEFAULT_ZOOM,
@@ -98,10 +98,14 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
         page: restore_target,
         ui: restore_ui,
     };
-    let initial_sources: Vec<_> = configured_sources
+    let mut initial_sources: Vec<_> = configured_sources
         .into_iter()
         .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
         .collect();
+    prioritize_source_roots(&mut initial_sources, restore.page.as_ref());
+    let restore_is_outside_default_location = restore.page.as_ref().is_some_and(|target| {
+        !workspace::source_is_in_location(&target.source_path, &notebooks_location)
+    });
 
     let application = gtk::Application::builder()
         .application_id("io.github.emsi.OneNoteViewer")
@@ -124,9 +128,16 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
             restore.clone(),
             style_provider,
         );
+        if restore_is_outside_default_location {
+            for source in &initial_sources {
+                instance.discover(source.clone());
+            }
+        }
         instance.open_notebooks_location();
-        for source in &initial_sources {
-            instance.discover(source.clone());
+        if !restore_is_outside_default_location {
+            for source in &initial_sources {
+                instance.discover(source.clone());
+            }
         }
         instance.window.present();
         focus_initial_navigation(instance.window.upcast_ref(), &instance.notebook_tree.view);
@@ -142,7 +153,9 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
         viewer.cancel_foreground_operation_for_shutdown(Duration::from_secs(5));
         let workspace_result = viewer.flush_workspace();
         let settings_result = viewer.flush_settings();
-        let _ignored = viewer.commands.send(Command::Shutdown);
+        viewer.cancel_index_jobs();
+        let _ignored = viewer.source_commands.send(SourceCommand::Shutdown);
+        let _ignored = viewer.index_commands.send(IndexCommand::Shutdown);
         workspace_result?;
         settings_result?;
     }
@@ -418,6 +431,82 @@ struct State {
     history: NavigationHistory,
 }
 
+struct PendingIndexJob {
+    generation: u64,
+    cancel: Arc<AtomicBool>,
+}
+
+struct IndexActivity {
+    next_generation: u64,
+    jobs: BTreeMap<SourceId, PendingIndexJob>,
+    reused: usize,
+    rebuilt: usize,
+    failed: usize,
+}
+
+impl Default for IndexActivity {
+    fn default() -> Self {
+        Self {
+            next_generation: 1,
+            jobs: BTreeMap::new(),
+            reused: 0,
+            rebuilt: 0,
+            failed: 0,
+        }
+    }
+}
+
+impl IndexActivity {
+    fn begin(&mut self, source_id: SourceId) -> (u64, Arc<AtomicBool>) {
+        let generation = self.next_generation;
+        self.next_generation = generation.wrapping_add(1).max(1);
+        let cancel = Arc::new(AtomicBool::new(false));
+        if let Some(previous) = self.jobs.insert(
+            source_id,
+            PendingIndexJob {
+                generation,
+                cancel: Arc::clone(&cancel),
+            },
+        ) {
+            previous.cancel.store(true, Ordering::Release);
+        }
+        (generation, cancel)
+    }
+
+    fn take_current(&mut self, source_id: &SourceId, generation: u64) -> bool {
+        let current = self
+            .jobs
+            .get(source_id)
+            .is_some_and(|job| job.generation == generation);
+        if current {
+            self.jobs.remove(source_id);
+        }
+        current
+    }
+
+    fn cancel_source(&mut self, source_id: &SourceId) {
+        if let Some(job) = self.jobs.remove(source_id) {
+            job.cancel.store(true, Ordering::Release);
+        }
+    }
+
+    fn cancel_all(&mut self) {
+        for (_, job) in std::mem::take(&mut self.jobs) {
+            job.cancel.store(true, Ordering::Release);
+        }
+    }
+
+    fn status(&self) -> String {
+        format!(
+            "Search index: {} reused, {} rebuilt, {} failed, {} pending",
+            self.reused,
+            self.rebuilt,
+            self.failed,
+            self.jobs.len()
+        )
+    }
+}
+
 #[derive(Clone)]
 struct WorkspaceRestore {
     page: Option<PersistedPageLocation>,
@@ -482,7 +571,9 @@ struct Viewer {
     settings_path: PathBuf,
     settings: RefCell<AppSettings>,
     style_provider: gtk::CssProvider,
-    commands: mpsc::Sender<Command>,
+    source_commands: mpsc::Sender<SourceCommand>,
+    index_commands: mpsc::Sender<IndexCommand>,
+    index_activity: RefCell<IndexActivity>,
     events: mpsc::Sender<Event>,
     receiver: RefCell<mpsc::Receiver<Event>>,
     search_timer: RefCell<Option<glib::SourceId>>,
@@ -867,7 +958,8 @@ impl Viewer {
             .build();
 
         let (event_sender, event_receiver) = mpsc::channel();
-        let commands = worker::start_index_worker(index_path.clone(), event_sender.clone());
+        let source_commands = worker::start_source_worker(event_sender.clone());
+        let index_commands = worker::start_index_worker(index_path.clone(), event_sender.clone());
         let viewer = Rc::new(Self {
             window,
             notebook_tree,
@@ -923,7 +1015,9 @@ impl Viewer {
             settings_path,
             settings: RefCell::new(settings),
             style_provider,
-            commands,
+            source_commands,
+            index_commands,
+            index_activity: RefCell::default(),
             events: event_sender,
             receiver: RefCell::new(event_receiver),
             search_timer: RefCell::default(),
@@ -1705,23 +1799,25 @@ impl Viewer {
             Event::LibraryDiscovered { location, result } => {
                 self.handle_library_discovered(&location, result);
             }
-            Event::Loaded { path, result } => match result {
-                Ok(loaded) => self.add_source(path, loaded),
+            Event::Loaded {
+                path,
+                index_profile,
+                result,
+            } => match result {
+                Ok(loaded) => {
+                    self.add_source(path, Arc::clone(&loaded));
+                    self.queue_index(loaded, index_profile);
+                }
                 Err(error) => {
                     self.finish_restore_load(&path);
                     self.show_error("Could not read notebook", &error);
                 }
             },
-            Event::Indexed { source_id, result } => {
-                self.spinner.stop();
-                match result {
-                    Ok(()) => self.status.set_label("Search index is up to date"),
-                    Err(error) => self.show_error(
-                        "Notebook opened, but indexing failed",
-                        &format!("{source_id}: {error}"),
-                    ),
-                }
-            }
+            Event::Indexed {
+                source_id,
+                generation,
+                result,
+            } => self.finish_index(&source_id, generation, result),
             Event::Search { generation, result } => {
                 if generation != self.state.borrow().search_generation {
                     return;
@@ -1780,7 +1876,11 @@ impl Viewer {
         result: std::result::Result<Vec<PathBuf>, String>,
     ) {
         match result {
-            Ok(paths) => {
+            Ok(mut paths) => {
+                prioritize_discovered_sources(
+                    &mut paths,
+                    self.state.borrow().restore_target.as_ref(),
+                );
                 self.finish_restore_discovery(requested, &paths);
                 for path in paths {
                     self.load_source(path);
@@ -1808,7 +1908,11 @@ impl Viewer {
                     location.display()
                 ));
             }
-            Ok(paths) => {
+            Ok(mut paths) => {
+                prioritize_discovered_sources(
+                    &mut paths,
+                    self.state.borrow().restore_target.as_ref(),
+                );
                 self.finish_restore_discovery(location, &paths);
                 let count = paths.len();
                 for path in paths {
@@ -1937,12 +2041,18 @@ impl Viewer {
 
     fn discover(&self, path: PathBuf) {
         self.set_busy(&format!("Discovering {}", path.display()));
-        let _ignored = self.commands.send(Command::Discover(path));
+        let _ignored = self.source_commands.send(SourceCommand::Discover(path));
     }
 
     fn load_source(&self, path: PathBuf) {
-        let options = load_options(&self.settings.borrow());
-        let _ignored = self.commands.send(Command::Load { path, options });
+        let settings = self.settings.borrow();
+        let options = load_options(&settings);
+        let index_profile = index_profile(&settings);
+        let _ignored = self.source_commands.send(SourceCommand::Load {
+            path,
+            options,
+            index_profile,
+        });
     }
 
     fn open_notebooks_location(&self) {
@@ -1958,7 +2068,9 @@ impl Viewer {
             "Scanning default notebooks location {}",
             location.display()
         ));
-        let _ignored = self.commands.send(Command::DiscoverLibrary(location));
+        let _ignored = self
+            .source_commands
+            .send(SourceCommand::DiscoverLibrary(location));
     }
 
     fn add_source(self: &Rc<Self>, path: PathBuf, loaded: Arc<LoadedNotebook>) {
@@ -2049,8 +2161,75 @@ impl Viewer {
             });
         }
         self.schedule_workspace_save();
-        self.status
-            .set_label("Notebook opened; building search index");
+        self.status.set_label("Notebook opened");
+    }
+
+    fn queue_index(&self, loaded: Arc<LoadedNotebook>, profile: IndexProfile) {
+        let source_id = loaded.notebook.source_id.clone();
+        let (generation, cancel) = self.index_activity.borrow_mut().begin(source_id.clone());
+        if self
+            .index_commands
+            .send(IndexCommand::Ensure {
+                loaded,
+                profile,
+                generation,
+                cancel,
+            })
+            .is_err()
+        {
+            let mut activity = self.index_activity.borrow_mut();
+            if activity.take_current(&source_id, generation) {
+                activity.failed += 1;
+            }
+            self.show_error(
+                "Notebook opened, but indexing failed",
+                "The search-index worker is not available.",
+            );
+            return;
+        }
+        self.refresh_index_status();
+    }
+
+    fn finish_index(
+        &self,
+        source_id: &SourceId,
+        generation: u64,
+        result: std::result::Result<IndexUpdate, String>,
+    ) {
+        if !self
+            .index_activity
+            .borrow_mut()
+            .take_current(source_id, generation)
+        {
+            return;
+        }
+        match result {
+            Ok(IndexUpdate::Reused) => self.index_activity.borrow_mut().reused += 1,
+            Ok(IndexUpdate::Rebuilt) => self.index_activity.borrow_mut().rebuilt += 1,
+            Err(error) => {
+                self.index_activity.borrow_mut().failed += 1;
+                self.show_error(
+                    "Notebook opened, but indexing failed",
+                    &format!("{source_id}: {error}"),
+                );
+                return;
+            }
+        }
+        self.refresh_index_status();
+    }
+
+    fn refresh_index_status(&self) {
+        let activity = self.index_activity.borrow();
+        self.status.set_label(&activity.status());
+    }
+
+    fn cancel_index_source(&self, source_id: &SourceId) {
+        self.index_activity.borrow_mut().cancel_source(source_id);
+        self.refresh_index_status();
+    }
+
+    fn cancel_index_jobs(&self) {
+        self.index_activity.borrow_mut().cancel_all();
     }
 
     fn finish_restore_discovery(self: &Rc<Self>, requested: &std::path::Path, paths: &[PathBuf]) {
@@ -2854,9 +3033,10 @@ impl Viewer {
             (position, removed, history_target)
         };
         let removed_source_id = removed.1.loaded.notebook.source_id.clone();
+        self.cancel_index_source(&removed_source_id);
         let _ignored = self
-            .commands
-            .send(Command::Remove(removed_source_id.clone()));
+            .index_commands
+            .send(IndexCommand::Remove(removed_source_id.clone()));
         self.synchronize_selections(|| {
             self.notebook_tree.remove(&removed_source_id);
             self.notebook_tree.selection.set_selected(NO_SELECTION);
@@ -4488,6 +4668,47 @@ fn load_options(settings: &AppSettings) -> LoadOptions {
     }
 }
 
+fn index_profile(settings: &AppSettings) -> IndexProfile {
+    IndexProfile::new(format!(
+        "detect-plain-text-links={}",
+        settings.detect_plain_text_links
+    ))
+}
+
+fn prioritize_discovered_sources(
+    sources: &mut Vec<PathBuf>,
+    target: Option<&PersistedPageLocation>,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    move_matching_source_first(sources, |source| {
+        same_source_path(source, &target.source_path)
+    });
+}
+
+fn prioritize_source_roots(sources: &mut Vec<PathBuf>, target: Option<&PersistedPageLocation>) {
+    let Some(target) = target else {
+        return;
+    };
+    move_matching_source_first(sources, |source| {
+        workspace::source_is_in_location(&target.source_path, source)
+    });
+}
+
+fn move_matching_source_first(
+    sources: &mut Vec<PathBuf>,
+    predicate: impl Fn(&std::path::Path) -> bool,
+) {
+    let Some(position) = sources.iter().position(|source| predicate(source)) else {
+        return;
+    };
+    if position != 0 {
+        let source = sources.remove(position);
+        sources.insert(0, source);
+    }
+}
+
 fn install_resources(theme: ThemePreference) -> gtk::CssProvider {
     let display = gdk_display();
     gtk::IconTheme::for_display(&display).add_resource_path("/io/github/emsi/OneNoteViewer/icons");
@@ -4542,9 +4763,68 @@ mod tests {
     fn viewer_link_detection_preference_controls_loader_enrichment() {
         let mut settings = AppSettings::default();
         assert!(load_options(&settings).detect_plain_text_links);
+        let enabled_profile = index_profile(&settings);
 
         settings.detect_plain_text_links = false;
         assert!(!load_options(&settings).detect_plain_text_links);
+        assert_ne!(index_profile(&settings), enabled_profile);
+    }
+
+    #[test]
+    fn startup_prioritizes_the_last_open_source_without_reordering_others() {
+        let target = persisted_page("wanted", "/notes/Wanted/Open Notebook.onetoc2");
+        let mut discovered = vec![
+            PathBuf::from("/notes/First/Open Notebook.onetoc2"),
+            PathBuf::from("/notes/Wanted/Open Notebook.onetoc2"),
+            PathBuf::from("/notes/Last/Open Notebook.onetoc2"),
+        ];
+        prioritize_discovered_sources(&mut discovered, Some(&target));
+        assert_eq!(
+            discovered,
+            vec![
+                PathBuf::from("/notes/Wanted/Open Notebook.onetoc2"),
+                PathBuf::from("/notes/First/Open Notebook.onetoc2"),
+                PathBuf::from("/notes/Last/Open Notebook.onetoc2"),
+            ]
+        );
+
+        let mut roots = vec![PathBuf::from("/archive"), PathBuf::from("/notes")];
+        prioritize_source_roots(&mut roots, Some(&target));
+        assert_eq!(
+            roots,
+            vec![PathBuf::from("/notes"), PathBuf::from("/archive")]
+        );
+    }
+
+    #[test]
+    fn index_activity_rejects_superseded_and_removed_generations() {
+        let source = SourceId::new("source");
+        let mut activity = IndexActivity::default();
+        let (first_generation, first_cancel) = activity.begin(source.clone());
+        let (second_generation, second_cancel) = activity.begin(source.clone());
+
+        assert!(first_cancel.load(Ordering::Acquire));
+        assert!(!second_cancel.load(Ordering::Acquire));
+        assert!(!activity.take_current(&source, first_generation));
+        assert!(activity.take_current(&source, second_generation));
+
+        let (_, removed_cancel) = activity.begin(source.clone());
+        activity.cancel_source(&source);
+        assert!(removed_cancel.load(Ordering::Acquire));
+        assert!(activity.jobs.is_empty());
+    }
+
+    #[test]
+    fn index_activity_cancels_every_pending_job_at_shutdown() {
+        let mut activity = IndexActivity::default();
+        let (_, first) = activity.begin(SourceId::new("first"));
+        let (_, second) = activity.begin(SourceId::new("second"));
+
+        activity.cancel_all();
+
+        assert!(first.load(Ordering::Acquire));
+        assert!(second.load(Ordering::Acquire));
+        assert!(activity.jobs.is_empty());
     }
 
     #[test]
