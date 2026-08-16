@@ -86,8 +86,8 @@ fn normalize_source_states(
     for source in &mut sources {
         source.normalize();
     }
-    sources.sort_by(|left, right| left.source_id.cmp(&right.source_id));
-    sources.dedup_by(|left, right| left.source_id == right.source_id);
+    let mut seen = BTreeSet::new();
+    sources.retain(|source| seen.insert(source.source_id.clone()));
     sources
 }
 
@@ -405,7 +405,7 @@ mod tests {
     }
 
     #[test]
-    fn ui_state_normalizes_duplicate_and_unordered_identifiers() {
+    fn ui_state_preserves_source_order_while_normalizing_identifiers() {
         let ui = WorkspaceUiState::new(
             PersistedPaneState::default(),
             vec![
@@ -424,12 +424,13 @@ mod tests {
             ],
         );
 
-        assert_eq!(ui.sources[0].source_id, SourceId::new("a"));
-        assert_eq!(ui.sources[0].expanded_groups, [SectionId::new("same")]);
+        assert_eq!(ui.sources[0].source_id, SourceId::new("b"));
         assert_eq!(
-            ui.sources[1].expanded_groups,
+            ui.sources[0].expanded_groups,
             [SectionId::new("one"), SectionId::new("two")]
         );
+        assert_eq!(ui.sources[1].source_id, SourceId::new("a"));
+        assert_eq!(ui.sources[1].expanded_groups, [SectionId::new("same")]);
     }
 
     #[test]

@@ -75,6 +75,11 @@ remembered source replaces it when loaded. Any deliberate notebook, section,
 page, or search-result selection cancels that pending restoration so later
 worker results cannot override the user's choice.
 
+Notebook presentation order is persisted independently from startup work
+priority. Restoring the last active notebook may load that source first, but
+must not move it in the navigation tree; later completions fill their reserved
+positions without changing the order visible at the previous shutdown.
+
 Persisted identifiers are hints and must be validated against the loaded
 notebook. If a section identifier changes but the stable page identifier still
 exists, restoration follows that page to its current section. A missing page

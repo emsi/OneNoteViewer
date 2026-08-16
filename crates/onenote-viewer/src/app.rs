@@ -420,6 +420,7 @@ impl ForegroundOperation {
 #[derive(Default)]
 struct State {
     sources: Vec<Source>,
+    source_order: SourceDisplayOrder,
     pages: Vec<PageRow>,
     search_hits: Vec<SearchHit>,
     active: Option<ActiveLocation>,
@@ -429,6 +430,96 @@ struct State {
     restore_target: Option<PersistedPageLocation>,
     pending_expansions: BTreeMap<SourceId, PersistedSourceTreeState>,
     history: NavigationHistory,
+}
+
+#[derive(Default)]
+struct SourceDisplayOrder {
+    paths: Vec<PathBuf>,
+}
+
+impl SourceDisplayOrder {
+    fn new(paths: impl IntoIterator<Item = PathBuf>) -> Self {
+        let mut order = Self::default();
+        order.register(paths);
+        order
+    }
+
+    fn register(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        for path in paths {
+            if !self
+                .paths
+                .iter()
+                .any(|known| same_source_path(known, &path))
+            {
+                self.paths.push(path);
+            }
+        }
+    }
+
+    fn remove(&mut self, path: &std::path::Path) {
+        self.paths.retain(|known| !same_source_path(known, path));
+    }
+
+    fn rank(&self, path: &std::path::Path) -> Option<usize> {
+        self.paths
+            .iter()
+            .position(|known| same_source_path(known, path))
+    }
+
+    fn insertion_index<'a>(
+        &self,
+        path: &std::path::Path,
+        loaded: impl IntoIterator<Item = &'a std::path::Path>,
+    ) -> usize {
+        let rank = self.rank(path).unwrap_or(usize::MAX);
+        let mut position = 0;
+        for existing in loaded {
+            if self.rank(existing).unwrap_or(usize::MAX) > rank {
+                break;
+            }
+            position += 1;
+        }
+        position
+    }
+}
+
+impl State {
+    fn upsert_source(
+        &mut self,
+        path: PathBuf,
+        loaded: Arc<LoadedNotebook>,
+        restored_location: Option<SectionLocation>,
+    ) -> usize {
+        let source_id = &loaded.notebook.source_id;
+        if let Some(position) = self
+            .sources
+            .iter()
+            .position(|source| source.loaded.notebook.source_id == *source_id)
+        {
+            let existing = &mut self.sources[position];
+            existing.path = path;
+            existing.loaded = loaded;
+            if restored_location.is_some() {
+                existing.last_location = restored_location;
+            }
+            return position;
+        }
+
+        self.source_order.register(std::iter::once(path.clone()));
+        let position = self.source_order.insertion_index(
+            &path,
+            self.sources.iter().map(|source| source.path.as_path()),
+        );
+        self.sources.insert(
+            position,
+            Source {
+                path,
+                loaded,
+                last_location: restored_location,
+            },
+        );
+        position
+    }
 }
 
 struct PendingIndexJob {
@@ -598,6 +689,13 @@ impl Viewer {
         style_provider: gtk::CssProvider,
     ) -> Rc<Self> {
         let restored_panes = restore.ui.as_ref().map(|ui| ui.panes).unwrap_or_default();
+        let source_order = restore
+            .ui
+            .as_ref()
+            .map(|ui| {
+                SourceDisplayOrder::new(ui.sources.iter().map(|source| source.source_path.clone()))
+            })
+            .unwrap_or_default();
         let pending_expansions = restore
             .ui
             .map(|ui| {
@@ -1008,6 +1106,7 @@ impl Viewer {
             state: RefCell::new(State {
                 restore_target: restore.page,
                 pending_expansions,
+                source_order,
                 ..State::default()
             }),
             workspace_path,
@@ -1877,6 +1976,7 @@ impl Viewer {
     ) {
         match result {
             Ok(mut paths) => {
+                self.register_source_order(&paths);
                 prioritize_discovered_sources(
                     &mut paths,
                     self.state.borrow().restore_target.as_ref(),
@@ -1909,6 +2009,7 @@ impl Viewer {
                 ));
             }
             Ok(mut paths) => {
+                self.register_source_order(&paths);
                 prioritize_discovered_sources(
                     &mut paths,
                     self.state.borrow().restore_target.as_ref(),
@@ -2055,6 +2156,13 @@ impl Viewer {
         });
     }
 
+    fn register_source_order(&self, paths: &[PathBuf]) {
+        self.state
+            .borrow_mut()
+            .source_order
+            .register(paths.iter().cloned());
+    }
+
     fn open_notebooks_location(&self) {
         let location = self.settings.borrow().notebooks_location.clone();
         if let Err(error) = settings::ensure_notebooks_location(&location) {
@@ -2083,23 +2191,7 @@ impl Viewer {
         let restored_location =
             restore_location_for_source(state.restore_target.as_ref(), &loaded.notebook);
         let restoring = restored_location.is_some();
-        if let Some(existing) = state
-            .sources
-            .iter_mut()
-            .find(|source| source.loaded.notebook.source_id == source_id)
-        {
-            existing.path = path;
-            existing.loaded = loaded;
-            if restored_location.is_some() {
-                existing.last_location.clone_from(&restored_location);
-            }
-        } else {
-            state.sources.push(Source {
-                path,
-                loaded,
-                last_location: restored_location,
-            });
-        }
+        let display_position = state.upsert_source(path, loaded, restored_location);
         let notebook = state
             .sources
             .iter()
@@ -2118,7 +2210,13 @@ impl Viewer {
         }
         drop(state);
 
-        self.synchronize_selections(|| self.notebook_tree.upsert(&notebook, restored_tree.clone()));
+        self.synchronize_selections(|| {
+            self.notebook_tree.upsert_at(
+                &notebook,
+                restored_tree.clone(),
+                u32::try_from(display_position).unwrap_or(u32::MAX),
+            );
+        });
         if restoring
             || active_source
                 .as_ref()
@@ -3023,6 +3121,7 @@ impl Viewer {
             state.pages.clear();
             state.restore_target = None;
             let removed = state.sources.remove(position);
+            state.source_order.remove(&removed.path);
             {
                 let State {
                     sources, history, ..
@@ -3107,6 +3206,27 @@ impl Viewer {
         }) {
             sources.push(target.source_path.clone());
         }
+        let mut source_states = state
+            .sources
+            .iter()
+            .filter_map(|source| {
+                self.notebook_tree
+                    .expansion_state(&source.loaded.notebook.source_id)
+                    .map(|expansion| PersistedSourceTreeState {
+                        source_path: source.path.clone(),
+                        source_id: source.loaded.notebook.source_id.clone(),
+                        notebook_expanded: expansion.notebook_expanded,
+                        expanded_groups: expansion.expanded_groups.into_iter().collect(),
+                    })
+            })
+            .chain(state.pending_expansions.values().cloned())
+            .collect::<Vec<_>>();
+        source_states.sort_by_key(|source| {
+            state
+                .source_order
+                .rank(&source.source_path)
+                .unwrap_or(usize::MAX)
+        });
         WorkspaceConfig {
             sources,
             navigation: WorkspaceNavigation { last_page },
@@ -3115,21 +3235,7 @@ impl Viewer {
                     notebooks_collapsed: self.notebooks_collapsed.get(),
                     pages_collapsed: self.pages_collapsed.get(),
                 },
-                state
-                    .sources
-                    .iter()
-                    .filter_map(|source| {
-                        self.notebook_tree
-                            .expansion_state(&source.loaded.notebook.source_id)
-                            .map(|expansion| PersistedSourceTreeState {
-                                source_path: source.path.clone(),
-                                source_id: source.loaded.notebook.source_id.clone(),
-                                notebook_expanded: expansion.notebook_expanded,
-                                expanded_groups: expansion.expanded_groups.into_iter().collect(),
-                            })
-                    })
-                    .chain(state.pending_expansions.values().cloned())
-                    .collect(),
+                source_states,
             )),
         }
     }
@@ -4771,13 +4877,15 @@ mod tests {
     }
 
     #[test]
-    fn startup_prioritizes_the_last_open_source_without_reordering_others() {
+    fn startup_priority_does_not_change_notebook_presentation_order() {
         let target = persisted_page("wanted", "/notes/Wanted/Open Notebook.onetoc2");
-        let mut discovered = vec![
+        let presentation_order = vec![
             PathBuf::from("/notes/First/Open Notebook.onetoc2"),
             PathBuf::from("/notes/Wanted/Open Notebook.onetoc2"),
             PathBuf::from("/notes/Last/Open Notebook.onetoc2"),
         ];
+        let order = SourceDisplayOrder::new(presentation_order.clone());
+        let mut discovered = presentation_order.clone();
         prioritize_discovered_sources(&mut discovered, Some(&target));
         assert_eq!(
             discovered,
@@ -4787,6 +4895,12 @@ mod tests {
                 PathBuf::from("/notes/Last/Open Notebook.onetoc2"),
             ]
         );
+        let mut visible = Vec::new();
+        for source in discovered {
+            let position = order.insertion_index(&source, visible.iter().map(PathBuf::as_path));
+            visible.insert(position, source);
+        }
+        assert_eq!(visible, presentation_order);
 
         let mut roots = vec![PathBuf::from("/archive"), PathBuf::from("/notes")];
         prioritize_source_roots(&mut roots, Some(&target));
