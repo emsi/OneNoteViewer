@@ -76,16 +76,23 @@ page, or search-result selection cancels that pending restoration so later
 worker results cannot override the user's choice.
 
 Persisted identifiers are hints and must be validated against the loaded
-notebook. A missing page falls back to the first page in its section, a missing
-section falls back to the first available section and page, and an unavailable
-source leaves the normal deterministic fallback active. Closing a notebook
-removes it from both the workspace and restoration state; a navigation-history
-entry must never reopen a source the user closed.
+notebook. If a section identifier changes but the stable page identifier still
+exists, restoration follows that page to its current section. A missing page
+falls back to the first page in its section, a missing section and page fall
+back to the first available section and page, and an unavailable source leaves
+the normal deterministic fallback active. Closing a notebook removes it from
+both the workspace and restoration state; a navigation-history entry must
+never reopen a source the user closed.
 
 Workspace navigation writes are debounced and atomically published, with a
-final flush during clean shutdown. The workspace currently persists only the
-last page, not page scroll position, search state, tree expansion, or renderer
-internals.
+final flush during clean shutdown. A versioned optional UI record also stores
+the collapsed state of the Notebooks and Pages panes and each source's expanded
+notebook and section-group identities. Expansion is keyed by source and native
+group identity rather than labels or row positions, so renaming, reordering,
+and duplicate labels do not redirect it. Missing groups and unsupported or
+malformed optional UI records are discarded without losing open sources or
+last-page restoration. Page scroll position, search state, and renderer
+internals are not persisted.
 
 The freeform notebook page is document content rather than application chrome;
 its explicit colors continue to come from OneNote page data. Text stored with

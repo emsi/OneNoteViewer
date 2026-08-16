@@ -2,6 +2,9 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use onenote_core::{Color, Notebook, NotebookEntry, SectionId, SourceId};
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 
 const DEFAULT_NOTEBOOK_COLOR: Color = Color {
     red: 91,
@@ -23,11 +26,51 @@ pub(crate) enum NavigationTarget {
     },
     Group {
         source_id: SourceId,
+        group_id: SectionId,
     },
     Section {
         source_id: SourceId,
         section_id: SectionId,
     },
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct SourceTreeExpansion {
+    pub(crate) notebook_expanded: bool,
+    pub(crate) expanded_groups: BTreeSet<SectionId>,
+}
+
+#[derive(Default)]
+struct ExpansionRegistry {
+    states: RefCell<BTreeMap<SourceId, SourceTreeExpansion>>,
+    suppress_notifications: Cell<bool>,
+    changed: RefCell<Option<Box<dyn Fn()>>>,
+}
+
+impl ExpansionRegistry {
+    fn record(&self, target: &NavigationTarget, expanded: bool) {
+        if self.suppress_notifications.get() {
+            return;
+        }
+        let source_id = target.source_id().clone();
+        let mut states = self.states.borrow_mut();
+        let state = states.entry(source_id).or_default();
+        match target {
+            NavigationTarget::Notebook { .. } => state.notebook_expanded = expanded,
+            NavigationTarget::Group { group_id, .. } => {
+                if expanded {
+                    state.expanded_groups.insert(group_id.clone());
+                } else {
+                    state.expanded_groups.remove(group_id);
+                }
+            }
+            NavigationTarget::Section { .. } => return,
+        }
+        drop(states);
+        if let Some(changed) = self.changed.borrow().as_ref() {
+            changed();
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -43,6 +86,7 @@ pub(crate) struct NotebookTree {
     model: gtk::TreeListModel,
     pub(crate) selection: gtk::SingleSelection,
     pub(crate) view: gtk::ListView,
+    expansion: Rc<ExpansionRegistry>,
 }
 
 impl NotebookTree {
@@ -57,26 +101,45 @@ impl NotebookTree {
             .single_click_activate(false)
             .css_classes(["notebook-tree"])
             .build();
-        let factory = tree_factory();
+        let expansion = Rc::new(ExpansionRegistry::default());
+        let factory = tree_factory(model.clone(), Rc::clone(&expansion));
         view.set_factory(Some(&factory));
         Self {
             roots,
             model,
             selection,
             view,
+            expansion,
         }
     }
 
-    pub(crate) fn upsert(&self, notebook: &Notebook) {
+    pub(crate) fn connect_expansion_changed(&self, changed: impl Fn() + 'static) {
+        *self.expansion.changed.borrow_mut() = Some(Box::new(changed));
+    }
+
+    pub(crate) fn upsert(&self, notebook: &Notebook, restored: Option<SourceTreeExpansion>) {
         let source_id = notebook.source_id.clone();
         let node = notebook_node(notebook);
+        let mut desired = restored
+            .or_else(|| self.expansion.states.borrow().get(&source_id).cloned())
+            .unwrap_or(SourceTreeExpansion {
+                notebook_expanded: true,
+                expanded_groups: BTreeSet::new(),
+            });
+        desired
+            .expanded_groups
+            .retain(|group_id| node.contains_group(group_id));
+        self.expansion
+            .states
+            .borrow_mut()
+            .insert(source_id.clone(), desired.clone());
         let item = glib::BoxedAnyObject::new(node);
         if let Some(position) = self.root_position(&source_id) {
             self.roots.splice(position, 1, &[item]);
         } else {
             self.roots.append(&item);
         }
-        self.expand_notebook(&source_id);
+        self.apply_expansion(&source_id, &desired);
     }
 
     pub(crate) fn remove(&self, source_id: &SourceId) -> bool {
@@ -84,14 +147,31 @@ impl NotebookTree {
             return false;
         };
         self.roots.remove(position);
+        self.expansion.states.borrow_mut().remove(source_id);
         true
     }
 
+    pub(crate) fn expansion_state(&self, source_id: &SourceId) -> Option<SourceTreeExpansion> {
+        self.expansion.states.borrow().get(source_id).cloned()
+    }
+
+    pub(crate) fn restore_expansion(&self, source_id: &SourceId, mut state: SourceTreeExpansion) {
+        if let Some(node) = self.root_node(source_id) {
+            state
+                .expanded_groups
+                .retain(|group_id| node.contains_group(group_id));
+        } else {
+            return;
+        }
+        self.expansion
+            .states
+            .borrow_mut()
+            .insert(source_id.clone(), state.clone());
+        self.apply_expansion(source_id, &state);
+    }
+
     pub(crate) fn target_at(&self, position: u32) -> Option<NavigationTarget> {
-        let row = self.model.row(position)?;
-        let item = row.item()?.downcast::<glib::BoxedAnyObject>().ok()?;
-        let target = item.borrow::<NavigationNode>().target.clone();
-        Some(target)
+        model_target_at(&self.model, position)
     }
 
     pub(crate) fn select_section(
@@ -121,8 +201,26 @@ impl NotebookTree {
                             .is_some_and(|row| row.is_expandable() && !row.is_expanded())
                 })
             })?;
-            self.model.row(expandable)?.set_expanded(true);
+            self.set_row_expanded(expandable, true)?;
         }
+    }
+
+    pub(crate) fn select_visible_section(
+        &self,
+        source_id: &SourceId,
+        section_id: &SectionId,
+    ) -> Option<u32> {
+        let position = (0..self.model.n_items()).find(|position| {
+            matches!(
+                self.target_at(*position),
+                Some(NavigationTarget::Section {
+                    source_id: ref row_source,
+                    section_id: ref row_section,
+                }) if row_source == source_id && row_section == section_id
+            )
+        })?;
+        self.selection.set_selected(position);
+        Some(position)
     }
 
     pub(crate) fn select_notebook(&self, source_id: &SourceId) -> Option<u32> {
@@ -162,25 +260,102 @@ impl NotebookTree {
         })
     }
 
-    fn expand_notebook(&self, source_id: &SourceId) {
-        if let Some(position) = (0..self.model.n_items()).find(|position| {
-            matches!(
-                self.target_at(*position),
-                Some(NavigationTarget::Notebook { source_id: ref row_source })
-                    if row_source == source_id
-            )
-        }) {
-            if let Some(row) = self.model.row(position) {
-                row.set_expanded(true);
-            }
-        }
-    }
-
     fn row_node(&self, position: u32) -> Option<NavigationNode> {
         let row = self.model.row(position)?;
         let item = row.item()?.downcast::<glib::BoxedAnyObject>().ok()?;
         let node = item.borrow::<NavigationNode>().clone();
         Some(node)
+    }
+
+    fn root_node(&self, source_id: &SourceId) -> Option<NavigationNode> {
+        let position = self.root_position(source_id)?;
+        let item = self
+            .roots
+            .item(position)?
+            .downcast::<glib::BoxedAnyObject>()
+            .ok()?;
+        let node = item.borrow::<NavigationNode>().clone();
+        Some(node)
+    }
+
+    fn set_row_expanded(&self, position: u32, expanded: bool) -> Option<()> {
+        let target = self.target_at(position)?;
+        let row = self.model.row(position)?;
+        let previous = self.expansion.suppress_notifications.replace(true);
+        row.set_expanded(expanded);
+        self.expansion.suppress_notifications.set(previous);
+        self.expansion.record(&target, expanded);
+        if expanded {
+            if let Some(state) = self
+                .expansion
+                .states
+                .borrow()
+                .get(target.source_id())
+                .cloned()
+            {
+                apply_expansion_to_model(&self.model, &self.expansion, target.source_id(), &state);
+            }
+        }
+        Some(())
+    }
+
+    fn apply_expansion(&self, source_id: &SourceId, state: &SourceTreeExpansion) {
+        apply_expansion_to_model(&self.model, &self.expansion, source_id, state);
+    }
+}
+
+fn model_target_at(model: &gtk::TreeListModel, position: u32) -> Option<NavigationTarget> {
+    let row = model.row(position)?;
+    let item = row.item()?.downcast::<glib::BoxedAnyObject>().ok()?;
+    let target = item.borrow::<NavigationNode>().target.clone();
+    Some(target)
+}
+
+fn apply_expansion_to_model(
+    model: &gtk::TreeListModel,
+    expansion: &ExpansionRegistry,
+    source_id: &SourceId,
+    state: &SourceTreeExpansion,
+) {
+    let previous = expansion.suppress_notifications.replace(true);
+    if let Some(position) = (0..model.n_items()).find(|position| {
+        matches!(
+            model_target_at(model, *position),
+            Some(NavigationTarget::Notebook { source_id: ref row_source })
+                if row_source == source_id
+        )
+    }) {
+        if let Some(row) = model.row(position) {
+            row.set_expanded(state.notebook_expanded);
+        }
+    }
+    if state.notebook_expanded {
+        let mut position = 0;
+        while position < model.n_items() {
+            if let Some(NavigationTarget::Group {
+                source_id: row_source,
+                group_id,
+            }) = model_target_at(model, position)
+            {
+                if row_source == *source_id {
+                    if let Some(row) = model.row(position) {
+                        row.set_expanded(state.expanded_groups.contains(&group_id));
+                    }
+                }
+            }
+            position += 1;
+        }
+    }
+    expansion.suppress_notifications.set(previous);
+}
+
+impl NavigationTarget {
+    fn source_id(&self) -> &SourceId {
+        match self {
+            Self::Notebook { source_id }
+            | Self::Group { source_id, .. }
+            | Self::Section { source_id, .. } => source_id,
+        }
     }
 }
 
@@ -196,6 +371,19 @@ impl NavigationNode {
             .children
             .iter()
             .any(|child| child.contains_section(source_id, section_id))
+    }
+
+    fn contains_group(&self, group_id: &SectionId) -> bool {
+        matches!(
+            self.target,
+            NavigationTarget::Group {
+                group_id: ref row_group,
+                ..
+            } if row_group == group_id
+        ) || self
+            .children
+            .iter()
+            .any(|child| child.contains_group(group_id))
     }
 }
 
@@ -227,6 +415,7 @@ fn entry_nodes(source_id: &SourceId, entries: &[NotebookEntry]) -> Vec<Navigatio
                 label: group.name.clone(),
                 target: NavigationTarget::Group {
                     source_id: source_id.clone(),
+                    group_id: group.id.clone(),
                 },
                 color: None,
                 children: entry_nodes(source_id, &group.entries),
@@ -251,10 +440,13 @@ fn tree_model(roots: gio::ListStore) -> gtk::TreeListModel {
     })
 }
 
-fn tree_factory() -> gtk::SignalListItemFactory {
+fn tree_factory(
+    model: gtk::TreeListModel,
+    expansion: Rc<ExpansionRegistry>,
+) -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
     factory.connect_setup(|_, item| setup_tree_item(item));
-    factory.connect_bind(|_, item| bind_tree_item(item));
+    factory.connect_bind(move |_, item| bind_tree_item(item, &model, &expansion));
     factory
 }
 
@@ -284,7 +476,11 @@ fn setup_tree_item(item: &glib::Object) {
     item.set_child(Some(&expander));
 }
 
-fn bind_tree_item(item: &glib::Object) {
+fn bind_tree_item(
+    item: &glib::Object,
+    model: &gtk::TreeListModel,
+    expansion: &Rc<ExpansionRegistry>,
+) {
     let item = item.downcast_ref::<gtk::ListItem>().expect("list item");
     let Some(row) = item.item().and_downcast::<gtk::TreeListRow>() else {
         return;
@@ -301,6 +497,24 @@ fn bind_tree_item(item: &glib::Object) {
         .and_downcast::<gtk::TreeExpander>()
         .expect("tree expander");
     expander.set_list_row(Some(&row));
+    if !matches!(node.target, NavigationTarget::Section { .. }) {
+        let target = node.target.clone();
+        let expansion = Rc::clone(expansion);
+        let model = model.clone();
+        row.connect_expanded_notify(move |row| {
+            if expansion.suppress_notifications.get() {
+                return;
+            }
+            let row_expanded = row.is_expanded();
+            expansion.record(&target, row_expanded);
+            if row_expanded {
+                let state = expansion.states.borrow().get(target.source_id()).cloned();
+                if let Some(state) = state {
+                    apply_expansion_to_model(&model, &expansion, target.source_id(), &state);
+                }
+            }
+        });
+    }
     let content = expander
         .child()
         .and_downcast::<gtk::Box>()
@@ -387,6 +601,7 @@ fn safe_text(value: &str) -> std::borrow::Cow<'_, str> {
 mod tests {
     use super::{
         entry_nodes, node_model, tree_model, NavigationNode, NavigationTarget, NotebookTree,
+        SourceTreeExpansion,
     };
     use gtk::prelude::*;
     use onenote_core::{
@@ -438,7 +653,10 @@ mod tests {
         };
         let group = NavigationNode {
             label: "Group".to_owned(),
-            target: NavigationTarget::Group { source_id },
+            target: NavigationTarget::Group {
+                source_id,
+                group_id: SectionId::new("group"),
+            },
             color: None,
             children: vec![child],
         };
@@ -462,11 +680,11 @@ mod tests {
         let tree = NotebookTree::new();
         let first = notebook("first", "first-section");
         let second = notebook("second", "second-section");
-        tree.upsert(&first);
+        tree.upsert(&first, None);
         tree.select_section(&first.source_id, &SectionId::new("first-section"));
         let selected = tree.selected_target();
 
-        tree.upsert(&second);
+        tree.upsert(&second, None);
 
         assert_eq!(tree.selected_target(), selected);
     }
@@ -485,7 +703,7 @@ mod tests {
             ],
             ..notebook("source", "unused")
         };
-        tree.upsert(&notebook);
+        tree.upsert(&notebook, None);
         let notifications = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         let notifications_for_signal = std::rc::Rc::clone(&notifications);
         tree.selection.connect_selected_notify(move |selection| {
@@ -510,6 +728,171 @@ mod tests {
                 if section_id == SectionId::new("second")
         ));
         assert!(!tree.view.is_single_click_activate());
+    }
+
+    #[test]
+    fn restored_groups_follow_identity_across_rename_reorder_and_duplicate_labels() {
+        crate::test_support::run_gtk_test(
+            restored_groups_follow_identity_across_rename_reorder_and_duplicate_labels_gtk,
+        );
+    }
+
+    fn restored_groups_follow_identity_across_rename_reorder_and_duplicate_labels_gtk() {
+        let tree = NotebookTree::new();
+        let source_id = SourceId::new("source");
+        let original =
+            notebook_with_groups("source", &[("first", "Duplicate"), ("second", "Duplicate")]);
+        tree.upsert(
+            &original,
+            Some(SourceTreeExpansion {
+                notebook_expanded: true,
+                expanded_groups: [SectionId::new("second")].into_iter().collect(),
+            }),
+        );
+
+        let reordered =
+            notebook_with_groups("source", &[("second", "Renamed"), ("first", "Duplicate")]);
+        tree.upsert(&reordered, None);
+
+        assert_eq!(
+            tree.expansion_state(&source_id),
+            Some(SourceTreeExpansion {
+                notebook_expanded: true,
+                expanded_groups: [SectionId::new("second")].into_iter().collect(),
+            })
+        );
+        assert!(group_is_expanded(&tree, &source_id, "second"));
+        assert!(!group_is_expanded(&tree, &source_id, "first"));
+    }
+
+    #[test]
+    fn removed_groups_are_pruned_without_losing_latent_collapsed_state() {
+        crate::test_support::run_gtk_test(
+            removed_groups_are_pruned_without_losing_latent_collapsed_state_gtk,
+        );
+    }
+
+    fn removed_groups_are_pruned_without_losing_latent_collapsed_state_gtk() {
+        let tree = NotebookTree::new();
+        let source_id = SourceId::new("source");
+        let notebook = notebook_with_groups("source", &[("kept", "Kept")]);
+        tree.upsert(
+            &notebook,
+            Some(SourceTreeExpansion {
+                notebook_expanded: false,
+                expanded_groups: [SectionId::new("kept"), SectionId::new("missing")]
+                    .into_iter()
+                    .collect(),
+            }),
+        );
+
+        assert_eq!(
+            tree.expansion_state(&source_id),
+            Some(SourceTreeExpansion {
+                notebook_expanded: false,
+                expanded_groups: [SectionId::new("kept")].into_iter().collect(),
+            })
+        );
+        assert_eq!(tree.model.n_items(), 1);
+
+        tree.set_row_expanded(0, true).expect("notebook row");
+
+        assert!(group_is_expanded(&tree, &source_id, "kept"));
+    }
+
+    #[test]
+    fn equal_group_ids_are_scoped_to_their_source() {
+        crate::test_support::run_gtk_test(equal_group_ids_are_scoped_to_their_source_gtk);
+    }
+
+    fn equal_group_ids_are_scoped_to_their_source_gtk() {
+        let tree = NotebookTree::new();
+        let expanded = notebook_with_groups("expanded", &[("shared", "Group")]);
+        let collapsed = notebook_with_groups("collapsed", &[("shared", "Group")]);
+        tree.upsert(
+            &expanded,
+            Some(SourceTreeExpansion {
+                notebook_expanded: true,
+                expanded_groups: [SectionId::new("shared")].into_iter().collect(),
+            }),
+        );
+        tree.upsert(
+            &collapsed,
+            Some(SourceTreeExpansion {
+                notebook_expanded: true,
+                expanded_groups: std::collections::BTreeSet::new(),
+            }),
+        );
+
+        assert!(group_is_expanded(
+            &tree,
+            &SourceId::new("expanded"),
+            "shared"
+        ));
+        assert!(!group_is_expanded(
+            &tree,
+            &SourceId::new("collapsed"),
+            "shared"
+        ));
+    }
+
+    #[test]
+    fn selecting_a_hidden_section_records_the_revealed_ancestry() {
+        crate::test_support::run_gtk_test(
+            selecting_a_hidden_section_records_the_revealed_ancestry_gtk,
+        );
+    }
+
+    fn selecting_a_hidden_section_records_the_revealed_ancestry_gtk() {
+        let tree = NotebookTree::new();
+        let notebook = notebook_with_groups("source", &[("group", "Group")]);
+        tree.upsert(&notebook, None);
+
+        assert!(tree
+            .select_section(&notebook.source_id, &SectionId::new("group-section"))
+            .is_some());
+        assert_eq!(
+            tree.expansion_state(&notebook.source_id),
+            Some(SourceTreeExpansion {
+                notebook_expanded: true,
+                expanded_groups: [SectionId::new("group")].into_iter().collect(),
+            })
+        );
+    }
+
+    fn group_is_expanded(tree: &NotebookTree, source_id: &SourceId, group_id: &str) -> bool {
+        (0..tree.model.n_items()).any(|position| {
+            matches!(
+                tree.target_at(position),
+                Some(NavigationTarget::Group {
+                    source_id: ref row_source,
+                    group_id: ref row_group,
+                }) if row_source == source_id && row_group == &SectionId::new(group_id)
+            ) && tree
+                .model
+                .row(position)
+                .is_some_and(|row| row.is_expanded())
+        })
+    }
+
+    fn notebook_with_groups(source_id: &str, groups: &[(&str, &str)]) -> Notebook {
+        Notebook {
+            source_id: SourceId::new(source_id),
+            fingerprint: SourceFingerprint::new("fingerprint"),
+            name: source_id.to_owned(),
+            color: None,
+            entries: groups
+                .iter()
+                .map(|(id, name)| {
+                    NotebookEntry::Group(SectionGroup {
+                        id: SectionId::new(*id),
+                        name: (*name).to_owned(),
+                        entries: vec![NotebookEntry::Section(section(&format!("{id}-section")))],
+                    })
+                })
+                .collect(),
+            diagnostics: Vec::new(),
+        }
     }
 
     fn notebook(source_id: &str, section_id: &str) -> Notebook {
