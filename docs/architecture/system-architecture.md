@@ -53,15 +53,19 @@ Index/query API     UI-neutral page scene
    7-Zip process extracts into an on-disk staging directory, the result is
    validated and atomically published, and the resulting directory returns to
    step 1. Package entries never become an in-memory notebook representation.
-3. Discovery, parsing, and indexing run sequentially on one viewer-owned
-   worker; scene construction and queries run in short independent jobs. GTK
+3. Discovery and parsing run sequentially on a viewer-owned source worker. A
+   separate serialized index worker validates or rebuilds each published
+   source generation, so index maintenance cannot delay the next notebook
+   load. Scene construction and queries run in short independent jobs. GTK
    objects remain on the main thread. Package extraction has phase reporting
    and process cancellation; bounded scheduling and cancellation for the
    remaining long-running operations are still required before release.
 4. The adapter converts parser objects to an immutable domain model and emits
    structured warnings for skipped or degraded content.
-5. The indexer updates a transactionally isolated index generation after the
-   parsed model becomes available to the UI.
+5. After the parsed model becomes available to the UI, the indexer reuses an
+   existing generation only when source identity, fingerprint, schema, and the
+   explicit index-projection profile match. Otherwise it publishes a
+   transactionally isolated replacement.
 6. A failed index replacement leaves its last good generation available. Full
    automatic/manual source refresh is not implemented yet.
 7. Activating an attachment returns its stable resource action to the viewer.
@@ -179,9 +183,9 @@ of application-global state, cancellable, and resource-bounded. See
 
 ## Concurrency and Memory
 
-- The viewer currently serializes discovery, parsing, and indexing on one
-  worker and runs scene/search jobs separately. It requires bounded scheduling
-  and operation cancellation before release.
+- The viewer serializes discovery and parsing on one source worker and index
+  mutations on a separate worker. Source-scoped generations and cancellation
+  reject superseded completion events; scene/search jobs remain independent.
 - Package imports and attachment copies share one foreground file-operation
   coordinator. Operation identities reject stale worker progress/completion;
   only one destination-writing operation runs at a time, while scene and

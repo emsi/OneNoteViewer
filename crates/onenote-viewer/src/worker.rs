@@ -2,17 +2,36 @@ use gtk::gio;
 use onenote_core::{
     ExtractionPhase, LoadOptions, LoadedNotebook, OneNoteLoader, OnePkgExtractor, SourceId,
 };
-use onenote_index::{SearchHit, SearchIndex, SearchQuery};
+use onenote_index::{IndexProfile, IndexUpdate, SearchHit, SearchIndex, SearchQuery};
 use onenote_render::{PageScene, SceneBuilder, SceneOptions};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
 
-pub(crate) enum Command {
+pub(crate) enum SourceCommand {
     Discover(PathBuf),
     DiscoverLibrary(PathBuf),
-    Load { path: PathBuf, options: LoadOptions },
+    Load {
+        path: PathBuf,
+        options: LoadOptions,
+        index_profile: IndexProfile,
+    },
+    Shutdown,
+}
+
+pub(crate) enum IndexCommand {
+    Ensure {
+        loaded: Arc<LoadedNotebook>,
+        profile: IndexProfile,
+        generation: u64,
+        cancel: Arc<AtomicBool>,
+    },
     Remove(SourceId),
+    #[cfg(test)]
+    Pause {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    },
     Shutdown,
 }
 
@@ -27,11 +46,13 @@ pub(crate) enum Event {
     },
     Loaded {
         path: PathBuf,
+        index_profile: IndexProfile,
         result: Result<Arc<LoadedNotebook>, String>,
     },
     Indexed {
         source_id: SourceId,
-        result: Result<(), String>,
+        generation: u64,
+        result: Result<IndexUpdate, String>,
     },
     Search {
         generation: u64,
@@ -68,16 +89,12 @@ pub(crate) enum AttachmentPurpose {
     Save,
 }
 
-pub(crate) fn start_index_worker(
-    index_path: PathBuf,
-    events: mpsc::Sender<Event>,
-) -> mpsc::Sender<Command> {
+pub(crate) fn start_source_worker(events: mpsc::Sender<Event>) -> mpsc::Sender<SourceCommand> {
     let (commands, receiver) = mpsc::channel();
     std::thread::spawn(move || {
-        let mut index = SearchIndex::open(&index_path).map_err(|error| error.to_string());
         while let Ok(command) = receiver.recv() {
             match command {
-                Command::Discover(requested) => {
+                SourceCommand::Discover(requested) => {
                     let result =
                         crate::workspace::discover(&requested).map_err(|error| error.to_string());
                     if events
@@ -87,7 +104,7 @@ pub(crate) fn start_index_worker(
                         return;
                     }
                 }
-                Command::DiscoverLibrary(location) => {
+                SourceCommand::DiscoverLibrary(location) => {
                     let result = crate::workspace::discover_library(&location)
                         .map_err(|error| error.to_string());
                     if events
@@ -97,34 +114,77 @@ pub(crate) fn start_index_worker(
                         return;
                     }
                 }
-                Command::Load { path, options } => {
+                SourceCommand::Load {
+                    path,
+                    options,
+                    index_profile,
+                } => {
                     let result = OneNoteLoader::with_options(options)
                         .load(&path)
                         .map(Arc::new)
                         .map_err(|error| error.to_string());
-                    let loaded = result.as_ref().ok().cloned();
-                    if events.send(Event::Loaded { path, result }).is_err() {
+                    if events
+                        .send(Event::Loaded {
+                            path,
+                            index_profile,
+                            result,
+                        })
+                        .is_err()
+                    {
                         return;
                     }
-                    if let Some(loaded) = loaded {
-                        let source_id = loaded.notebook.source_id.clone();
-                        let result = match &mut index {
-                            Ok(index) => index
-                                .replace_source(&loaded.notebook, &AtomicBool::new(false), |_| {})
-                                .map_err(|error| error.to_string()),
-                            Err(error) => Err(error.clone()),
-                        };
-                        if events.send(Event::Indexed { source_id, result }).is_err() {
-                            return;
-                        }
+                }
+                SourceCommand::Shutdown => return,
+            }
+        }
+    });
+    commands
+}
+
+pub(crate) fn start_index_worker(
+    index_path: PathBuf,
+    events: mpsc::Sender<Event>,
+) -> mpsc::Sender<IndexCommand> {
+    let (commands, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut index = SearchIndex::open(&index_path).map_err(|error| error.to_string());
+        while let Ok(command) = receiver.recv() {
+            match command {
+                IndexCommand::Ensure {
+                    loaded,
+                    profile,
+                    generation,
+                    cancel,
+                } => {
+                    let source_id = loaded.notebook.source_id.clone();
+                    let result = match &mut index {
+                        Ok(index) => index
+                            .ensure_source(&loaded.notebook, &profile, &cancel, |_| {})
+                            .map_err(|error| error.to_string()),
+                        Err(error) => Err(error.clone()),
+                    };
+                    if events
+                        .send(Event::Indexed {
+                            source_id,
+                            generation,
+                            result,
+                        })
+                        .is_err()
+                    {
+                        return;
                     }
                 }
-                Command::Remove(source_id) => {
+                IndexCommand::Remove(source_id) => {
                     if let Ok(index) = &mut index {
                         let _ignored = index.remove_source(&source_id);
                     }
                 }
-                Command::Shutdown => return,
+                #[cfg(test)]
+                IndexCommand::Pause { entered, release } => {
+                    let _ignored = entered.send(());
+                    let _ignored = release.recv();
+                }
+                IndexCommand::Shutdown => return,
             }
         }
     });
@@ -223,4 +283,58 @@ pub(crate) fn copy_attachment(
             result: result.map_err(|error| format!("{error:#}")),
         });
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn source_loading_is_not_blocked_by_index_maintenance() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let index_path = temporary.path().join("index.sqlite");
+        let (events, receiver) = mpsc::channel();
+        let index_commands = start_index_worker(index_path, events.clone());
+        let source_commands = start_source_worker(events);
+        let (entered_sender, entered_receiver) = mpsc::channel();
+        let (release_sender, release_receiver) = mpsc::channel();
+        index_commands
+            .send(IndexCommand::Pause {
+                entered: entered_sender,
+                release: release_receiver,
+            })
+            .expect("pause index worker");
+        entered_receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("index worker entered pause");
+
+        let missing = temporary.path().join("missing.one");
+        source_commands
+            .send(SourceCommand::Load {
+                path: missing.clone(),
+                options: LoadOptions::default(),
+                index_profile: IndexProfile::new("test"),
+            })
+            .expect("queue source load");
+        let event = receiver
+            .recv_timeout(Duration::from_secs(1))
+            .expect("source worker remained responsive");
+        assert!(matches!(
+            event,
+            Event::Loaded {
+                path,
+                result: Err(_),
+                ..
+            } if path == missing
+        ));
+
+        release_sender.send(()).expect("release index worker");
+        source_commands
+            .send(SourceCommand::Shutdown)
+            .expect("stop source worker");
+        index_commands
+            .send(IndexCommand::Shutdown)
+            .expect("stop index worker");
+    }
 }

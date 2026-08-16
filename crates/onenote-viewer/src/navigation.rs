@@ -117,7 +117,20 @@ impl NotebookTree {
         *self.expansion.changed.borrow_mut() = Some(Box::new(changed));
     }
 
+    #[cfg(test)]
     pub(crate) fn upsert(&self, notebook: &Notebook, restored: Option<SourceTreeExpansion>) {
+        let position = self
+            .root_position(&notebook.source_id)
+            .unwrap_or_else(|| self.roots.n_items());
+        self.upsert_at(notebook, restored, position);
+    }
+
+    pub(crate) fn upsert_at(
+        &self,
+        notebook: &Notebook,
+        restored: Option<SourceTreeExpansion>,
+        position: u32,
+    ) {
         let source_id = notebook.source_id.clone();
         let node = notebook_node(notebook);
         let mut desired = restored
@@ -134,10 +147,13 @@ impl NotebookTree {
             .borrow_mut()
             .insert(source_id.clone(), desired.clone());
         let item = glib::BoxedAnyObject::new(node);
-        if let Some(position) = self.root_position(&source_id) {
+        if self.root_position(&source_id) == Some(position) {
             self.roots.splice(position, 1, &[item]);
         } else {
-            self.roots.append(&item);
+            if let Some(existing) = self.root_position(&source_id) {
+                self.roots.remove(existing);
+            }
+            self.roots.insert(position.min(self.roots.n_items()), &item);
         }
         self.apply_expansion(&source_id, &desired);
     }
@@ -687,6 +703,47 @@ mod tests {
         tree.upsert(&second, None);
 
         assert_eq!(tree.selected_target(), selected);
+    }
+
+    #[test]
+    fn positional_insertion_keeps_presentation_order_independent_of_load_order() {
+        crate::test_support::run_gtk_test(
+            positional_insertion_keeps_presentation_order_independent_of_load_order_gtk,
+        );
+    }
+
+    fn positional_insertion_keeps_presentation_order_independent_of_load_order_gtk() {
+        let tree = NotebookTree::new();
+        let first = notebook("first", "first-section");
+        let restored = notebook("restored", "restored-section");
+        let last = notebook("last", "last-section");
+
+        tree.upsert_at(&restored, None, 0);
+        tree.upsert_at(&first, None, 0);
+        tree.upsert_at(&last, None, 2);
+
+        let roots = (0..tree.roots.n_items())
+            .filter_map(|position| {
+                let item = tree
+                    .roots
+                    .item(position)?
+                    .downcast::<gtk::glib::BoxedAnyObject>()
+                    .ok()?;
+                let source_id = match &item.borrow::<NavigationNode>().target {
+                    NavigationTarget::Notebook { source_id } => Some(source_id.clone()),
+                    _ => None,
+                };
+                source_id
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            roots,
+            [
+                SourceId::new("first"),
+                SourceId::new("restored"),
+                SourceId::new("last"),
+            ]
+        );
     }
 
     #[test]

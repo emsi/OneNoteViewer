@@ -1,6 +1,7 @@
 use crate::document::{documents, ObjectDocument, PageDocument};
 use crate::model::{
-    IndexProgress, MatchedField, SearchHit, SearchQuery, SourceStatus, TextRange, TextSnippet,
+    IndexProfile, IndexProgress, IndexUpdate, MatchedField, SearchHit, SearchQuery, SourceStatus,
+    TextRange, TextSnippet,
 };
 use crate::query::{prepare_query, PreparedQuery};
 use crate::{Error, Result, SCHEMA_VERSION};
@@ -47,15 +48,46 @@ impl SearchIndex {
         let version: u32 = connection
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(Error::from)?;
-        if version == 0 {
-            create_schema(&connection)?;
-        } else if version != SCHEMA_VERSION {
-            return Err(Error::IncompatibleSchema {
-                found: version,
-                expected: SCHEMA_VERSION,
-            });
+        match version {
+            0 => create_schema(&connection)?,
+            1 => migrate_schema_v1(&connection)?,
+            SCHEMA_VERSION => {}
+            found => {
+                return Err(Error::IncompatibleSchema {
+                    found,
+                    expected: SCHEMA_VERSION,
+                });
+            }
         }
         Ok(Self { connection })
+    }
+
+    /// Reuse a compatible source generation or publish a replacement.
+    ///
+    /// Reuse requires an exact source identity, fingerprint, projection
+    /// version, and caller configuration match. The reuse path performs no
+    /// writes. Replacements have the same transactional and cancellation
+    /// guarantees as [`Self::replace_source`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a cancellation or database error. A failed replacement leaves
+    /// the previously published generation available.
+    pub fn ensure_source(
+        &mut self,
+        notebook: &Notebook,
+        profile: &IndexProfile,
+        cancel: &AtomicBool,
+        progress: impl FnMut(IndexProgress),
+    ) -> Result<IndexUpdate> {
+        if cancel.load(Ordering::Acquire) {
+            return Err(Error::Cancelled);
+        }
+        if self.source_matches(notebook, profile)? {
+            return Ok(IndexUpdate::Reused);
+        }
+        self.replace_source_with_profile(notebook, profile, cancel, progress)?;
+        Ok(IndexUpdate::Rebuilt)
     }
 
     /// Transactionally replace one complete source generation.
@@ -72,6 +104,24 @@ impl SearchIndex {
         &mut self,
         notebook: &Notebook,
         cancel: &AtomicBool,
+        progress: impl FnMut(IndexProgress),
+    ) -> Result<()> {
+        self.replace_source_with_profile(notebook, &IndexProfile::unversioned(), cancel, progress)
+    }
+
+    /// Transactionally replace one source and record its validity profile.
+    ///
+    /// Prefer [`Self::ensure_source`] when unchanged generations may be reused.
+    ///
+    /// # Errors
+    ///
+    /// Returns a cancellation or database error. No partial generation is
+    /// visible after either failure.
+    pub fn replace_source_with_profile(
+        &mut self,
+        notebook: &Notebook,
+        profile: &IndexProfile,
+        cancel: &AtomicBool,
         mut progress: impl FnMut(IndexProgress),
     ) -> Result<()> {
         let documents = documents(notebook);
@@ -85,11 +135,15 @@ impl SearchIndex {
             .map_err(Error::from)?;
         transaction
             .execute(
-                "INSERT INTO sources(source_id, fingerprint, notebook_name, page_count)
-                 VALUES (?1, ?2, ?3, ?4)",
+                "INSERT INTO sources(
+                    source_id, fingerprint, projection_version, projection_profile,
+                    notebook_name, page_count
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
                 params![
                     notebook.source_id.as_str(),
                     notebook.fingerprint.as_str(),
+                    i64::from(profile.projection_version),
+                    profile.configuration,
                     notebook.name,
                     usize_to_i64(total),
                 ],
@@ -111,6 +165,25 @@ impl SearchIndex {
             return Err(Error::Cancelled);
         }
         transaction.commit().map_err(Error::from)
+    }
+
+    fn source_matches(&self, notebook: &Notebook, profile: &IndexProfile) -> Result<bool> {
+        self.connection
+            .query_row(
+                "SELECT 1 FROM sources
+                 WHERE source_id = ?1 AND fingerprint = ?2
+                   AND projection_version = ?3 AND projection_profile = ?4",
+                params![
+                    notebook.source_id.as_str(),
+                    notebook.fingerprint.as_str(),
+                    i64::from(profile.projection_version),
+                    profile.configuration,
+                ],
+                |_| Ok(()),
+            )
+            .optional()
+            .map(|matched| matched.is_some())
+            .map_err(Error::from)
     }
 
     /// Remove one source and its derived documents transactionally.
@@ -138,7 +211,8 @@ impl SearchIndex {
         let mut statement = self
             .connection
             .prepare(
-                "SELECT source_id, fingerprint, notebook_name, page_count
+                "SELECT source_id, fingerprint, projection_version, projection_profile,
+                        notebook_name, page_count
                  FROM sources ORDER BY notebook_name, source_id",
             )
             .map_err(Error::from)?;
@@ -147,8 +221,9 @@ impl SearchIndex {
                 Ok(SourceStatus {
                     source_id: SourceId::new(row.get::<_, String>(0)?),
                     fingerprint: SourceFingerprint::new(row.get::<_, String>(1)?),
-                    notebook_name: row.get(2)?,
-                    page_count: i64_to_usize(row.get(3)?),
+                    profile: IndexProfile::from_stored(row.get(2)?, row.get(3)?),
+                    notebook_name: row.get(4)?,
+                    page_count: i64_to_usize(row.get(5)?),
                 })
             })
             .map_err(Error::from)?
@@ -320,6 +395,8 @@ fn create_schema(connection: &Connection) -> Result<()> {
             CREATE TABLE sources (
                 source_id TEXT PRIMARY KEY NOT NULL,
                 fingerprint TEXT NOT NULL,
+                projection_version INTEGER NOT NULL CHECK(projection_version >= 0),
+                projection_profile TEXT NOT NULL,
                 notebook_name TEXT NOT NULL,
                 page_count INTEGER NOT NULL CHECK(page_count >= 0)
             );
@@ -379,7 +456,21 @@ fn create_schema(connection: &Connection) -> Result<()> {
             END;
             CREATE INDEX pages_source ON pages(source_id);
             CREATE INDEX pages_section ON pages(section_id);
-            PRAGMA user_version = 1;
+            PRAGMA user_version = 2;
+            COMMIT;
+            ",
+        )
+        .map_err(Error::from)
+}
+
+fn migrate_schema_v1(connection: &Connection) -> Result<()> {
+    connection
+        .execute_batch(
+            "
+            BEGIN IMMEDIATE;
+            ALTER TABLE sources ADD COLUMN projection_version INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE sources ADD COLUMN projection_profile TEXT NOT NULL DEFAULT '';
+            PRAGMA user_version = 2;
             COMMIT;
             ",
         )
@@ -602,13 +693,105 @@ fn i64_to_usize(value: i64) -> usize {
 #[cfg(test)]
 mod tests {
     use super::SearchIndex;
-    use crate::{Error, MatchedField, SearchQuery};
+    use crate::{Error, IndexProfile, IndexUpdate, MatchedField, SearchQuery, SCHEMA_VERSION};
     use onenote_core::{
         MathExpression, MathNode, MathSpan, Notebook, NotebookEntry, ObjectId, ObjectKind, Outline,
         OutlineElement, Page, PageId, PageObject, PageObjectRole, Rect, Section, SectionId,
         SourceFingerprint, SourceId, TextAlignment, TextBlock, TextLink, TextLinkOrigin, TextStyle,
     };
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn reuses_only_an_exact_source_and_projection_match_without_writes() {
+        let mut index = SearchIndex::open_in_memory().expect("index");
+        let notebook = notebook("source", "fingerprint", "Notebook");
+        let profile = IndexProfile::new("plain-text-links=enabled");
+        let cancel = AtomicBool::new(false);
+
+        assert_eq!(
+            index
+                .ensure_source(&notebook, &profile, &cancel, |_| {})
+                .expect("initial generation"),
+            IndexUpdate::Rebuilt
+        );
+        let changes = index.connection.total_changes();
+        assert_eq!(
+            index
+                .ensure_source(&notebook, &profile, &cancel, |_| {})
+                .expect("reuse generation"),
+            IndexUpdate::Reused
+        );
+        assert_eq!(index.connection.total_changes(), changes);
+
+        let changed_profile = IndexProfile::new("plain-text-links=disabled");
+        assert_eq!(
+            index
+                .ensure_source(&notebook, &changed_profile, &cancel, |_| {})
+                .expect("changed projection"),
+            IndexUpdate::Rebuilt
+        );
+        let mut changed_source = notebook;
+        changed_source.fingerprint = SourceFingerprint::new("new-fingerprint");
+        assert_eq!(
+            index
+                .ensure_source(&changed_source, &changed_profile, &cancel, |_| {})
+                .expect("changed source"),
+            IndexUpdate::Rebuilt
+        );
+    }
+
+    #[test]
+    fn cancelled_profiled_replacement_preserves_the_last_good_generation() {
+        let mut index = SearchIndex::open_in_memory().expect("index");
+        let notebook = notebook("source", "old", "Notebook");
+        let old_profile = IndexProfile::new("old-profile");
+        index
+            .ensure_source(&notebook, &old_profile, &AtomicBool::new(false), |_| {})
+            .expect("initial generation");
+
+        let mut replacement = notebook;
+        replacement.fingerprint = SourceFingerprint::new("new");
+        let error = index
+            .ensure_source(
+                &replacement,
+                &IndexProfile::new("new-profile"),
+                &AtomicBool::new(true),
+                |_| {},
+            )
+            .expect_err("cancel replacement");
+        assert_eq!(error, Error::Cancelled);
+        let published = &index.sources().expect("sources")[0];
+        assert_eq!(published.fingerprint.as_str(), "old");
+        assert_eq!(published.profile, old_profile);
+    }
+
+    #[test]
+    fn migrates_schema_one_sources_as_non_reusable_generations() {
+        let connection = rusqlite::Connection::open_in_memory().expect("database");
+        connection
+            .execute_batch(
+                "
+                CREATE TABLE sources (
+                    source_id TEXT PRIMARY KEY NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    notebook_name TEXT NOT NULL,
+                    page_count INTEGER NOT NULL CHECK(page_count >= 0)
+                );
+                INSERT INTO sources VALUES ('source', 'fingerprint', 'Notebook', 3);
+                PRAGMA user_version = 1;
+                ",
+            )
+            .expect("schema one database");
+
+        let index = SearchIndex::initialize(connection).expect("migrate database");
+        let version: u32 = index
+            .connection
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .expect("schema version");
+        assert_eq!(version, SCHEMA_VERSION);
+        let source = &index.sources().expect("sources")[0];
+        assert_eq!(source.profile, IndexProfile::unversioned());
+    }
 
     #[test]
     fn indexes_queries_filters_and_removes_multiple_sources() {
