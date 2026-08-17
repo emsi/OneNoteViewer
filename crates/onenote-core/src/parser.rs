@@ -1,3 +1,8 @@
+use crate::backup::{
+    backup_entry_id, file_stamp, natural_cmp, path_bytes as backup_path_bytes,
+    snapshot_instance_key, BackupDiagnostic, BackupFolderError, BackupFolderInspection,
+    BackupLoadControl, BackupResult, BackupSnapshotDisposition,
+};
 use crate::math::{decode_span, MathSegment};
 use crate::model::{
     Attachment, Color, Diagnostic, DiagnosticSeverity, ElementContent, Image, Ink, InkPoint,
@@ -26,6 +31,7 @@ use onenote_parser::section::{
 use onenote_parser::warn::Report;
 use onenote_parser::Parser;
 use std::borrow::Cow;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use typed_path::{PathType, TypedPath};
 use uuid::Uuid;
@@ -156,6 +162,178 @@ impl OneNoteLoader {
     }
 }
 
+pub(crate) fn load_backup_projection(
+    inspection: &BackupFolderInspection,
+    limits: ParseLimits,
+    options: LoadOptions,
+    control: &BackupLoadControl,
+    mut progress: impl FnMut(usize),
+) -> BackupResult<LoadedNotebook> {
+    let mut projector = Projector::new_with_source(
+        &inspection.root,
+        inspection.source_id.clone(),
+        inspection.fingerprint.clone(),
+        limits,
+        options,
+    );
+    let mut projected = Vec::new();
+    let mut completed = 0_usize;
+    for snapshot in inspection
+        .snapshots
+        .iter()
+        .filter(|snapshot| matches!(snapshot.disposition, BackupSnapshotDisposition::Selected(_)))
+    {
+        if control.is_cancelled() {
+            return Err(BackupFolderError::Cancelled);
+        }
+        let path = inspection.root.join(&snapshot.relative_path);
+        let expected = (snapshot.size, snapshot.modified);
+        if file_stamp(&path).ok().as_ref() != Some(&expected) {
+            return Err(BackupFolderError::SourceChanged);
+        }
+        let identity = snapshot_instance_key(snapshot, inspection.options.selection);
+        let key = backup_entry_id(&inspection.source_id, "projection", &identity);
+        let parsed = Parser::new().parse_section(host_typed_path(&path));
+        let section = match parsed {
+            Ok(parsed) => {
+                let checkpoint = projector.clone();
+                match projector.backup_section(&parsed, &key, &identity, &snapshot.display_name) {
+                    Ok(section) => section,
+                    Err(error) => {
+                        projector = checkpoint;
+                        projector.failed_backup_section(
+                            &identity,
+                            &snapshot.display_name,
+                            &snapshot.relative_path,
+                            &error.to_string(),
+                        )?
+                    }
+                }
+            }
+            Err(error) => projector.failed_backup_section(
+                &identity,
+                &snapshot.display_name,
+                &snapshot.relative_path,
+                &error.to_string(),
+            )?,
+        };
+        if file_stamp(&path).ok().as_ref() != Some(&expected) {
+            return Err(BackupFolderError::SourceChanged);
+        }
+        projected.push(ProjectedBackupSection {
+            parent: snapshot.relative_parent.clone(),
+            logical_name: snapshot.logical_name.clone(),
+            date: snapshot.filename_date,
+            path: snapshot.relative_path.clone(),
+            section,
+        });
+        completed = completed.saturating_add(1);
+        progress(completed);
+    }
+
+    let entries = backup_entries(&inspection.source_id, Path::new(""), &projected);
+    let diagnostics = inspection
+        .diagnostics
+        .iter()
+        .map(project_backup_diagnostic)
+        .collect();
+    Ok(LoadedNotebook {
+        notebook: Notebook {
+            source_id: inspection.source_id.clone(),
+            fingerprint: inspection.fingerprint.clone(),
+            name: inspection.notebook_name.clone(),
+            color: None,
+            entries,
+            diagnostics,
+        },
+        resources: projector.resources,
+    })
+}
+
+struct ProjectedBackupSection {
+    parent: PathBuf,
+    logical_name: String,
+    date: Option<crate::BackupDate>,
+    path: PathBuf,
+    section: Section,
+}
+
+fn backup_entries(
+    source_id: &SourceId,
+    parent: &Path,
+    sections: &[ProjectedBackupSection],
+) -> Vec<NotebookEntry> {
+    let mut direct = sections
+        .iter()
+        .filter(|section| section.parent == parent)
+        .collect::<Vec<_>>();
+    direct.sort_by(|left, right| {
+        natural_cmp(&left.logical_name, &right.logical_name)
+            .then_with(|| right.date.cmp(&left.date))
+            .then_with(|| backup_path_bytes(&left.path).cmp(&backup_path_bytes(&right.path)))
+    });
+    let mut entries = direct
+        .into_iter()
+        .map(|section| NotebookEntry::Section(section.section.clone()))
+        .collect::<Vec<_>>();
+
+    let mut child_groups = BTreeSet::new();
+    for section in sections {
+        let mut cursor = section.parent.as_path();
+        while !cursor.as_os_str().is_empty() {
+            if cursor.parent().unwrap_or_else(|| Path::new("")) == parent {
+                child_groups.insert(cursor.to_path_buf());
+                break;
+            }
+            cursor = cursor.parent().unwrap_or_else(|| Path::new(""));
+        }
+    }
+    let mut child_groups = child_groups.into_iter().collect::<Vec<_>>();
+    child_groups.sort_by(|left, right| {
+        let left_name = left
+            .file_name()
+            .unwrap_or_else(|| left.as_os_str())
+            .to_string_lossy();
+        let right_name = right
+            .file_name()
+            .unwrap_or_else(|| right.as_os_str())
+            .to_string_lossy();
+        natural_cmp(&left_name, &right_name)
+            .then_with(|| backup_path_bytes(left).cmp(&backup_path_bytes(right)))
+    });
+    entries.extend(child_groups.into_iter().map(|path| {
+        let name = path
+            .file_name()
+            .unwrap_or_else(|| path.as_os_str())
+            .to_string_lossy()
+            .into_owned();
+        NotebookEntry::Group(SectionGroup {
+            id: SectionId::new(backup_entry_id(
+                source_id,
+                "group",
+                &backup_path_bytes(&path),
+            )),
+            name,
+            entries: backup_entries(source_id, &path, sections),
+        })
+    }));
+    entries
+}
+
+fn project_backup_diagnostic(diagnostic: &BackupDiagnostic) -> Diagnostic {
+    let message = diagnostic.relative_path.as_ref().map_or_else(
+        || diagnostic.message.clone(),
+        |path| format!("{}: {}", path.display(), diagnostic.message),
+    );
+    Diagnostic {
+        severity: diagnostic.severity,
+        code: diagnostic.code.clone(),
+        message,
+        page_id: None,
+    }
+}
+
+#[derive(Clone)]
 struct Projector {
     source_id: SourceId,
     fingerprint: SourceFingerprint,
@@ -177,6 +355,16 @@ impl Projector {
     ) -> Self {
         let path_bytes = path_identity(path);
         let source_id = SourceId::new(stable_id(&[b"source", &path_bytes]));
+        Self::new_with_source(path, source_id, fingerprint, limits, options)
+    }
+
+    fn new_with_source(
+        path: &Path,
+        source_id: SourceId,
+        fingerprint: SourceFingerprint,
+        limits: ParseLimits,
+        options: LoadOptions,
+    ) -> Self {
         Self {
             source_id,
             fingerprint,
@@ -290,6 +478,64 @@ impl Projector {
         })
     }
 
+    fn backup_section(
+        &mut self,
+        section: &ParserSection,
+        key: &str,
+        identity: &[u8],
+        display_name: &str,
+    ) -> Result<Section> {
+        self.section_count += 1;
+        self.enforce(
+            self.section_count <= self.limits.max_sections,
+            "section limit exceeded",
+        )?;
+        let id = SectionId::new(backup_entry_id(&self.source_id, "section", identity));
+        let mut pages = Vec::new();
+        for (series_index, series) in section.page_series().iter().enumerate() {
+            for (page_index, page) in series.pages().iter().enumerate() {
+                let page_key = format!("{key}/{series_index}/{page_index}");
+                pages.push(self.backup_page(page, &page_key, identity)?);
+            }
+        }
+        Ok(Section {
+            id,
+            name: display_name.to_owned(),
+            color: section.color().map(project_color),
+            pages,
+            diagnostics: report_diagnostics(section.report(), &self.source_id),
+        })
+    }
+
+    fn failed_backup_section(
+        &mut self,
+        identity: &[u8],
+        display_name: &str,
+        relative_path: &Path,
+        error: &str,
+    ) -> Result<Section> {
+        self.section_count += 1;
+        self.enforce(
+            self.section_count <= self.limits.max_sections,
+            "section limit exceeded",
+        )?;
+        Ok(Section {
+            id: SectionId::new(backup_entry_id(&self.source_id, "section", identity)),
+            name: display_name.to_owned(),
+            color: None,
+            pages: Vec::new(),
+            diagnostics: vec![Diagnostic {
+                severity: DiagnosticSeverity::Warning,
+                code: "backup_selected_snapshot_parse_failed".to_owned(),
+                message: format!(
+                    "Could not read selected backup snapshot {}: {error}",
+                    relative_path.display()
+                ),
+                page_id: None,
+            }],
+        })
+    }
+
     fn page(&mut self, page: &ParserPage, key: &str) -> Result<Page> {
         self.page_count += 1;
         self.enforce(
@@ -297,6 +543,28 @@ impl Projector {
             "page limit exceeded",
         )?;
         let page_id = PageId::new(self.id("page", page.link_target_id()));
+        self.project_page_contents(page, key, page_id)
+    }
+
+    fn backup_page(&mut self, page: &ParserPage, key: &str, identity: &[u8]) -> Result<Page> {
+        self.page_count += 1;
+        self.enforce(
+            self.page_count <= self.limits.max_pages,
+            "page limit exceeded",
+        )?;
+        let mut page_identity = identity.to_vec();
+        page_identity.push(0);
+        page_identity.extend_from_slice(page.link_target_id().as_bytes());
+        let page_id = PageId::new(backup_entry_id(&self.source_id, "page", &page_identity));
+        self.project_page_contents(page, key, page_id)
+    }
+
+    fn project_page_contents(
+        &mut self,
+        page: &ParserPage,
+        key: &str,
+        page_id: PageId,
+    ) -> Result<Page> {
         let mut objects = Vec::new();
 
         if let Some(title) = page.title() {
@@ -564,10 +832,13 @@ impl Projector {
             status: resource_status(image.data_status()),
         };
         self.resources
-            .insert(id, ResourceLoader::Image(image.clone()));
-        let web_fallback = image.web_picture().map(|picture| {
-            self.picture_resource(picture, &format!("{key}/web-fallback"), "image-fallback")
-        });
+            .insert(id, ResourceLoader::Image(image.clone()))?;
+        let web_fallback = image
+            .web_picture()
+            .map(|picture| {
+                self.picture_resource(picture, &format!("{key}/web-fallback"), "image-fallback")
+            })
+            .transpose()?;
         Ok(Image {
             resource,
             web_fallback,
@@ -629,10 +900,11 @@ impl Projector {
             status: resource_status(file.data_status()),
         };
         self.resources
-            .insert(id, ResourceLoader::Attachment(file.clone()));
+            .insert(id, ResourceLoader::Attachment(file.clone()))?;
         let icon = file
             .icon()
-            .map(|picture| self.picture_resource(picture, &format!("{key}/icon"), "file-icon"));
+            .map(|picture| self.picture_resource(picture, &format!("{key}/icon"), "file-icon"))
+            .transpose()?;
         Ok(Attachment {
             resource,
             icon,
@@ -641,7 +913,12 @@ impl Projector {
         })
     }
 
-    fn picture_resource(&mut self, picture: &Picture, key: &str, stem: &str) -> ResourceRef {
+    fn picture_resource(
+        &mut self,
+        picture: &Picture,
+        key: &str,
+        stem: &str,
+    ) -> Result<ResourceRef> {
         let id = ResourceId::new(self.id("resource", key));
         let extension = picture.extension().unwrap_or("bin").trim_start_matches('.');
         let resource = ResourceRef {
@@ -652,8 +929,8 @@ impl Projector {
             status: resource_status(picture.data_status()),
         };
         self.resources
-            .insert(id, ResourceLoader::Picture(picture.clone()));
-        resource
+            .insert(id, ResourceLoader::Picture(picture.clone()))?;
+        Ok(resource)
     }
 
     fn ink_object(

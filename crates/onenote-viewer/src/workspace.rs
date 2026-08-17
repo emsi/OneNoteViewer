@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use onenote_core::{PageId, SectionId, SourceId};
+use onenote_core::{BackupSelectionPolicy, PageId, SectionId, SourceDescriptor, SourceId};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
@@ -10,8 +10,8 @@ pub(crate) const WORKSPACE_UI_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct WorkspaceConfig {
-    #[serde(default)]
-    pub(crate) sources: Vec<PathBuf>,
+    #[serde(default, deserialize_with = "deserialize_sources")]
+    pub(crate) sources: Vec<SourceDescriptor>,
     #[serde(default)]
     pub(crate) navigation: WorkspaceNavigation,
     #[serde(
@@ -140,32 +140,91 @@ pub(crate) fn ensure_index_parent(path: &Path) -> Result<()> {
     set_private_directory(parent)
 }
 
-pub(crate) fn discover(requested: &Path) -> Result<Vec<PathBuf>> {
-    discover_path(requested, false)
+pub(crate) fn discover(requested: &Path) -> Result<Vec<SourceDescriptor>> {
+    let canonical = canonical_source(requested)?;
+    if canonical.is_file() {
+        return discover_file(canonical);
+    }
+    let (manifests, sections) = discover_directory_contents(&canonical)?;
+    let roots = root_manifests(&canonical, manifests);
+    if !roots.is_empty() {
+        return Ok(roots.into_iter().map(SourceDescriptor::native).collect());
+    }
+    if sections.is_empty() {
+        bail!("{} contains no .onetoc2 or .one files", canonical.display());
+    }
+    bail!(
+        "{} has OneNote sections but no root .onetoc2; use Open OneNote Backup Folder",
+        canonical.display()
+    )
 }
 
-pub(crate) fn discover_library(requested: &Path) -> Result<Vec<PathBuf>> {
-    discover_path(requested, true)
+pub(crate) fn discover_library(requested: &Path) -> Result<Vec<SourceDescriptor>> {
+    let canonical = canonical_source(requested)?;
+    if canonical.is_file() {
+        return discover_file(canonical);
+    }
+    let mut sources = Vec::new();
+    let read = fs::read_dir(&canonical)
+        .with_context(|| format!("could not read {}", canonical.display()))?;
+    for entry in read {
+        let entry = entry.with_context(|| format!("could not read {}", canonical.display()))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("could not inspect {}", path.display()))?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        if file_type.is_file() {
+            if matches!(extension(&path).as_deref(), Some("one" | "onetoc2")) {
+                sources.push(SourceDescriptor::native(path));
+            }
+            continue;
+        }
+        if !file_type.is_dir() {
+            continue;
+        }
+        let (manifests, sections) = discover_directory_contents(&path)?;
+        let roots = root_manifests(&path, manifests);
+        if roots.is_empty() {
+            if !sections.is_empty() {
+                sources.push(SourceDescriptor::backup(
+                    path,
+                    BackupSelectionPolicy::LatestPerSection,
+                ));
+            }
+        } else {
+            sources.extend(roots.into_iter().map(SourceDescriptor::native));
+        }
+    }
+    sources.sort_by(|left, right| left.path().cmp(right.path()));
+    sources.dedup_by(|left, right| left == right);
+    Ok(sources)
 }
 
-fn discover_path(requested: &Path, allow_empty: bool) -> Result<Vec<PathBuf>> {
+fn canonical_source(requested: &Path) -> Result<PathBuf> {
     let canonical = fs::canonicalize(requested)
         .with_context(|| format!("could not access {}", requested.display()))?;
-    if canonical.is_file() {
-        return match extension(&canonical).as_deref() {
-            Some("one" | "onetoc2") => Ok(vec![canonical]),
-            Some("onepkg") => bail!(
-                "{} is a package; use Import OneNote Package so it is extracted on disk",
-                canonical.display()
-            ),
-            _ => bail!("{} is not a supported OneNote source", canonical.display()),
-        };
-    }
-    if !canonical.is_dir() {
+    if !canonical.is_file() && !canonical.is_dir() {
         bail!("{} is not a regular file or directory", canonical.display());
     }
+    Ok(canonical)
+}
 
-    let mut pending = vec![canonical.clone()];
+fn discover_file(canonical: PathBuf) -> Result<Vec<SourceDescriptor>> {
+    match extension(&canonical).as_deref() {
+        Some("one" | "onetoc2") => Ok(vec![SourceDescriptor::native(canonical)]),
+        Some("onepkg") => bail!(
+            "{} is a package; use Import OneNote Package so it is extracted on disk",
+            canonical.display()
+        ),
+        _ => bail!("{} is not a supported OneNote source", canonical.display()),
+    }
+}
+
+fn discover_directory_contents(canonical: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
+    let mut pending = vec![canonical.to_path_buf()];
     let mut table_of_contents = Vec::new();
     let mut sections = Vec::new();
     let mut entries = 0_usize;
@@ -198,16 +257,9 @@ fn discover_path(requested: &Path, allow_empty: bool) -> Result<Vec<PathBuf>> {
     }
 
     table_of_contents.sort();
-    let roots = root_manifests(&canonical, table_of_contents);
-    if !roots.is_empty() {
-        return Ok(roots);
-    }
     sections.sort();
     sections.dedup();
-    if sections.is_empty() && !allow_empty {
-        bail!("{} contains no .onetoc2 or .one files", canonical.display());
-    }
-    Ok(sections)
+    Ok((table_of_contents, sections))
 }
 
 pub(crate) fn source_is_in_location(source: &Path, location: &Path) -> bool {
@@ -219,13 +271,34 @@ pub(crate) fn source_is_in_location(source: &Path, location: &Path) -> bool {
 
 pub(crate) fn source_is_in_workspace(
     source: &Path,
-    sources: &[PathBuf],
+    sources: &[SourceDescriptor],
     notebooks_location: &Path,
 ) -> bool {
     source_is_in_location(source, notebooks_location)
         || sources
             .iter()
-            .any(|configured| source_is_in_location(source, configured))
+            .any(|configured| source_is_in_location(source, configured.path()))
+}
+
+fn deserialize_sources<'de, D>(deserializer: D) -> Result<Vec<SourceDescriptor>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum PersistedSource {
+        Legacy(PathBuf),
+        Descriptor(SourceDescriptor),
+    }
+
+    let sources = Vec::<PersistedSource>::deserialize(deserializer)?;
+    Ok(sources
+        .into_iter()
+        .map(|source| match source {
+            PersistedSource::Legacy(path) => SourceDescriptor::native(path),
+            PersistedSource::Descriptor(source) => source,
+        })
+        .collect())
 }
 
 fn root_manifests(root: &Path, manifests: Vec<PathBuf>) -> Vec<PathBuf> {
@@ -301,7 +374,12 @@ mod tests {
 
         let discovered = discover(temporary.path()).expect("discovery");
 
-        assert_eq!(discovered, vec![notebook.join("Open Notebook.onetoc2")]);
+        assert_eq!(
+            discovered,
+            vec![SourceDescriptor::native(
+                notebook.join("Open Notebook.onetoc2")
+            )]
+        );
     }
 
     #[test]
@@ -309,7 +387,7 @@ mod tests {
         let temporary = tempfile::tempdir().expect("temporary directory");
         let path = temporary.path().join("state/workspace.json");
         let expected = WorkspaceConfig {
-            sources: vec![PathBuf::from("/notes/Notebook.onetoc2")],
+            sources: vec![SourceDescriptor::native("/notes/Notebook.onetoc2")],
             navigation: WorkspaceNavigation {
                 last_page: Some(PersistedPageLocation {
                     source_path: PathBuf::from("/notes/Notebook.onetoc2"),
@@ -349,7 +427,7 @@ mod tests {
 
         assert_eq!(
             actual.sources,
-            vec![PathBuf::from("/notes/Notebook.onetoc2")]
+            vec![SourceDescriptor::native("/notes/Notebook.onetoc2")]
         );
         assert_eq!(actual.navigation, WorkspaceNavigation::default());
         assert_eq!(actual.ui, None);
@@ -481,10 +559,40 @@ mod tests {
         assert_eq!(
             discovered,
             vec![
-                temporary.path().join("Notebook A/Open Notebook.onetoc2"),
-                temporary.path().join("Notebook B/Open Notebook.onetoc2"),
+                SourceDescriptor::native(temporary.path().join("Notebook A/Open Notebook.onetoc2")),
+                SourceDescriptor::native(temporary.path().join("Notebook B/Open Notebook.onetoc2")),
             ]
         );
+    }
+
+    #[test]
+    fn library_groups_a_manifest_free_backup_directory_as_one_source() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        let backup = temporary.path().join("Backup");
+        fs::create_dir_all(backup.join("Nested")).expect("nested group");
+        fs::write(backup.join("Root (On 15-08-2026).one"), b"root").expect("root section");
+        fs::write(backup.join("Nested/Section (On 15-08-2026).one"), b"nested")
+            .expect("nested section");
+
+        let discovered = discover_library(temporary.path()).expect("library discovery");
+
+        assert_eq!(
+            discovered,
+            vec![SourceDescriptor::backup(
+                backup,
+                BackupSelectionPolicy::LatestPerSection
+            )]
+        );
+    }
+
+    #[test]
+    fn ordinary_folder_open_requires_explicit_backup_mode_without_manifest() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        fs::write(temporary.path().join("Section.one"), b"section").expect("section");
+
+        let error = discover(temporary.path()).expect_err("backup mode must be explicit");
+
+        assert!(error.to_string().contains("Open OneNote Backup Folder"));
     }
 
     #[test]
@@ -504,7 +612,9 @@ mod tests {
     #[test]
     fn workspace_membership_accepts_default_and_explicit_sources() {
         let default = Path::new("/home/user/Documents/OneNoteViewer");
-        let explicit = vec![PathBuf::from("/mnt/archive/Notebook/Open Notebook.onetoc2")];
+        let explicit = vec![SourceDescriptor::native(
+            "/mnt/archive/Notebook/Open Notebook.onetoc2",
+        )];
 
         assert!(source_is_in_workspace(
             Path::new("/home/user/Documents/OneNoteViewer/Work/Open Notebook.onetoc2"),

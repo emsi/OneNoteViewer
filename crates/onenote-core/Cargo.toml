@@ -15,6 +15,7 @@ onenote_parser.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 typed-path.workspace = true
+unicode-normalization.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]

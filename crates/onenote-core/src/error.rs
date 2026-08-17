@@ -96,6 +96,13 @@ pub enum Error {
         actual_bytes: u64,
     },
 
+    /// Two projected payloads resolved to the same stable identifier.
+    #[error("resource identifier collision for {id}")]
+    ResourceCollision {
+        /// Conflicting stable resource identifier.
+        id: crate::ResourceId,
+    },
+
     /// No supported external CAB extractor is available.
     #[error("could not find 7zz or 7z in PATH; install 7-Zip to open .onepkg files")]
     ExtractorNotFound,

@@ -68,8 +68,8 @@ The normative behavioral detail is in
 `onenote-core` provides read-only source discovery, parser isolation,
 immutable domain objects, geometry, diagnostics, lazy payload access, and
 stable source-scoped identities. Upstream parser and revision-store internals
-do not cross its public boundary. Manifest-free OneNote backup directories
-must be reconstructed as one synthetic notebook through the reusable
+do not cross its public boundary. Manifest-free OneNote backup directories are
+reconstructed as one synthetic notebook through the reusable
 [backup-folder loader](plans/backup-folder-loader.md), not interpreted by the
 viewer as unrelated standalone sections.
 

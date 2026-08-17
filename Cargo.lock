@@ -1734,6 +1734,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.19",
  "typed-path",
+ "unicode-normalization",
  "uuid",
 ]
 

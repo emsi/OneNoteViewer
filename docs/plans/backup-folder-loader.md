@@ -1,14 +1,14 @@
 # Reusable OneNote Backup-Folder Loader Plan
 
-- **Status:** Planned
+- **Status:** Implemented for the issue #39 baseline; later extensions remain tracked separately
 - **Owner:** `onenote-core`, integrated by `onenote-viewer`
 - **Target milestone:** Milestone 2 for default loading; Milestone 3 for
   historical-version browsing
-- **Last reconciled:** 2026-07-27 UTC
+- **Last reconciled:** 2026-08-17 UTC
 
 ## Purpose
 
-Implement a reusable, read-only loader for OneNote backup directories that
+Provide a reusable, read-only loader for OneNote backup directories that
 contain recursively arranged `.one` section files but no usable root
 `.onetoc2` table of contents.
 
@@ -18,18 +18,38 @@ deduplicated across dated backup snapshots, and the selected sections must be
 available through the same public domain, rendering, and indexing interfaces
 as a manifest-backed notebook.
 
+## Implemented Baseline
+
+The issue #39 implementation provides:
+
+- bounded, symlink-safe inspection through public `onenote-core` types;
+- anchored recognition of the two observed dated-filename profiles;
+- deterministic latest-per-section and explicit all-copies policies;
+- one stable aggregate source with nested directory groups, native page order,
+  source-scoped identities, lazy resource loaders, and structured diagnostics;
+- typed workspace persistence, legacy path-only workspace migration, manual
+  refresh, phase progress, and cancellation;
+- staged viewer publication after transactional index replacement, preserving
+  the last known-good visible generation when loading or indexing fails; and
+- root-manifest precedence with an explicit, copyable fallback confirmation
+  when a present manifest cannot be parsed.
+
+As-of/exact-date views, changed-section parse reuse, automatic monitoring,
+viewer-local ordering overlays, and a general stabilized source-classification
+facade remain future work. They are extension points rather than part of the
+implemented baseline.
+
 The loader belongs in `onenote-core`. It must not depend on GTK, the viewer
 workspace, SQLite, or the search index. OneNote Viewer is one consumer of the
 loader, not its only usable host.
 
 ## Problem Statement
 
-The current application discovers every `.one` below a directory when it
-cannot find a root `.onetoc2`. It then loads each file through the standalone
-section path. Because a standalone section is projected as a notebook
-containing one section, a OneNote backup directory appears as dozens of
-top-level notebooks. Directory-based section groups and repeated backup
-versions are lost.
+Before this loader, the application discovered every `.one` below a directory
+when it could not find a root `.onetoc2`. It then loaded each file through the
+standalone section path, so one backup appeared as dozens of one-section
+notebooks. Directory-based section groups and repeated backup versions were
+lost.
 
 This behavior is correct for an explicitly opened standalone `.one` file but
 is not an adequate interpretation of a backup directory.

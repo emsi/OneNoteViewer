@@ -1,6 +1,8 @@
 use gtk::gio;
 use onenote_core::{
-    ExtractionPhase, LoadOptions, LoadedNotebook, OneNoteLoader, OnePkgExtractor, SourceId,
+    BackupFolderLimits, BackupFolderLoader, BackupFolderOptions, BackupLoadControl,
+    BackupLoadProgress, ExtractionPhase, LoadOptions, LoadedNotebook, OneNoteLoader,
+    OnePkgExtractor, ParseLimits, RootManifestPolicy, SourceDescriptor, SourceId,
 };
 use onenote_index::{IndexProfile, IndexUpdate, SearchHit, SearchIndex, SearchQuery};
 use onenote_render::{PageScene, SceneBuilder, SceneOptions};
@@ -12,9 +14,12 @@ pub(crate) enum SourceCommand {
     Discover(PathBuf),
     DiscoverLibrary(PathBuf),
     Load {
-        path: PathBuf,
+        source: SourceDescriptor,
         options: LoadOptions,
         index_profile: IndexProfile,
+        operation_id: Option<u64>,
+        control: BackupLoadControl,
+        root_manifest: RootManifestPolicy,
     },
     Shutdown,
 }
@@ -38,16 +43,26 @@ pub(crate) enum IndexCommand {
 pub(crate) enum Event {
     Discovered {
         requested: PathBuf,
-        result: Result<Vec<PathBuf>, String>,
+        result: Result<Vec<SourceDescriptor>, String>,
     },
     LibraryDiscovered {
         location: PathBuf,
-        result: Result<Vec<PathBuf>, String>,
+        result: Result<Vec<SourceDescriptor>, String>,
     },
     Loaded {
-        path: PathBuf,
+        source: SourceDescriptor,
         index_profile: IndexProfile,
-        result: Result<Arc<LoadedNotebook>, String>,
+        operation_id: Option<u64>,
+        result: Result<SourceLoad, String>,
+    },
+    BackupProgress {
+        operation_id: Option<u64>,
+        progress: BackupLoadProgress,
+    },
+    BackupFallbackRequired {
+        operation_id: u64,
+        root: PathBuf,
+        manifest_error: String,
     },
     Indexed {
         source_id: SourceId,
@@ -83,6 +98,11 @@ pub(crate) enum Event {
     },
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct SourceLoad {
+    pub(crate) loaded: Arc<LoadedNotebook>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum AttachmentPurpose {
     Open,
@@ -115,23 +135,25 @@ pub(crate) fn start_source_worker(events: mpsc::Sender<Event>) -> mpsc::Sender<S
                     }
                 }
                 SourceCommand::Load {
-                    path,
+                    source,
                     options,
                     index_profile,
+                    operation_id,
+                    control,
+                    root_manifest,
                 } => {
-                    let result = OneNoteLoader::with_options(options)
-                        .load(&path)
-                        .map(Arc::new)
-                        .map_err(|error| error.to_string());
-                    if events
-                        .send(Event::Loaded {
-                            path,
-                            index_profile,
-                            result,
-                        })
-                        .is_err()
-                    {
-                        return;
+                    if let Some(event) = load_source_event(
+                        &source,
+                        options,
+                        index_profile,
+                        operation_id,
+                        &control,
+                        root_manifest,
+                        &events,
+                    ) {
+                        if events.send(event).is_err() {
+                            return;
+                        }
                     }
                 }
                 SourceCommand::Shutdown => return,
@@ -139,6 +161,92 @@ pub(crate) fn start_source_worker(events: mpsc::Sender<Event>) -> mpsc::Sender<S
         }
     });
     commands
+}
+
+fn load_source_event(
+    source: &SourceDescriptor,
+    options: LoadOptions,
+    index_profile: IndexProfile,
+    operation_id: Option<u64>,
+    control: &BackupLoadControl,
+    root_manifest: RootManifestPolicy,
+    events: &mpsc::Sender<Event>,
+) -> Option<Event> {
+    let mut published_source = source.clone();
+    let result = match source {
+        SourceDescriptor::NativeFile { path } => OneNoteLoader::with_options(options)
+            .load(path)
+            .map(|notebook| SourceLoad {
+                loaded: Arc::new(notebook),
+            })
+            .map_err(|error| error.to_string()),
+        SourceDescriptor::BackupFolder { root, selection } => {
+            let loader = BackupFolderLoader::with_options(
+                BackupFolderLimits::default(),
+                ParseLimits::default(),
+                options,
+            );
+            let inspection = loader.inspect(
+                root,
+                BackupFolderOptions {
+                    selection: *selection,
+                    root_manifest,
+                },
+                control,
+                |progress| {
+                    let _ignored = events.send(Event::BackupProgress {
+                        operation_id,
+                        progress,
+                    });
+                },
+            );
+            match inspection {
+                Err(onenote_core::BackupFolderError::RootManifestPresent { path })
+                    if root_manifest == RootManifestPolicy::Reject =>
+                {
+                    match OneNoteLoader::with_options(options).load(&path) {
+                        Ok(notebook) => {
+                            published_source = SourceDescriptor::native(path);
+                            Ok(SourceLoad {
+                                loaded: Arc::new(notebook),
+                            })
+                        }
+                        Err(error) => {
+                            let operation_id = operation_id?;
+                            let _ignored = events.send(Event::BackupFallbackRequired {
+                                operation_id,
+                                root: root.clone(),
+                                manifest_error: error.to_string(),
+                            });
+                            return None;
+                        }
+                    }
+                }
+                Err(error) => Err(error.to_string()),
+                Ok(inspection) => {
+                    published_source =
+                        SourceDescriptor::backup(inspection.root.clone(), *selection);
+                    loader
+                        .load(inspection, control, |progress| {
+                            let _ignored = events.send(Event::BackupProgress {
+                                operation_id,
+                                progress,
+                            });
+                        })
+                        .map(|result| SourceLoad {
+                            loaded: Arc::new(result.loaded),
+                        })
+                        .map_err(|error| error.to_string())
+                }
+            }
+        }
+    };
+    Some(Event::Loaded {
+        source: published_source,
+        index_profile,
+        operation_id,
+        result,
+    })
 }
 
 pub(crate) fn start_index_worker(
@@ -312,9 +420,12 @@ mod tests {
         let missing = temporary.path().join("missing.one");
         source_commands
             .send(SourceCommand::Load {
-                path: missing.clone(),
+                source: SourceDescriptor::native(missing.clone()),
                 options: LoadOptions::default(),
                 index_profile: IndexProfile::new("test"),
+                operation_id: None,
+                control: BackupLoadControl::new(),
+                root_manifest: RootManifestPolicy::Ignore,
             })
             .expect("queue source load");
         let event = receiver
@@ -323,10 +434,10 @@ mod tests {
         assert!(matches!(
             event,
             Event::Loaded {
-                path,
+                source,
                 result: Err(_),
                 ..
-            } if path == missing
+            } if source.path() == missing
         ));
 
         release_sender.send(()).expect("release index worker");
@@ -336,5 +447,44 @@ mod tests {
         index_commands
             .send(IndexCommand::Shutdown)
             .expect("stop index worker");
+    }
+
+    #[test]
+    fn unreadable_root_manifest_requires_explicit_backup_fallback() {
+        let temporary = tempfile::tempdir().expect("temporary directory");
+        std::fs::write(temporary.path().join("Open Notebook.onetoc2"), b"invalid")
+            .expect("manifest");
+        std::fs::write(temporary.path().join("Section.one"), b"invalid").expect("section");
+        let (events, receiver) = mpsc::channel();
+        let commands = start_source_worker(events);
+        commands
+            .send(SourceCommand::Load {
+                source: SourceDescriptor::backup(
+                    temporary.path(),
+                    onenote_core::BackupSelectionPolicy::LatestPerSection,
+                ),
+                options: LoadOptions::default(),
+                index_profile: IndexProfile::new("test"),
+                operation_id: Some(7),
+                control: BackupLoadControl::new(),
+                root_manifest: RootManifestPolicy::Reject,
+            })
+            .expect("queue source load");
+
+        let fallback = (0..10).find_map(|_| {
+            receiver
+                .recv_timeout(Duration::from_secs(1))
+                .ok()
+                .and_then(|event| match event {
+                    Event::BackupFallbackRequired {
+                        operation_id, root, ..
+                    } => Some((operation_id, root)),
+                    _ => None,
+                })
+        });
+        assert_eq!(fallback, Some((7, temporary.path().to_path_buf())));
+        commands
+            .send(SourceCommand::Shutdown)
+            .expect("stop source worker");
     }
 }

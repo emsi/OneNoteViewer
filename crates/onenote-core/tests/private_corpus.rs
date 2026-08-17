@@ -1,6 +1,7 @@
 use onenote_core::{
-    ElementContent, Error, MathSpan, NotebookEntry, ObjectKind, OneNoteLoader, OnePkgExtractor,
-    OutlineElement, PageObjectRole, ResourceRef, ResourceStatus, TextBlock,
+    BackupFolderLoader, BackupFolderOptions, BackupLoadControl, ElementContent, Error, MathSpan,
+    NotebookEntry, ObjectKind, OneNoteLoader, OnePkgExtractor, OutlineElement, PageObjectRole,
+    ResourceRef, ResourceStatus, TextBlock,
 };
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -332,6 +333,38 @@ fn every_private_backup_section_snapshot_opens_individually() {
     assert!(
         unavailable_resources > 0,
         "the backup compatibility corpus must exercise unavailable payloads"
+    );
+}
+
+#[test]
+fn private_backup_corpus_projects_as_one_aggregate_notebook() {
+    let Some(corpus) = backup_corpus_path() else {
+        return;
+    };
+    let loader = BackupFolderLoader::default();
+    let control = BackupLoadControl::new();
+    let inspection = loader
+        .inspect(&corpus, BackupFolderOptions::default(), &control, |_| {})
+        .expect("the supplied backup corpus must inspect");
+    let selected = inspection
+        .snapshots
+        .iter()
+        .filter(|snapshot| {
+            matches!(
+                snapshot.disposition,
+                onenote_core::BackupSnapshotDisposition::Selected(_)
+            )
+        })
+        .count();
+    let aggregate = loader
+        .load(inspection, &control, |_| {})
+        .expect("the supplied backup corpus must aggregate");
+
+    assert_eq!(aggregate.loaded.notebook.sections().count(), selected);
+    assert!(aggregate.loaded.notebook.pages().next().is_some());
+    assert_eq!(
+        aggregate.loaded.notebook.source_id,
+        aggregate.inspection.source_id
     );
 }
 
