@@ -432,6 +432,21 @@ impl ForegroundOperation {
     }
 }
 
+fn clear_foreground_operation(
+    operation: &RefCell<Option<ForegroundOperation>>,
+    operation_id: u64,
+) -> bool {
+    let mut operation = operation.borrow_mut();
+    if operation
+        .as_ref()
+        .is_none_or(|operation| operation.id != operation_id)
+    {
+        return false;
+    }
+    operation.take();
+    true
+}
+
 #[derive(Default)]
 struct State {
     sources: Vec<Source>,
@@ -4055,14 +4070,9 @@ impl Viewer {
     }
 
     fn finish_operation(&self, operation_id: u64) {
-        let mut operation = self.foreground_operation.borrow_mut();
-        if operation
-            .as_ref()
-            .is_none_or(|operation| operation.id != operation_id)
-        {
+        if !clear_foreground_operation(&self.foreground_operation, operation_id) {
             return;
         }
-        operation.take();
         self.operation_pulsing.set(false);
         self.operation_cancel_button.set_sensitive(false);
         self.import_package_action.set_enabled(true);
@@ -5688,6 +5698,23 @@ mod tests {
 
         assert!(index.load(Ordering::Acquire));
         assert!(cancellation.is_cancelled());
+    }
+
+    #[test]
+    fn foreground_operation_completion_releases_the_state_before_ui_refresh() {
+        let operation = RefCell::new(Some(ForegroundOperation {
+            id: 7,
+            kind: ForegroundOperationKind::PackageImport(Arc::new(AtomicBool::new(false))),
+        }));
+
+        assert!(!clear_foreground_operation(&operation, 6));
+        assert_eq!(
+            operation.borrow().as_ref().map(|operation| operation.id),
+            Some(7)
+        );
+
+        assert!(clear_foreground_operation(&operation, 7));
+        assert!(operation.borrow().is_none());
     }
 
     #[test]
