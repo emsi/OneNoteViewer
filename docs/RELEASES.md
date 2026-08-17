@@ -25,7 +25,7 @@ for Ubuntu 24.04 or compatible hosts.
   SHA-256 checksums.
 
 A release tag must equal `v` plus `[workspace.package].version`; for example,
-version `0.2.0` uses tag `v0.2.0`. The same version must be the newest release
+version `0.3.0` uses tag `v0.3.0`. The same version must be the newest release
 in `packaging/flatpak/io.github.emsi.OneNoteViewer.metainfo.xml`.
 
 The workflow pins third-party actions by commit. Flatpak Cargo inputs,
