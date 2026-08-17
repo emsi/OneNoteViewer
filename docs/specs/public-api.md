@@ -34,12 +34,14 @@ provide HTML, Markdown, or PDF conversion.
 
 `onenote-core` is the shared foundation. `OneNoteLoader` exposes read-only
 operations for a `.onetoc2` or standalone `.one`, returning immutable domain
-objects plus diagnostics and a lazy `ResourceStore`. Directory root discovery
-currently belongs to the viewer and should move behind a reusable core API. In
-particular, manifest-free backup folders require a core-owned inspection and
-aggregate-loading API that returns one source, a reconstructed section-group
-tree, deterministic snapshot selection, and provenance. That API is planned,
-not implemented; its contract and delivery gates are in the
+objects plus diagnostics and a lazy `ResourceStore`. `BackupFolderLoader`
+provides bounded, cancellable inspection and aggregate loading for
+manifest-free desktop backup folders. It returns a reconstructed section-group
+tree, deterministic snapshot selection and provenance through the same
+`LoadedNotebook` model, without depending on GTK or SQLite. Persistable
+`SourceDescriptor` values distinguish native files from backup roots and retain
+the selected latest/all-copies policy. The compatibility contract and future
+extension points are documented in the
 [backup-folder loader plan](../plans/backup-folder-loader.md).
 `OnePkgExtractor` is a separate optional operation and is never required to
 consume an already extracted source.
@@ -55,6 +57,10 @@ cache, or launches an attachment. This additive contract is exposed by core
 API version 6. API version 7 adds optional lazy resource handles for OneNote's
 browser-compatible image representation and embedded-file icon; primary
 payload handles remain unchanged.
+
+Core API version 8 adds the reusable backup-folder inspection, snapshot
+selection, aggregate loading, progress/cancellation, and typed source
+descriptor contracts described above.
 
 The public model includes:
 

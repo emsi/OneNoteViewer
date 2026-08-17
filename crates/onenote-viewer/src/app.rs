@@ -13,8 +13,9 @@ use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
 use onenote_core::{
+    BackupLoadControl, BackupLoadProgress, BackupProgressPhase, BackupSelectionPolicy,
     ExtractionPhase, LoadOptions, LoadedNotebook, Notebook, ObjectId, Page, PageId, Rect,
-    ResourceId, ResourceRef, SectionId, SourceId,
+    ResourceId, ResourceRef, SectionId, SourceDescriptor, SourceId,
 };
 use onenote_index::{IndexProfile, IndexUpdate, MatchedField, SearchHit, SearchQuery, TextRange};
 use onenote_render::{HitAction, ScenePrimitive};
@@ -72,40 +73,8 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
     let settings_path = settings::path();
     let persisted_settings = settings::load(&settings_path).unwrap_or_default();
     let notebooks_location = persisted_settings.notebooks_location.clone();
-    let configured_sources = if requested_sources.is_empty() {
-        persisted.sources.clone()
-    } else {
-        requested_sources
-    };
-    let restore_target = persisted.navigation.last_page.filter(|location| {
-        workspace::source_is_in_workspace(
-            &location.source_path,
-            &configured_sources,
-            &notebooks_location,
-        )
-    });
-    let restore_ui = persisted.ui.map(|mut ui| {
-        ui.sources.retain(|source| {
-            workspace::source_is_in_workspace(
-                &source.source_path,
-                &configured_sources,
-                &notebooks_location,
-            )
-        });
-        ui
-    });
-    let restore = WorkspaceRestore {
-        page: restore_target,
-        ui: restore_ui,
-    };
-    let mut initial_sources: Vec<_> = configured_sources
-        .into_iter()
-        .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
-        .collect();
-    prioritize_source_roots(&mut initial_sources, restore.page.as_ref());
-    let restore_is_outside_default_location = restore.page.as_ref().is_some_and(|target| {
-        !workspace::source_is_in_location(&target.source_path, &notebooks_location)
-    });
+    let (restore, initial_sources, restore_is_outside_default_location) =
+        prepare_workspace_restore(persisted, &requested_sources, &notebooks_location);
 
     let application = gtk::Application::builder()
         .application_id("io.github.emsi.OneNoteViewer")
@@ -128,15 +97,19 @@ pub(crate) fn run(requested_sources: Vec<PathBuf>) -> Result<()> {
             restore.clone(),
             style_provider,
         );
-        if restore_is_outside_default_location {
-            for source in &initial_sources {
+        if !requested_sources.is_empty() {
+            for source in &requested_sources {
                 instance.discover(source.clone());
+            }
+        } else if restore_is_outside_default_location {
+            for source in &initial_sources {
+                instance.load_source(source.clone(), None);
             }
         }
         instance.open_notebooks_location();
-        if !restore_is_outside_default_location {
+        if requested_sources.is_empty() && !restore_is_outside_default_location {
             for source in &initial_sources {
-                instance.discover(source.clone());
+                instance.load_source(source.clone(), None);
             }
         }
         instance.window.present();
@@ -287,7 +260,7 @@ fn smoke_quit_delay() -> Option<Duration> {
 }
 
 struct Source {
-    path: PathBuf,
+    descriptor: SourceDescriptor,
     loaded: Arc<LoadedNotebook>,
     last_location: Option<SectionLocation>,
 }
@@ -392,6 +365,46 @@ struct AttachmentContext {
 enum ForegroundOperationKind {
     PackageImport(Arc<AtomicBool>),
     Attachment(crate::attachment::CopyCancellation),
+    BackupLoad(Rc<BackupOperationCancellation>),
+}
+
+struct BackupOperationCancellation {
+    source_path: PathBuf,
+    load: BackupLoadControl,
+    index: RefCell<Option<Arc<AtomicBool>>>,
+}
+
+impl BackupOperationCancellation {
+    fn new(source_path: PathBuf) -> Self {
+        Self {
+            source_path,
+            load: BackupLoadControl::new(),
+            index: RefCell::new(None),
+        }
+    }
+
+    fn cancel(&self) {
+        self.load.cancel();
+        if let Some(index) = self.index.borrow().as_ref() {
+            index.store(true, Ordering::Release);
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.load.is_cancelled()
+            || self
+                .index
+                .borrow()
+                .as_ref()
+                .is_some_and(|cancel| cancel.load(Ordering::Acquire))
+    }
+
+    fn set_index_cancel(&self, cancel: Arc<AtomicBool>) {
+        if self.load.is_cancelled() {
+            cancel.store(true, Ordering::Release);
+        }
+        *self.index.borrow_mut() = Some(cancel);
+    }
 }
 
 struct ForegroundOperation {
@@ -406,6 +419,7 @@ impl ForegroundOperation {
                 cancel.store(true, Ordering::Release);
             }
             ForegroundOperationKind::Attachment(cancel) => cancel.cancel(),
+            ForegroundOperationKind::BackupLoad(cancel) => cancel.cancel(),
         }
     }
 
@@ -413,6 +427,7 @@ impl ForegroundOperation {
         match &self.kind {
             ForegroundOperationKind::PackageImport(cancel) => cancel.load(Ordering::Acquire),
             ForegroundOperationKind::Attachment(cancel) => cancel.is_cancelled(),
+            ForegroundOperationKind::BackupLoad(cancel) => cancel.is_cancelled(),
         }
     }
 }
@@ -430,6 +445,14 @@ struct State {
     restore_target: Option<PersistedPageLocation>,
     pending_expansions: BTreeMap<SourceId, PersistedSourceTreeState>,
     history: NavigationHistory,
+    configured_sources: Vec<SourceDescriptor>,
+    pending_publications: BTreeMap<(SourceId, u64), PendingPublication>,
+}
+
+struct PendingPublication {
+    descriptor: SourceDescriptor,
+    load: worker::SourceLoad,
+    operation_id: Option<u64>,
 }
 
 #[derive(Default)]
@@ -486,7 +509,7 @@ impl SourceDisplayOrder {
 impl State {
     fn upsert_source(
         &mut self,
-        path: PathBuf,
+        descriptor: SourceDescriptor,
         loaded: Arc<LoadedNotebook>,
         restored_location: Option<SectionLocation>,
     ) -> usize {
@@ -497,7 +520,7 @@ impl State {
             .position(|source| source.loaded.notebook.source_id == *source_id)
         {
             let existing = &mut self.sources[position];
-            existing.path = path;
+            existing.descriptor = descriptor;
             existing.loaded = loaded;
             if restored_location.is_some() {
                 existing.last_location = restored_location;
@@ -505,15 +528,16 @@ impl State {
             return position;
         }
 
+        let path = descriptor.path().to_path_buf();
         self.source_order.register(std::iter::once(path.clone()));
         let position = self.source_order.insertion_index(
             &path,
-            self.sources.iter().map(|source| source.path.as_path()),
+            self.sources.iter().map(|source| source.descriptor.path()),
         );
         self.sources.insert(
             position,
             Source {
-                path,
+                descriptor,
                 loaded,
                 last_location: restored_location,
             },
@@ -602,6 +626,58 @@ impl IndexActivity {
 struct WorkspaceRestore {
     page: Option<PersistedPageLocation>,
     ui: Option<WorkspaceUiState>,
+    configured_sources: Vec<SourceDescriptor>,
+}
+
+fn prepare_workspace_restore(
+    persisted: WorkspaceConfig,
+    requested_sources: &[PathBuf],
+    notebooks_location: &std::path::Path,
+) -> (WorkspaceRestore, Vec<SourceDescriptor>, bool) {
+    let configured_sources = if requested_sources.is_empty() {
+        persisted.sources
+    } else {
+        requested_sources
+            .iter()
+            .cloned()
+            .map(SourceDescriptor::native)
+            .collect()
+    };
+    let page = persisted.navigation.last_page.filter(|location| {
+        workspace::source_is_in_workspace(
+            &location.source_path,
+            &configured_sources,
+            notebooks_location,
+        )
+    });
+    let ui = persisted.ui.map(|mut ui| {
+        ui.sources.retain(|source| {
+            workspace::source_is_in_workspace(
+                &source.source_path,
+                &configured_sources,
+                notebooks_location,
+            )
+        });
+        ui
+    });
+    let mut initial_sources = configured_sources
+        .iter()
+        .filter(|source| !workspace::source_is_in_location(source.path(), notebooks_location))
+        .cloned()
+        .collect();
+    prioritize_source_roots(&mut initial_sources, page.as_ref());
+    let outside_default = page.as_ref().is_some_and(|target| {
+        !workspace::source_is_in_location(&target.source_path, notebooks_location)
+    });
+    let restore = WorkspaceRestore {
+        page,
+        ui,
+        configured_sources: requested_sources
+            .is_empty()
+            .then_some(configured_sources)
+            .unwrap_or_default(),
+    };
+    (restore, initial_sources, outside_default)
 }
 
 #[derive(Clone, Copy)]
@@ -648,6 +724,8 @@ struct Viewer {
     operation_progress: gtk::ProgressBar,
     operation_cancel_button: gtk::Button,
     import_package_action: gio::SimpleAction,
+    refresh_source_action: gio::SimpleAction,
+    show_backup_copies_action: gio::SimpleAction,
     page_find_action: gio::SimpleAction,
     history_back_action: gio::SimpleAction,
     history_forward_action: gio::SimpleAction,
@@ -767,7 +845,13 @@ impl Viewer {
 
         let open_file = gio::SimpleAction::new("open-file", None);
         let open_folder = gio::SimpleAction::new("open-folder", None);
+        let open_backup_folder = gio::SimpleAction::new("open-backup-folder", None);
         let import_package = gio::SimpleAction::new("import-package", None);
+        let refresh_source = gio::SimpleAction::new("refresh-source", None);
+        refresh_source.set_enabled(false);
+        let show_backup_copies =
+            gio::SimpleAction::new_stateful("show-backup-copies", None, &false.to_variant());
+        show_backup_copies.set_enabled(false);
         let open_settings = gio::SimpleAction::new("settings", None);
         let show_about = gio::SimpleAction::new("about", None);
         let quit = gio::SimpleAction::new("quit", None);
@@ -791,11 +875,25 @@ impl Viewer {
         file_menu.append(Some("Open OneNote File..."), Some("win.open-file"));
         file_menu.append(Some("Open Notebook Folder..."), Some("win.open-folder"));
         file_menu.append(
+            Some("Open OneNote Backup Folder..."),
+            Some("win.open-backup-folder"),
+        );
+        file_menu.append(
             Some("Import OneNote Package..."),
             Some("win.import-package"),
         );
         let application_menu = gio::Menu::new();
         application_menu.append_section(None, &file_menu);
+        let source_menu = gio::Menu::new();
+        source_menu.append(
+            Some("Refresh Selected Notebook"),
+            Some("win.refresh-source"),
+        );
+        source_menu.append(
+            Some("Show All Backup Copies"),
+            Some("win.show-backup-copies"),
+        );
+        application_menu.append_section(None, &source_menu);
         let navigation_menu = gio::Menu::new();
         navigation_menu.append(Some("Back"), Some("win.history-back"));
         navigation_menu.append(Some("Forward"), Some("win.history-forward"));
@@ -1095,6 +1193,8 @@ impl Viewer {
             operation_progress,
             operation_cancel_button,
             import_package_action: import_package.clone(),
+            refresh_source_action: refresh_source.clone(),
+            show_backup_copies_action: show_backup_copies.clone(),
             page_find_action: page_find.clone(),
             history_back_action: history_back.clone(),
             history_forward_action: history_forward.clone(),
@@ -1107,6 +1207,7 @@ impl Viewer {
                 restore_target: restore.page,
                 pending_expansions,
                 source_order,
+                configured_sources: restore.configured_sources,
                 ..State::default()
             }),
             workspace_path,
@@ -1143,7 +1244,10 @@ impl Viewer {
         }
         viewer.window.add_action(&open_file);
         viewer.window.add_action(&open_folder);
+        viewer.window.add_action(&open_backup_folder);
         viewer.window.add_action(&import_package);
+        viewer.window.add_action(&refresh_source);
+        viewer.window.add_action(&show_backup_copies);
         viewer.window.add_action(&open_settings);
         viewer.window.add_action(&show_about);
         viewer.window.add_action(&quit);
@@ -1172,6 +1276,7 @@ impl Viewer {
             &quit,
             &close_source,
         );
+        viewer.connect_source_actions(&open_backup_folder, &refresh_source, &show_backup_copies);
         viewer.connect_about(&show_about);
         viewer.connect_history();
         viewer.connect_workspace_search(&focus_search);
@@ -1449,6 +1554,41 @@ impl Viewer {
         });
     }
 
+    fn connect_source_actions(
+        self: &Rc<Self>,
+        open_backup_folder: &gio::SimpleAction,
+        refresh_source: &gio::SimpleAction,
+        show_backup_copies: &gio::SimpleAction,
+    ) {
+        let weak = Rc::downgrade(self);
+        open_backup_folder.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.choose_backup_folder();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        refresh_source.connect_activate(move |_, _| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.refresh_active_source();
+            }
+        });
+        let weak = Rc::downgrade(self);
+        show_backup_copies.connect_activate(move |action, _| {
+            let Some(viewer) = weak.upgrade() else {
+                return;
+            };
+            let enabled = action
+                .state()
+                .and_then(|state| state.get::<bool>())
+                .unwrap_or(false);
+            viewer.set_active_backup_policy(if enabled {
+                BackupSelectionPolicy::LatestPerSection
+            } else {
+                BackupSelectionPolicy::AllCopies
+            });
+        });
+    }
+
     fn connect_about(self: &Rc<Self>, show_about: &gio::SimpleAction) {
         let weak = Rc::downgrade(self);
         show_about.connect_activate(move |_, _| {
@@ -1487,7 +1627,7 @@ impl Viewer {
             button.set_sensitive(false);
             viewer
                 .operation_activity_phase
-                .set_label("Cancelling and cleaning temporary output...");
+                .set_label("Cancelling operation...");
         });
     }
 
@@ -1899,19 +2039,25 @@ impl Viewer {
                 self.handle_library_discovered(&location, result);
             }
             Event::Loaded {
-                path,
+                source,
                 index_profile,
+                operation_id,
                 result,
-            } => match result {
-                Ok(loaded) => {
-                    self.add_source(path, Arc::clone(&loaded));
-                    self.queue_index(loaded, index_profile);
+            } => self.handle_source_loaded(source, index_profile, operation_id, result),
+            Event::BackupProgress {
+                operation_id,
+                progress,
+            } => self.handle_backup_progress(operation_id, progress),
+            Event::BackupFallbackRequired {
+                operation_id,
+                root,
+                manifest_error,
+            } => {
+                if self.operation_is_active(operation_id) {
+                    self.finish_operation(operation_id);
+                    self.show_backup_fallback_warning(root, &manifest_error);
                 }
-                Err(error) => {
-                    self.finish_restore_load(&path);
-                    self.show_error("Could not read notebook", &error);
-                }
-            },
+            }
             Event::Indexed {
                 source_id,
                 generation,
@@ -1969,21 +2115,55 @@ impl Viewer {
         }
     }
 
+    fn handle_source_loaded(
+        self: &Rc<Self>,
+        source: SourceDescriptor,
+        index_profile: IndexProfile,
+        operation_id: Option<u64>,
+        result: std::result::Result<worker::SourceLoad, String>,
+    ) {
+        if operation_id.is_some_and(|operation_id| !self.operation_is_active(operation_id)) {
+            return;
+        }
+        match result {
+            Ok(load) if source.is_backup() || operation_id.is_some() => {
+                self.queue_staged_publication(source, load, index_profile, operation_id);
+            }
+            Ok(load) => {
+                self.add_source(source, Arc::clone(&load.loaded));
+                self.queue_index(load.loaded, index_profile);
+            }
+            Err(error) => {
+                self.finish_restore_load(source.path());
+                if let Some(operation_id) = operation_id {
+                    let cancelled = self.operation_was_cancelled(operation_id);
+                    self.finish_operation(operation_id);
+                    if cancelled {
+                        self.status.set_label("Backup loading cancelled");
+                        return;
+                    }
+                }
+                self.show_error("Could not read notebook", &error);
+            }
+        }
+    }
+
     fn handle_discovered(
         self: &Rc<Self>,
         requested: &std::path::Path,
-        result: std::result::Result<Vec<PathBuf>, String>,
+        result: std::result::Result<Vec<SourceDescriptor>, String>,
     ) {
         match result {
             Ok(mut paths) => {
+                apply_source_overrides(&mut paths, &self.state.borrow().configured_sources);
                 self.register_source_order(&paths);
                 prioritize_discovered_sources(
                     &mut paths,
                     self.state.borrow().restore_target.as_ref(),
                 );
                 self.finish_restore_discovery(requested, &paths);
-                for path in paths {
-                    self.load_source(path);
+                for source in paths {
+                    self.load_source(source, None);
                 }
                 self.set_busy(&format!("Opening {}", requested.display()));
             }
@@ -1997,7 +2177,7 @@ impl Viewer {
     fn handle_library_discovered(
         self: &Rc<Self>,
         location: &std::path::Path,
-        result: std::result::Result<Vec<PathBuf>, String>,
+        result: std::result::Result<Vec<SourceDescriptor>, String>,
     ) {
         match result {
             Ok(paths) if paths.is_empty() => {
@@ -2009,6 +2189,7 @@ impl Viewer {
                 ));
             }
             Ok(mut paths) => {
+                apply_source_overrides(&mut paths, &self.state.borrow().configured_sources);
                 self.register_source_order(&paths);
                 prioritize_discovered_sources(
                     &mut paths,
@@ -2016,8 +2197,8 @@ impl Viewer {
                 );
                 self.finish_restore_discovery(location, &paths);
                 let count = paths.len();
-                for path in paths {
-                    self.load_source(path);
+                for source in paths {
+                    self.load_source(source, None);
                 }
                 self.set_busy(&format!(
                     "Opening {count} notebook{} from the default location",
@@ -2145,22 +2326,54 @@ impl Viewer {
         let _ignored = self.source_commands.send(SourceCommand::Discover(path));
     }
 
-    fn load_source(&self, path: PathBuf) {
+    fn load_source(&self, source: SourceDescriptor, operation: Option<(u64, BackupLoadControl)>) {
+        self.load_source_with_manifest_policy(
+            source,
+            operation,
+            onenote_core::RootManifestPolicy::Ignore,
+        );
+    }
+
+    fn load_source_with_manifest_policy(
+        &self,
+        source: SourceDescriptor,
+        operation: Option<(u64, BackupLoadControl)>,
+        root_manifest: onenote_core::RootManifestPolicy,
+    ) {
         let settings = self.settings.borrow();
         let options = load_options(&settings);
         let index_profile = index_profile(&settings);
-        let _ignored = self.source_commands.send(SourceCommand::Load {
-            path,
-            options,
-            index_profile,
-        });
+        let (operation_id, control) = operation.map_or_else(
+            || (None, BackupLoadControl::new()),
+            |(id, control)| (Some(id), control),
+        );
+        if self
+            .source_commands
+            .send(SourceCommand::Load {
+                source,
+                options,
+                index_profile,
+                operation_id,
+                control,
+                root_manifest,
+            })
+            .is_err()
+        {
+            if let Some(operation_id) = operation_id {
+                self.finish_operation(operation_id);
+            }
+            self.show_error(
+                "Could not read notebook",
+                "The source-loading worker is not available.",
+            );
+        }
     }
 
-    fn register_source_order(&self, paths: &[PathBuf]) {
+    fn register_source_order(&self, sources: &[SourceDescriptor]) {
         self.state
             .borrow_mut()
             .source_order
-            .register(paths.iter().cloned());
+            .register(sources.iter().map(|source| source.path().to_path_buf()));
     }
 
     fn open_notebooks_location(&self) {
@@ -2181,7 +2394,8 @@ impl Viewer {
             .send(SourceCommand::DiscoverLibrary(location));
     }
 
-    fn add_source(self: &Rc<Self>, path: PathBuf, loaded: Arc<LoadedNotebook>) {
+    fn add_source(self: &Rc<Self>, descriptor: SourceDescriptor, loaded: Arc<LoadedNotebook>) {
+        let backup_source = descriptor.is_backup();
         let source_id = loaded.notebook.source_id.clone();
         let mut state = self.state.borrow_mut();
         let restored_tree = state
@@ -2191,7 +2405,18 @@ impl Viewer {
         let restored_location =
             restore_location_for_source(state.restore_target.as_ref(), &loaded.notebook);
         let restoring = restored_location.is_some();
-        let display_position = state.upsert_source(path, loaded, restored_location);
+        let previous_path = state
+            .sources
+            .iter()
+            .find(|source| source.loaded.notebook.source_id == source_id)
+            .map(|source| source.descriptor.path().to_path_buf());
+        register_configured_source(
+            &mut state.configured_sources,
+            &descriptor,
+            &self.settings.borrow().notebooks_location,
+            previous_path.as_deref(),
+        );
+        let display_position = state.upsert_source(descriptor, loaded, restored_location);
         let notebook = state
             .sources
             .iter()
@@ -2259,7 +2484,12 @@ impl Viewer {
             });
         }
         self.schedule_workspace_save();
-        self.status.set_label("Notebook opened");
+        self.refresh_source_actions();
+        self.status.set_label(if backup_source {
+            "Backup notebook opened with reconstructed section order"
+        } else {
+            "Notebook opened"
+        });
     }
 
     fn queue_index(&self, loaded: Arc<LoadedNotebook>, profile: IndexProfile) {
@@ -2288,8 +2518,98 @@ impl Viewer {
         self.refresh_index_status();
     }
 
+    fn queue_staged_publication(
+        self: &Rc<Self>,
+        descriptor: SourceDescriptor,
+        load: worker::SourceLoad,
+        profile: IndexProfile,
+        operation_id: Option<u64>,
+    ) {
+        let source_id = load.loaded.notebook.source_id.clone();
+        let loaded = load.loaded.clone();
+        let (generation, cancel) = self.index_activity.borrow_mut().begin(source_id.clone());
+        if let Some(operation_id) = operation_id {
+            if let Some(ForegroundOperation {
+                id,
+                kind: ForegroundOperationKind::BackupLoad(operation),
+            }) = self.foreground_operation.borrow().as_ref()
+            {
+                if *id == operation_id {
+                    operation.set_index_cancel(cancel.clone());
+                }
+            }
+        }
+        self.state
+            .borrow_mut()
+            .pending_publications
+            .retain(|(pending_source, _), _| pending_source != &source_id);
+        self.state.borrow_mut().pending_publications.insert(
+            (source_id.clone(), generation),
+            PendingPublication {
+                descriptor,
+                load,
+                operation_id,
+            },
+        );
+        if self
+            .index_commands
+            .send(IndexCommand::Ensure {
+                loaded,
+                profile,
+                generation,
+                cancel,
+            })
+            .is_err()
+        {
+            self.index_activity
+                .borrow_mut()
+                .take_current(&source_id, generation);
+            let pending = self
+                .state
+                .borrow_mut()
+                .pending_publications
+                .remove(&(source_id, generation));
+            if let Some(operation_id) = pending.and_then(|pending| pending.operation_id) {
+                self.finish_operation(operation_id);
+            }
+            self.show_error(
+                "Could not open backup folder",
+                "The search-index worker is not available.",
+            );
+            return;
+        }
+        if operation_id.is_some() {
+            self.operation_pulsing.set(true);
+            self.operation_progress.set_fraction(0.0);
+            self.operation_activity_phase
+                .set_label("Updating the search index...");
+        }
+        self.refresh_index_status();
+    }
+
+    fn handle_backup_progress(&self, operation_id: Option<u64>, progress: BackupLoadProgress) {
+        let phase = backup_progress_label(progress.phase);
+        self.status.set_label(phase);
+        let Some(operation_id) = operation_id else {
+            return;
+        };
+        if !self.operation_is_active(operation_id) {
+            return;
+        }
+        self.operation_activity_phase.set_label(phase);
+        if progress.total == 0 {
+            self.operation_pulsing.set(true);
+        } else {
+            self.operation_pulsing.set(false);
+            let completed = u32::try_from(progress.completed).unwrap_or(u32::MAX);
+            let total = u32::try_from(progress.total).unwrap_or(u32::MAX);
+            self.operation_progress
+                .set_fraction((f64::from(completed) / f64::from(total)).clamp(0.0, 1.0));
+        }
+    }
+
     fn finish_index(
-        &self,
+        self: &Rc<Self>,
         source_id: &SourceId,
         generation: u64,
         result: std::result::Result<IndexUpdate, String>,
@@ -2301,15 +2621,45 @@ impl Viewer {
         {
             return;
         }
+        let pending = self
+            .state
+            .borrow_mut()
+            .pending_publications
+            .remove(&(source_id.clone(), generation));
         match result {
             Ok(IndexUpdate::Reused) => self.index_activity.borrow_mut().reused += 1,
             Ok(IndexUpdate::Rebuilt) => self.index_activity.borrow_mut().rebuilt += 1,
             Err(error) => {
+                let operation_id = pending.as_ref().and_then(|pending| pending.operation_id);
+                let cancelled = operation_id.is_some_and(|id| self.operation_was_cancelled(id));
+                if let Some(operation_id) = operation_id {
+                    self.finish_operation(operation_id);
+                }
+                if cancelled {
+                    self.status.set_label("Backup loading cancelled");
+                    return;
+                }
                 self.index_activity.borrow_mut().failed += 1;
                 self.show_error(
-                    "Notebook opened, but indexing failed",
+                    if pending.is_some() {
+                        "Could not refresh notebook"
+                    } else {
+                        "Notebook opened, but indexing failed"
+                    },
                     &format!("{source_id}: {error}"),
                 );
+                return;
+            }
+        }
+        if let Some(pending) = pending {
+            let backup_source = pending.descriptor.is_backup();
+            self.add_source(pending.descriptor, pending.load.loaded);
+            if let Some(operation_id) = pending.operation_id {
+                self.finish_operation(operation_id);
+            }
+            if backup_source {
+                self.status
+                    .set_label("Backup notebook opened with reconstructed section order");
                 return;
             }
         }
@@ -2330,17 +2680,25 @@ impl Viewer {
         self.index_activity.borrow_mut().cancel_all();
     }
 
-    fn finish_restore_discovery(self: &Rc<Self>, requested: &std::path::Path, paths: &[PathBuf]) {
+    fn finish_restore_discovery(
+        self: &Rc<Self>,
+        requested: &std::path::Path,
+        sources: &[SourceDescriptor],
+    ) {
+        let paths = sources
+            .iter()
+            .map(|source| source.path().to_path_buf())
+            .collect::<Vec<_>>();
         let mut state = self.state.borrow_mut();
         let page_unavailable =
-            restore_missing_from_discovery(state.restore_target.as_ref(), requested, paths);
+            restore_missing_from_discovery(state.restore_target.as_ref(), requested, &paths);
         if page_unavailable {
             state.restore_target = None;
         }
         let before = state.pending_expansions.len();
         state
             .pending_expansions
-            .retain(|_, source| !tree_state_missing_from_discovery(source, requested, paths));
+            .retain(|_, source| !tree_state_missing_from_discovery(source, requested, &paths));
         let tree_unavailable = before != state.pending_expansions.len();
         drop(state);
         if page_unavailable || tree_unavailable {
@@ -2483,6 +2841,7 @@ impl Viewer {
                 self.page_selection.set_selected(NO_SELECTION);
             });
             self.schedule_workspace_save();
+            self.refresh_source_actions();
         }
     }
 
@@ -2701,6 +3060,7 @@ impl Viewer {
         self.refresh_history_actions();
         self.refresh_workspace_search_scope();
         self.refresh_page_find_action();
+        self.refresh_source_actions();
         true
     }
 
@@ -3121,7 +3481,13 @@ impl Viewer {
             state.pages.clear();
             state.restore_target = None;
             let removed = state.sources.remove(position);
-            state.source_order.remove(&removed.path);
+            state.source_order.remove(removed.descriptor.path());
+            state
+                .configured_sources
+                .retain(|source| !same_source_path(source.path(), removed.descriptor.path()));
+            state
+                .pending_publications
+                .retain(|(source, _), _| source != &source_id);
             {
                 let State {
                     sources, history, ..
@@ -3132,6 +3498,7 @@ impl Viewer {
             (position, removed, history_target)
         };
         let removed_source_id = removed.1.loaded.notebook.source_id.clone();
+        self.cancel_backup_operation_for_source(removed.1.descriptor.path());
         self.cancel_index_source(&removed_source_id);
         let _ignored = self
             .index_commands
@@ -3145,6 +3512,7 @@ impl Viewer {
         self.clear_rendered_page();
         self.refresh_history_actions();
         self.refresh_workspace_search_scope();
+        self.refresh_source_actions();
         if let Some(target) = removed.2.as_ref() {
             if self.activate_location(
                 &target.source,
@@ -3186,25 +3554,20 @@ impl Viewer {
                 .iter()
                 .find(|source| source.loaded.notebook.source_id == active.source)?;
             Some(PersistedPageLocation {
-                source_path: source.path.clone(),
+                source_path: source.descriptor.path().to_path_buf(),
                 source_id: active.source.clone(),
                 section_id: section.section_id.clone(),
                 page_id,
             })
         });
-        let mut sources = state
-            .sources
-            .iter()
-            .map(|source| source.path.clone())
-            .filter(|source| !workspace::source_is_in_location(source, &notebooks_location))
-            .collect::<Vec<_>>();
+        let mut sources = state.configured_sources.clone();
         if let Some(target) = state.restore_target.as_ref().filter(|target| {
             !workspace::source_is_in_location(&target.source_path, &notebooks_location)
                 && !sources
                     .iter()
-                    .any(|source| same_source_path(source, &target.source_path))
+                    .any(|source| same_source_path(source.path(), &target.source_path))
         }) {
-            sources.push(target.source_path.clone());
+            sources.push(SourceDescriptor::native(target.source_path.clone()));
         }
         let mut source_states = state
             .sources
@@ -3213,7 +3576,7 @@ impl Viewer {
                 self.notebook_tree
                     .expansion_state(&source.loaded.notebook.source_id)
                     .map(|expansion| PersistedSourceTreeState {
-                        source_path: source.path.clone(),
+                        source_path: source.descriptor.path().to_path_buf(),
                         source_id: source.loaded.notebook.source_id.clone(),
                         notebook_expanded: expansion.notebook_expanded,
                         expanded_groups: expansion.expanded_groups.into_iter().collect(),
@@ -3328,6 +3691,167 @@ impl Viewer {
                 }
             },
         );
+    }
+
+    fn choose_backup_folder(self: &Rc<Self>) {
+        let initial = gio::File::for_path(&self.settings.borrow().notebooks_location);
+        let dialog = gtk::FileDialog::builder()
+            .title("Open OneNote backup folder")
+            .initial_folder(&initial)
+            .modal(true)
+            .build();
+        let weak = Rc::downgrade(self);
+        dialog.select_folder(
+            Some(&self.window),
+            None::<&gio::Cancellable>,
+            move |result| {
+                let Some(viewer) = weak.upgrade() else {
+                    return;
+                };
+                match result {
+                    Ok(file) => {
+                        if let Some(path) = file.path() {
+                            viewer.start_backup_load(
+                                SourceDescriptor::backup(
+                                    path,
+                                    BackupSelectionPolicy::LatestPerSection,
+                                ),
+                                "Opening OneNote backup folder",
+                                onenote_core::RootManifestPolicy::Reject,
+                            );
+                        }
+                    }
+                    Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
+                    Err(error) => {
+                        viewer.show_error("Could not select backup folder", &error.to_string());
+                    }
+                }
+            },
+        );
+    }
+
+    fn refresh_active_source(self: &Rc<Self>) {
+        let descriptor = {
+            let state = self.state.borrow();
+            let Some(active) = state.active.as_ref() else {
+                return;
+            };
+            state
+                .sources
+                .iter()
+                .find(|source| source.loaded.notebook.source_id == active.source)
+                .map(|source| source.descriptor.clone())
+        };
+        let Some(descriptor) = descriptor.filter(SourceDescriptor::is_backup) else {
+            return;
+        };
+        self.start_backup_load(
+            descriptor,
+            "Refreshing OneNote backup folder",
+            onenote_core::RootManifestPolicy::Ignore,
+        );
+    }
+
+    fn set_active_backup_policy(self: &Rc<Self>, policy: BackupSelectionPolicy) {
+        let descriptor = {
+            let state = self.state.borrow();
+            let Some(active) = state.active.as_ref() else {
+                return;
+            };
+            state
+                .sources
+                .iter()
+                .find(|source| source.loaded.notebook.source_id == active.source)
+                .map(|source| source.descriptor.with_backup_selection(policy))
+        };
+        let Some(descriptor) = descriptor.filter(SourceDescriptor::is_backup) else {
+            return;
+        };
+        self.start_backup_load(
+            descriptor,
+            "Changing backup snapshot view",
+            onenote_core::RootManifestPolicy::Ignore,
+        );
+    }
+
+    fn start_backup_load(
+        &self,
+        descriptor: SourceDescriptor,
+        title: &str,
+        root_manifest: onenote_core::RootManifestPolicy,
+    ) {
+        if self.foreground_operation.borrow().is_some() {
+            self.status
+                .set_label("Another file operation is already running");
+            return;
+        }
+        let operation_id = self.allocate_operation_id();
+        let cancellation = Rc::new(BackupOperationCancellation::new(
+            descriptor.path().to_path_buf(),
+        ));
+        let control = cancellation.load.clone();
+        *self.foreground_operation.borrow_mut() = Some(ForegroundOperation {
+            id: operation_id,
+            kind: ForegroundOperationKind::BackupLoad(cancellation),
+        });
+        self.operation_pulsing.set(true);
+        self.operation_cancel_button.set_sensitive(true);
+        self.operation_progress.set_fraction(0.0);
+        self.operation_activity_title.set_label(title);
+        self.operation_activity_phase
+            .set_label("Inspecting backup folder...");
+        self.operation_activity.set_reveal_child(true);
+        self.refresh_source_action.set_enabled(false);
+        self.show_backup_copies_action.set_enabled(false);
+        self.set_busy(title);
+        self.load_source_with_manifest_policy(
+            descriptor,
+            Some((operation_id, control)),
+            root_manifest,
+        );
+    }
+
+    fn cancel_backup_operation_for_source(&self, source_path: &std::path::Path) {
+        let operation_id = {
+            let operation = self.foreground_operation.borrow();
+            operation
+                .as_ref()
+                .and_then(|operation| match &operation.kind {
+                    ForegroundOperationKind::BackupLoad(cancel)
+                        if same_source_path(&cancel.source_path, source_path) =>
+                    {
+                        operation.cancel();
+                        Some(operation.id)
+                    }
+                    _ => None,
+                })
+        };
+        if let Some(operation_id) = operation_id {
+            self.finish_operation(operation_id);
+        }
+    }
+
+    fn refresh_source_actions(&self) {
+        let selection = {
+            let state = self.state.borrow();
+            state.active.as_ref().and_then(|active| {
+                state
+                    .sources
+                    .iter()
+                    .find(|source| source.loaded.notebook.source_id == active.source)
+                    .and_then(|source| match &source.descriptor {
+                        SourceDescriptor::BackupFolder { selection, .. } => Some(*selection),
+                        SourceDescriptor::NativeFile { .. } => None,
+                    })
+            })
+        };
+        let idle = self.foreground_operation.borrow().is_none();
+        self.refresh_source_action
+            .set_enabled(selection.is_some() && idle);
+        self.show_backup_copies_action
+            .set_enabled(selection.is_some() && idle);
+        self.show_backup_copies_action
+            .set_state(&(selection == Some(BackupSelectionPolicy::AllCopies)).to_variant());
     }
 
     fn choose_package(self: &Rc<Self>) {
@@ -3451,19 +3975,19 @@ impl Viewer {
     }
 
     fn reload_sources_for_link_detection(&self) {
-        let paths = self
+        let sources = self
             .state
             .borrow()
             .sources
             .iter()
-            .map(|source| source.path.clone())
+            .map(|source| source.descriptor.clone())
             .collect::<Vec<_>>();
-        if paths.is_empty() {
+        if sources.is_empty() {
             return;
         }
         self.set_busy("Applying link detection setting");
-        for path in paths {
-            self.load_source(path);
+        for source in sources {
+            self.load_source(source, None);
         }
     }
 
@@ -3543,6 +4067,7 @@ impl Viewer {
         self.operation_cancel_button.set_sensitive(false);
         self.import_package_action.set_enabled(true);
         self.operation_activity.set_reveal_child(false);
+        self.refresh_source_actions();
     }
 
     fn cancel_foreground_operation_for_shutdown(&self, timeout: Duration) {
@@ -3554,6 +4079,12 @@ impl Viewer {
             operation.cancel();
             operation.id
         };
+        let pending_index = self.state.borrow().pending_publications.iter().find_map(
+            |((source_id, generation), publication)| {
+                (publication.operation_id == Some(operation_id))
+                    .then(|| (source_id.clone(), *generation))
+            },
+        );
         let deadline = std::time::Instant::now() + timeout;
         while std::time::Instant::now() < deadline {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
@@ -3567,8 +4098,26 @@ impl Viewer {
                     | Event::AttachmentCopied {
                         operation_id: completed,
                         ..
+                    }
+                    | Event::Loaded {
+                        operation_id: Some(completed),
+                        ..
+                    }
+                    | Event::BackupFallbackRequired {
+                        operation_id: completed,
+                        ..
                     },
                 ) if completed == operation_id => break,
+                Ok(Event::Indexed {
+                    source_id,
+                    generation,
+                    ..
+                }) if pending_index
+                    .as_ref()
+                    .is_some_and(|pending| pending.0 == source_id && pending.1 == generation) =>
+                {
+                    break;
+                }
                 Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
             }
@@ -3705,6 +4254,69 @@ impl Viewer {
 
         dialog.set_child(Some(&content));
         close.grab_focus();
+        dialog.present();
+    }
+
+    fn show_backup_fallback_warning(self: &Rc<Self>, root: PathBuf, manifest_error: &str) {
+        let dialog = gtk::Window::builder()
+            .title("Notebook manifest could not be read")
+            .transient_for(&self.window)
+            .modal(true)
+            .resizable(true)
+            .default_width(640)
+            .default_height(300)
+            .build();
+        dialog.add_css_class("error-dialog");
+
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+        content.set_margin_start(18);
+        content.set_margin_end(18);
+        content.set_margin_top(18);
+        content.set_margin_bottom(18);
+        let heading = gtk::Label::builder()
+            .label("The folder contains a notebook table of contents, but it could not be read.")
+            .wrap(true)
+            .xalign(0.0)
+            .selectable(true)
+            .build();
+        heading.add_css_class("error-title");
+        let detail = gtk::Label::builder()
+            .label(format!(
+                "{manifest_error}\n\nOpening the folder as a backup reconstructs section groups and order from filenames and directories. The source files will not be changed."
+            ))
+            .wrap(true)
+            .wrap_mode(gtk::pango::WrapMode::WordChar)
+            .xalign(0.0)
+            .yalign(0.0)
+            .selectable(true)
+            .vexpand(true)
+            .build();
+        let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        actions.set_halign(gtk::Align::End);
+        let cancel = gtk::Button::with_label("Cancel");
+        let open = gtk::Button::with_label("Open as Backup");
+        open.add_css_class("suggested-action");
+        actions.append(&cancel);
+        actions.append(&open);
+        content.append(&heading);
+        content.append(&detail);
+        content.append(&actions);
+        dialog.set_child(Some(&content));
+
+        let close_dialog = dialog.clone();
+        cancel.connect_clicked(move |_| close_dialog.close());
+        let weak = Rc::downgrade(self);
+        let open_dialog = dialog.clone();
+        open.connect_clicked(move |_| {
+            open_dialog.close();
+            if let Some(viewer) = weak.upgrade() {
+                viewer.start_backup_load(
+                    SourceDescriptor::backup(root.clone(), BackupSelectionPolicy::LatestPerSection),
+                    "Opening OneNote backup folder",
+                    onenote_core::RootManifestPolicy::Ignore,
+                );
+            }
+        });
         dialog.present();
     }
 }
@@ -4782,36 +5394,85 @@ fn index_profile(settings: &AppSettings) -> IndexProfile {
 }
 
 fn prioritize_discovered_sources(
-    sources: &mut Vec<PathBuf>,
+    sources: &mut Vec<SourceDescriptor>,
     target: Option<&PersistedPageLocation>,
 ) {
     let Some(target) = target else {
         return;
     };
     move_matching_source_first(sources, |source| {
-        same_source_path(source, &target.source_path)
+        same_source_path(source.path(), &target.source_path)
     });
 }
 
-fn prioritize_source_roots(sources: &mut Vec<PathBuf>, target: Option<&PersistedPageLocation>) {
+fn prioritize_source_roots(
+    sources: &mut Vec<SourceDescriptor>,
+    target: Option<&PersistedPageLocation>,
+) {
     let Some(target) = target else {
         return;
     };
     move_matching_source_first(sources, |source| {
-        workspace::source_is_in_location(&target.source_path, source)
+        workspace::source_is_in_location(&target.source_path, source.path())
     });
 }
 
-fn move_matching_source_first(
-    sources: &mut Vec<PathBuf>,
-    predicate: impl Fn(&std::path::Path) -> bool,
-) {
-    let Some(position) = sources.iter().position(|source| predicate(source)) else {
+fn move_matching_source_first<T>(sources: &mut Vec<T>, predicate: impl Fn(&T) -> bool) {
+    let Some(position) = sources.iter().position(predicate) else {
         return;
     };
     if position != 0 {
         let source = sources.remove(position);
         sources.insert(0, source);
+    }
+}
+
+fn register_configured_source(
+    configured: &mut Vec<SourceDescriptor>,
+    descriptor: &SourceDescriptor,
+    notebooks_location: &std::path::Path,
+    previous_path: Option<&std::path::Path>,
+) {
+    if workspace::source_is_in_location(descriptor.path(), notebooks_location)
+        && !descriptor.is_backup()
+    {
+        if let Some(previous_path) = previous_path {
+            configured.retain(|source| !same_source_path(source.path(), previous_path));
+        }
+        return;
+    }
+    if let Some(existing) = configured.iter_mut().find(|source| {
+        same_source_path(source.path(), descriptor.path())
+            || previous_path.is_some_and(|path| same_source_path(source.path(), path))
+    }) {
+        *existing = descriptor.clone();
+    } else {
+        configured.push(descriptor.clone());
+    }
+}
+
+fn apply_source_overrides(discovered: &mut [SourceDescriptor], configured: &[SourceDescriptor]) {
+    for source in discovered {
+        let Some(override_source) = configured.iter().find(|configured| {
+            configured.is_backup()
+                && source.is_backup()
+                && same_source_path(configured.path(), source.path())
+        }) else {
+            continue;
+        };
+        *source = override_source.clone();
+    }
+}
+
+const fn backup_progress_label(phase: BackupProgressPhase) -> &'static str {
+    match phase {
+        BackupProgressPhase::Classifying => "Checking backup folder",
+        BackupProgressPhase::Discovering => "Discovering backup sections",
+        BackupProgressPhase::Grouping => "Grouping backup snapshots",
+        BackupProgressPhase::Selecting => "Selecting backup snapshots",
+        BackupProgressPhase::Parsing => "Reading backup sections",
+        BackupProgressPhase::Assembling => "Assembling reconstructed notebook",
+        BackupProgressPhase::Verifying => "Verifying backup snapshot",
     }
 }
 
@@ -4880,33 +5541,109 @@ mod tests {
     fn startup_priority_does_not_change_notebook_presentation_order() {
         let target = persisted_page("wanted", "/notes/Wanted/Open Notebook.onetoc2");
         let presentation_order = vec![
-            PathBuf::from("/notes/First/Open Notebook.onetoc2"),
-            PathBuf::from("/notes/Wanted/Open Notebook.onetoc2"),
-            PathBuf::from("/notes/Last/Open Notebook.onetoc2"),
+            SourceDescriptor::native("/notes/First/Open Notebook.onetoc2"),
+            SourceDescriptor::native("/notes/Wanted/Open Notebook.onetoc2"),
+            SourceDescriptor::native("/notes/Last/Open Notebook.onetoc2"),
         ];
-        let order = SourceDisplayOrder::new(presentation_order.clone());
+        let order = SourceDisplayOrder::new(
+            presentation_order
+                .iter()
+                .map(|source| source.path().to_path_buf()),
+        );
         let mut discovered = presentation_order.clone();
         prioritize_discovered_sources(&mut discovered, Some(&target));
         assert_eq!(
             discovered,
             vec![
-                PathBuf::from("/notes/Wanted/Open Notebook.onetoc2"),
-                PathBuf::from("/notes/First/Open Notebook.onetoc2"),
-                PathBuf::from("/notes/Last/Open Notebook.onetoc2"),
+                SourceDescriptor::native("/notes/Wanted/Open Notebook.onetoc2"),
+                SourceDescriptor::native("/notes/First/Open Notebook.onetoc2"),
+                SourceDescriptor::native("/notes/Last/Open Notebook.onetoc2"),
             ]
         );
         let mut visible = Vec::new();
         for source in discovered {
-            let position = order.insertion_index(&source, visible.iter().map(PathBuf::as_path));
+            let position =
+                order.insertion_index(source.path(), visible.iter().map(SourceDescriptor::path));
             visible.insert(position, source);
         }
         assert_eq!(visible, presentation_order);
 
-        let mut roots = vec![PathBuf::from("/archive"), PathBuf::from("/notes")];
+        let mut roots = vec![
+            SourceDescriptor::native("/archive"),
+            SourceDescriptor::native("/notes"),
+        ];
         prioritize_source_roots(&mut roots, Some(&target));
         assert_eq!(
             roots,
-            vec![PathBuf::from("/notes"), PathBuf::from("/archive")]
+            vec![
+                SourceDescriptor::native("/notes"),
+                SourceDescriptor::native("/archive")
+            ]
+        );
+    }
+
+    #[test]
+    fn persisted_backup_policy_overrides_default_library_discovery() {
+        let root = PathBuf::from("/notes/Backup");
+        let mut discovered = vec![SourceDescriptor::backup(
+            &root,
+            BackupSelectionPolicy::LatestPerSection,
+        )];
+        let configured = vec![SourceDescriptor::backup(
+            &root,
+            BackupSelectionPolicy::AllCopies,
+        )];
+
+        apply_source_overrides(&mut discovered, &configured);
+
+        assert_eq!(discovered, configured);
+    }
+
+    #[test]
+    fn default_location_keeps_only_backup_policy_overrides() {
+        let default = std::path::Path::new("/notes");
+        let mut configured = Vec::new();
+        register_configured_source(
+            &mut configured,
+            &SourceDescriptor::native("/notes/Native/Open Notebook.onetoc2"),
+            default,
+            None,
+        );
+        register_configured_source(
+            &mut configured,
+            &SourceDescriptor::backup("/notes/Backup", BackupSelectionPolicy::AllCopies),
+            default,
+            None,
+        );
+
+        assert_eq!(
+            configured,
+            vec![SourceDescriptor::backup(
+                "/notes/Backup",
+                BackupSelectionPolicy::AllCopies
+            )]
+        );
+    }
+
+    #[test]
+    fn canonicalized_backup_path_replaces_the_original_workspace_entry() {
+        let mut configured = vec![SourceDescriptor::backup(
+            "/alias/Backup",
+            BackupSelectionPolicy::LatestPerSection,
+        )];
+        register_configured_source(
+            &mut configured,
+            &SourceDescriptor::backup("/canonical/Backup", BackupSelectionPolicy::LatestPerSection),
+            std::path::Path::new("/notes"),
+            Some(std::path::Path::new("/alias/Backup")),
+        );
+
+        assert_eq!(
+            configured,
+            vec![SourceDescriptor::backup(
+                "/canonical/Backup",
+                BackupSelectionPolicy::LatestPerSection
+            )]
         );
     }
 
@@ -4939,6 +5676,18 @@ mod tests {
         assert!(first.load(Ordering::Acquire));
         assert!(second.load(Ordering::Acquire));
         assert!(activity.jobs.is_empty());
+    }
+
+    #[test]
+    fn backup_cancellation_carries_from_loading_into_indexing() {
+        let cancellation = BackupOperationCancellation::new(PathBuf::from("/backup"));
+        cancellation.cancel();
+        let index = Arc::new(AtomicBool::new(false));
+
+        cancellation.set_index_cancel(index.clone());
+
+        assert!(index.load(Ordering::Acquire));
+        assert!(cancellation.is_cancelled());
     }
 
     #[test]

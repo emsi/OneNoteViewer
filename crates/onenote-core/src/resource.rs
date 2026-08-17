@@ -115,8 +115,15 @@ pub struct ResourceStore {
 }
 
 impl ResourceStore {
-    pub(crate) fn insert(&mut self, id: ResourceId, loader: ResourceLoader) {
-        self.loaders.insert(id, loader);
+    pub(crate) fn insert(&mut self, id: ResourceId, loader: ResourceLoader) -> Result<()> {
+        use std::collections::hash_map::Entry;
+        match self.loaders.entry(id.clone()) {
+            Entry::Vacant(entry) => {
+                entry.insert(loader);
+                Ok(())
+            }
+            Entry::Occupied(_) => Err(Error::ResourceCollision { id }),
+        }
     }
 
     /// Number of lazy payloads available.

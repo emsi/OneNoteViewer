@@ -2,6 +2,7 @@
 
 #![forbid(unsafe_code)]
 
+mod backup;
 mod error;
 mod math;
 mod model;
@@ -9,6 +10,12 @@ mod package;
 mod parser;
 mod resource;
 
+pub use backup::{
+    BackupDate, BackupDiagnostic, BackupFolderError, BackupFolderInspection, BackupFolderLimits,
+    BackupFolderLoader, BackupFolderOptions, BackupLoadControl, BackupLoadProgress,
+    BackupLoadResult, BackupProgressPhase, BackupResult, BackupSelectionPolicy, BackupSnapshot,
+    BackupSnapshotDisposition, BackupSnapshotReason, RootManifestPolicy, SourceDescriptor,
+};
 pub use error::{Error, Result};
 pub use math::{MathExpression, MathNode, MathSpan};
 pub use model::{
@@ -27,7 +34,7 @@ pub use resource::{
 };
 
 /// The crate API version during the pre-1.0 implementation phase.
-pub const API_VERSION: u32 = 7;
+pub const API_VERSION: u32 = 8;
 
 /// Logical display pixels per `OneNote` half-inch layout unit at 96 DPI.
 pub const PIXELS_PER_HALF_INCH: f32 = 48.0;

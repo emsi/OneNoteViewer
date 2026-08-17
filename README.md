@@ -40,6 +40,9 @@ updates, removal, and the AppImage alternative.
   printouts, and OfficeMath equations on the freeform page canvas.
 - Imports complete `.onepkg` notebook exports through a guided, validated,
   on-disk process with progress and cancellation.
+- Opens manifest-free OneNote backup folders as one reconstructed notebook,
+  preserving nested directories as section groups and selecting the latest
+  dated copy of each section by default.
 - Keeps multiple notebooks open in one workspace with nested section groups,
   collapsible navigation, scoped search, complete result paths, and indexing of
   page titles and stored content.
@@ -60,10 +63,15 @@ updates, removal, and the AppImage alternative.
 ## Open Notebooks
 
 Use **Open Notebook Folder...** for a locally copied OneNote notebook directory,
-or **Open OneNote File...** for a standalone `.one` section. Additional notebook
-directories join the same searchable workspace without being moved. Notebook
-folders placed under the configurable default notebooks location open
-automatically on the next launch.
+or **Open OneNote File...** for a standalone `.one` section. Use **Open OneNote
+Backup Folder...** when a desktop backup contains dated `.one` section copies
+but no usable notebook table of contents. The backup opens as one notebook;
+folders become nested section groups, while the application menu can refresh
+the source or show every backup copy.
+
+Additional notebook directories join the same searchable workspace without
+being moved. Notebook and backup folders placed under the configurable default
+notebooks location open automatically on the next launch.
 
 ## Import a OneNote Package
 

@@ -1,5 +1,8 @@
-use onenote_core::OneNoteLoader;
+use onenote_core::{
+    BackupFolderLoader, BackupFolderOptions, BackupLoadControl, LoadedNotebook, OneNoteLoader,
+};
 use std::env;
+use std::path::Path;
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -8,7 +11,7 @@ fn main() -> ExitCode {
         return ExitCode::from(2);
     };
 
-    match OneNoteLoader::default().load(&path) {
+    match load_source(Path::new(&path)) {
         Ok(loaded) => {
             let diagnostics = loaded
                 .notebook
@@ -47,4 +50,21 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+fn load_source(path: &Path) -> Result<LoadedNotebook, String> {
+    if !path.is_dir() {
+        return OneNoteLoader::default()
+            .load(path)
+            .map_err(|error| error.to_string());
+    }
+    let loader = BackupFolderLoader::default();
+    let control = BackupLoadControl::new();
+    let inspection = loader
+        .inspect(path, BackupFolderOptions::default(), &control, |_| {})
+        .map_err(|error| error.to_string())?;
+    loader
+        .load(inspection, &control, |_| {})
+        .map(|result| result.loaded)
+        .map_err(|error| error.to_string())
 }
