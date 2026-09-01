@@ -930,11 +930,20 @@ fn inline_bounds(
     default_width: f32,
     default_height: f32,
 ) -> Rect {
+    let width = width.unwrap_or(default_width);
+    let height = height.unwrap_or(default_height);
+    // Clamp to the available column width while preserving the aspect ratio.
+    // Clamping the width alone visibly distorts wide images.
+    let scale = if width > cursor.width {
+        cursor.width / width
+    } else {
+        1.0
+    };
     Rect {
         x: cursor.x,
         y: cursor.y,
-        width: width.unwrap_or(default_width).min(cursor.width).max(1.0),
-        height: height.unwrap_or(default_height).max(1.0),
+        width: (width * scale).max(1.0),
+        height: (height * scale).max(1.0),
     }
 }
 
