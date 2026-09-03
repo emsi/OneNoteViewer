@@ -14,7 +14,11 @@ reported by:
 onenote-viewer --source
 ```
 
-The active MPL-2.0 OneNote parser source is available at:
+The exact active MPL-2.0 OneNote parser source is available at:
+
+<https://github.com/emsi/onenote.rs/tree/77cf881df7579eb58972e3db8ce0ca34d25a7f62>
+
+That revision is based on upstream `v2.0.0`:
 
 <https://github.com/msiemens/onenote.rs/tree/v2.0.0>
 

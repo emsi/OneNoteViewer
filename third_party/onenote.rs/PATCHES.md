@@ -2,10 +2,12 @@
 
 The active application dependency is the public
 [`emsi/onenote.rs`](https://github.com/emsi/onenote.rs) fork, pinned at revision
-`57694b1ca128d4a6c1fb222f31049be3e6830599`. It builds on upstream `v2.0.0` and
+`77cf881df7579eb58972e3db8ce0ca34d25a7f62`. It builds on upstream `v2.0.0` and
 adds the supplemental-picture API used for stored image fallbacks and attachment
-icons. The compatibility changes formerly maintained in the fork are included
-in upstream `v2.0.0`.
+icons, complete debug output, stable OneStore file identities, and support for a
+specification-permitted placement of revision dependency overrides. The older
+compatibility changes formerly maintained in the fork are included in upstream
+`v2.0.0`.
 
 This directory retains an MPL-2.0 source snapshot for audit history and
 fallback inspection; Cargo does not build it. Upstream test samples and
@@ -47,6 +49,10 @@ only through `onenote-core`.
 9. `RichText` exposes structured hyperlinks as exact targets plus UTF-16 source
    ranges. Hidden `HYPERLINK` marker runs are associated with adjacent visible
    hyperlink runs without changing the existing raw text or style APIs.
+10. Revision parsing accepts `ObjectInfoDependencyOverridesFND` in the general
+    revision node sequence permitted by `[MS-ONESTORE]` section 2.1.9. The
+    parser consistently ignores this reference-count metadata while
+    materializing objects instead of rejecting the complete section.
 
 The supplied private corpus has one section requiring patch 1 and two sections
 that reach a wider numeric property requiring patches 2 and 3. All 32 native
@@ -79,6 +85,11 @@ revision materialization was merged through
 Structured rich-text hyperlinks were merged through
 [msiemens/onenote.rs#42](https://github.com/msiemens/onenote.rs/pull/42).
 
+General revision dependency overrides are submitted upstream through
+[msiemens/onenote.rs#46](https://github.com/msiemens/onenote.rs/pull/46) and fix
+[OneNoteViewer issue #57](https://github.com/emsi/OneNoteViewer/issues/57).
+
 Upstream release `v2.0.0` contains the former compatibility changes, including
 the `GlobalIdTableEntry3FNDX` range resolution. OneNoteViewer's current pinned
-revision additionally contains the supplemental-picture API described above.
+revision additionally contains the downstream APIs and pending compatibility
+change described above.
