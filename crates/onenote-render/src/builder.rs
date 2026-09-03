@@ -36,6 +36,10 @@ const UNAVAILABLE_RESOURCE_COLOR: Color = Color {
     blue: 235,
     alpha: 255,
 };
+const DEFAULT_INLINE_IMAGE_WIDTH: f32 = 240.0;
+const DEFAULT_INLINE_IMAGE_HEIGHT: f32 = 180.0;
+const DEFAULT_INLINE_ATTACHMENT_WIDTH: f32 = 220.0;
+const DEFAULT_INLINE_ATTACHMENT_HEIGHT: f32 = 44.0;
 
 /// Deterministic scene-construction options.
 #[derive(Clone, Copy, Debug)]
@@ -244,14 +248,13 @@ impl BuildState<'_> {
             }
             ElementContent::Table(table) => self.table(object, table, cursor, z_index, &flow_path),
             ElementContent::Image(image) => {
-                let bounds = inline_bounds(cursor, image.width, image.height, 240.0, 180.0);
+                let bounds = inline_image_bounds(cursor, image.width, image.height);
                 self.image(object, bounds, image.clone(), z_index, &flow_path)?;
                 cursor.y += bounds.height + self.options.content_padding;
                 Ok(())
             }
             ElementContent::Attachment(attachment) => {
-                let bounds =
-                    inline_bounds(cursor, attachment.width, attachment.height, 220.0, 44.0);
+                let bounds = inline_attachment_bounds(cursor, attachment.width, attachment.height);
                 self.attachment(object, bounds, attachment.clone(), z_index, &flow_path)?;
                 cursor.y += bounds.height + self.options.content_padding;
                 Ok(())
@@ -923,28 +926,48 @@ fn roman(value: i32) -> Option<String> {
     Some(output)
 }
 
-fn inline_bounds(
-    cursor: &Cursor,
-    width: Option<f32>,
-    height: Option<f32>,
-    default_width: f32,
-    default_height: f32,
-) -> Rect {
-    let width = width.unwrap_or(default_width);
-    let height = height.unwrap_or(default_height);
-    // Clamp to the available column width while preserving the aspect ratio.
-    // Clamping the width alone visibly distorts wide images.
-    let scale = if width > cursor.width {
-        cursor.width / width
-    } else {
-        1.0
-    };
+fn inline_image_bounds(cursor: &Cursor, width: Option<f32>, height: Option<f32>) -> Rect {
+    let (width, height) = fit_inline_image_size(width, height, cursor.width);
     Rect {
         x: cursor.x,
         y: cursor.y,
-        width: (width * scale).max(1.0),
-        height: (height * scale).max(1.0),
+        width,
+        height,
     }
+}
+
+fn inline_attachment_bounds(cursor: &Cursor, width: Option<f32>, height: Option<f32>) -> Rect {
+    Rect {
+        x: cursor.x,
+        y: cursor.y,
+        width: width
+            .unwrap_or(DEFAULT_INLINE_ATTACHMENT_WIDTH)
+            .min(cursor.width)
+            .max(1.0),
+        height: height.unwrap_or(DEFAULT_INLINE_ATTACHMENT_HEIGHT).max(1.0),
+    }
+}
+
+fn fit_inline_image_size(
+    width: Option<f32>,
+    height: Option<f32>,
+    available_width: f32,
+) -> (f32, f32) {
+    let width = positive_dimension(width, DEFAULT_INLINE_IMAGE_WIDTH);
+    let height = positive_dimension(height, DEFAULT_INLINE_IMAGE_HEIGHT);
+    let available_width = if available_width.is_finite() && available_width > 0.0 {
+        available_width
+    } else {
+        width
+    };
+    let scale = (available_width / width).min(1.0);
+    ((width * scale).max(1.0), (height * scale).max(1.0))
+}
+
+fn positive_dimension(value: Option<f32>, fallback: f32) -> f32 {
+    value
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(fallback)
 }
 
 fn table_widths(table: &Table, columns: usize, available: f32) -> Vec<f32> {
@@ -963,6 +986,10 @@ fn table_widths(table: &Table, columns: usize, available: f32) -> Vec<f32> {
 }
 
 fn estimate_elements_height(elements: &[OutlineElement], width: f32, options: SceneOptions) -> f32 {
+    if elements.is_empty() {
+        return 0.0;
+    }
+    let content_width = (width - options.content_padding * 2.0).max(20.0);
     elements
         .iter()
         .map(|element| {
@@ -974,8 +1001,12 @@ fn estimate_elements_height(elements: &[OutlineElement], width: f32, options: Sc
                     ElementContent::Table(table) => {
                         f32::from(u16::try_from(table.rows.len()).unwrap_or(u16::MAX)) * 32.0
                     }
-                    ElementContent::Image(image) => image.height.unwrap_or(180.0),
-                    ElementContent::Attachment(attachment) => attachment.height.unwrap_or(44.0),
+                    ElementContent::Image(image) => {
+                        fit_inline_image_size(image.width, image.height, content_width).1
+                    }
+                    ElementContent::Attachment(attachment) => attachment
+                        .height
+                        .unwrap_or(DEFAULT_INLINE_ATTACHMENT_HEIGHT),
                     ElementContent::Ink(ink) => ink_height(ink),
                     ElementContent::Unknown => 44.0,
                 })
@@ -1082,8 +1113,11 @@ fn scene_bounds(page: &Page, nodes: &[SceneNode], options: SceneOptions) -> Rect
 
 #[cfg(test)]
 mod tests {
-    use super::{estimate_text_height, format_list_number, ListState, SceneBuilder, SceneOptions};
-    use crate::{AccessibilityRole, Error, HitAction, ScenePrimitive};
+    use super::{
+        estimate_elements_height, estimate_text_height, fit_inline_image_size, format_list_number,
+        inline_attachment_bounds, Cursor, ListState, SceneBuilder, SceneOptions,
+    };
+    use crate::{AccessibilityRole, Error, HitAction, SceneFlowId, ScenePrimitive};
     use onenote_core::{
         Attachment, ElementContent, Image, ListMarker, ListMarkerPart, ListNumberFormat, ObjectId,
         ObjectKind, Outline, OutlineElement, Page, PageId, PageObject, PageObjectRole, Rect,
@@ -1091,6 +1125,54 @@ mod tests {
         TextStyle,
     };
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn inline_images_fit_available_width_without_distortion_or_upscaling() {
+        assert_size(
+            fit_inline_image_size(Some(400.0), Some(200.0), 100.0),
+            (100.0, 50.0),
+        );
+        assert_size(
+            fit_inline_image_size(Some(80.0), Some(40.0), 100.0),
+            (80.0, 40.0),
+        );
+        assert_size(fit_inline_image_size(None, None, 120.0), (120.0, 90.0));
+        assert_size(
+            fit_inline_image_size(Some(f32::INFINITY), Some(0.0), 120.0),
+            (120.0, 90.0),
+        );
+    }
+
+    #[test]
+    fn fitting_images_does_not_shrink_inline_attachments() {
+        let cursor = Cursor {
+            x: 0.0,
+            y: 0.0,
+            width: 100.0,
+            flow_group: SceneFlowId(String::new()),
+            flow_ancestors: Vec::new(),
+            next_flow_order: 0,
+        };
+
+        let bounds = inline_attachment_bounds(&cursor, None, None);
+
+        assert_size((bounds.width, bounds.height), (100.0, 44.0));
+    }
+
+    #[test]
+    fn table_height_estimation_uses_the_fitted_image_height() {
+        let elements = vec![OutlineElement {
+            level: 0,
+            list: None,
+            content: vec![ElementContent::Image(inline_image(400.0, 200.0))],
+            children: Vec::new(),
+        }];
+
+        assert!(
+            (estimate_elements_height(&elements, 100.0, SceneOptions::default()) - 58.0).abs()
+                < f32::EPSILON
+        );
+    }
 
     #[test]
     fn text_height_counts_explicit_and_empty_lines() {
@@ -1556,5 +1638,29 @@ mod tests {
             })],
             children: Vec::new(),
         }
+    }
+
+    fn inline_image(width: f32, height: f32) -> Image {
+        Image {
+            resource: ResourceRef {
+                id: ResourceId::new("image"),
+                name: "image.png".to_owned(),
+                media_type: "image/png".to_owned(),
+                size: 0,
+                status: ResourceStatus::Available,
+            },
+            web_fallback: None,
+            width: Some(width),
+            height: Some(height),
+            alt_text: None,
+            search_text: None,
+            hyperlink: None,
+            is_background: false,
+        }
+    }
+
+    fn assert_size(actual: (f32, f32), expected: (f32, f32)) {
+        assert!((actual.0 - expected.0).abs() < f32::EPSILON);
+        assert!((actual.1 - expected.1).abs() < f32::EPSILON);
     }
 }
