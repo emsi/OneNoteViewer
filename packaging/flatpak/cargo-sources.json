@@ -2,8 +2,8 @@
     {
         "type": "git",
         "url": "https://github.com/emsi/onenote.rs",
-        "commit": "612a9f695a2bb2c026b7ccdedaf81eaac8f4cc70",
-        "dest": "flatpak-cargo/git/onenote.rs-612a9f6"
+        "commit": "77cf881df7579eb58972e3db8ce0ca34d25a7f62",
+        "dest": "flatpak-cargo/git/onenote.rs-77cf881"
     },
     {
         "type": "archive",
@@ -2348,7 +2348,7 @@
     {
         "type": "shell",
         "commands": [
-            "cp -r --reflink=auto \"flatpak-cargo/git/onenote.rs-612a9f6/crates/parser\" \"cargo/vendor/onenote_parser\""
+            "cp -r --reflink=auto \"flatpak-cargo/git/onenote.rs-77cf881/crates/parser\" \"cargo/vendor/onenote_parser\""
         ]
     },
     {
@@ -2366,7 +2366,7 @@
     {
         "type": "shell",
         "commands": [
-            "cp -r --reflink=auto \"flatpak-cargo/git/onenote.rs-612a9f6/crates/parser-macros\" \"cargo/vendor/onenote_parser-macros\""
+            "cp -r --reflink=auto \"flatpak-cargo/git/onenote.rs-77cf881/crates/parser-macros\" \"cargo/vendor/onenote_parser-macros\""
         ]
     },
     {
@@ -5100,7 +5100,7 @@
     },
     {
         "type": "inline",
-        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/emsi/onenote.rs\"]\ngit = \"https://github.com/emsi/onenote.rs\"\nreplace-with = \"vendored-sources\"\nrev = \"612a9f695a2bb2c026b7ccdedaf81eaac8f4cc70\"\n",
+        "contents": "[source.vendored-sources]\ndirectory = \"cargo/vendor\"\n\n[source.crates-io]\nreplace-with = \"vendored-sources\"\n\n[source.\"https://github.com/emsi/onenote.rs\"]\ngit = \"https://github.com/emsi/onenote.rs\"\nreplace-with = \"vendored-sources\"\nrev = \"77cf881df7579eb58972e3db8ce0ca34d25a7f62\"\n",
         "dest": "cargo",
         "dest-filename": "config"
     }

@@ -591,9 +591,11 @@ The selected parser revision is expected to provide:
 - ink and math projection;
 
 The current implementation uses the public `emsi/onenote.rs` fork at immutable
-revision `57694b1ca128d4a6c1fb222f31049be3e6830599`. It is based on upstream
-`v2.0.0` and exposes the supplemental images used for stored image fallbacks and
-attachment icons. Its in-memory package reader is not used by this application.
+revision `77cf881df7579eb58972e3db8ce0ca34d25a7f62`. It is based on upstream
+`v2.0.0`, exposes the supplemental images used for stored image fallbacks and
+attachment icons, provides stable OneStore file identities, and accepts
+specification-permitted revision dependency overrides. Its in-memory package
+reader is not used by this application.
 
 ## 11. Implementation Acceptance
 
