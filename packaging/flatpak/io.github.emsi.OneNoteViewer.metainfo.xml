@@ -36,6 +36,16 @@
   </requires>
   <content_rating type="oars-1.1"/>
   <releases>
+    <release version="0.3.1" date="2026-09-03">
+      <description>
+        <p>
+          Improve compatibility with OneNote files containing additional
+          revision metadata, preserve wide inline image proportions, and keep
+          table and attachment layout stable when images are resized.
+        </p>
+      </description>
+      <url type="details">https://github.com/emsi/OneNoteViewer/releases/tag/v0.3.1</url>
+    </release>
     <release version="0.3.0" date="2026-08-17">
       <description>
         <p>
