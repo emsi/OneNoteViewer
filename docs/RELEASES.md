@@ -4,10 +4,17 @@ This is the developer and release-maintainer guide. End-user setup belongs in
 the [installation guide](INSTALL.md) and the short installation section on the
 repository landing page.
 
-GitHub releases publish two runnable Linux preview artifacts:
+GitHub releases publish runnable Linux preview artifacts for both `x86_64`
+and `aarch64`:
 
-- `OneNoteViewer-<version>-linux-x86_64.flatpak`, the primary release channel;
-- `OneNoteViewer-<version>-x86_64.AppImage`, the secondary portable option.
+- `OneNoteViewer-<version>-linux-<arch>.flatpak`, the primary release channel;
+- `OneNoteViewer-<version>-<arch>.AppImage`, the secondary portable option.
+
+**ARM64 (`aarch64`) support is experimental/beta.** Native ARM64 CI runs the
+same test suite and packaged startup/icon/extractor checks as x86-64. Physical
+ARM desktop, graphics-driver, notebook fidelity, and cross-distribution
+validation remain limited. Keep this status visible in download instructions
+and release notes until that coverage is established.
 
 Both include the private, pinned `7zz` extractor. Native `.bin` files and
 archives remain local and CI-only products because they are dynamically linked
@@ -19,18 +26,27 @@ for Ubuntu 24.04 or compatible hosts.
 
 - manually through **Actions > Release builds > Run workflow**;
 - automatically for tags matching `v*`;
-- always builds and tests the native binary without uploading it;
-- builds Flatpak and AppImage workflow artifacts;
+- builds and tests native binaries on `ubuntu-24.04` and `ubuntu-24.04-arm`
+  without uploading them;
+- builds Flatpak and AppImage workflow artifacts on each native architecture;
 - creates tagged GitHub Releases containing only Flatpak, AppImage, and their
   SHA-256 checksums.
 
+All six build jobs must pass before publication, including the experimental
+ARM64 jobs. The publication job verifies the presence and checksum of all four
+packages. To test a feature branch without publishing, dispatch the workflow
+with that branch selected; only a `v*` tag publishes a release.
+
 A release tag must equal `v` plus `[workspace.package].version`; for example,
-version `0.3.1` uses tag `v0.3.1`. The same version must be the newest release
+version `0.4.0` uses tag `v0.4.0`. The same version must be the newest release
 in `packaging/flatpak/io.github.emsi.OneNoteViewer.metainfo.xml`.
 
 The workflow pins third-party actions by commit. Flatpak Cargo inputs,
 linuxdeploy, appimagetool, the AppImage runtime, and the bundled 7-Zip binary
 and source are all verified against committed SHA-256 values.
+The Flatpak action receives an explicit architecture, and the manifest selects
+the matching 7-Zip archive. AppImage tools and the extractor are selected for
+the native build host; these scripts do not perform cross-compilation.
 
 ## Local Builds
 
@@ -59,7 +75,7 @@ sudo apt install \
   adwaita-icon-theme curl file libgtk-4-dev librsvg2-common patchelf \
   shared-mime-info
 ./scripts/build-appimage-release.sh
-./dist/OneNoteViewer-*-x86_64.AppImage
+./dist/OneNoteViewer-*-$(uname -m).AppImage
 ```
 
 All three scripts write ignored artifacts and checksum files under `dist/`.

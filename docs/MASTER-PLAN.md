@@ -2,7 +2,7 @@
 
 - **Status:** Usable pre-1.0 application; two 1.0 blockers remain
 - **Current phase:** 1.0 completion
-- **Last reconciled:** 2026-08-09 UTC
+- **Last reconciled:** 2026-10-15 UTC
 
 ## Role of This Document
 
@@ -137,7 +137,9 @@ The detailed milestone sequence and exit gates are in the
   workspace restoration, navigation history, zoom, and light/dark/system themes.
 - The reusable core, scene renderer, GTK widget, and index/query components are
   implemented as a five-crate Rust workspace. Flatpak is the primary release
-  channel, with AppImage also published.
+  channel, with AppImage also published. Both formats are built for x86-64 and
+  ARM64; ARM64 support is experimental/beta pending broader desktop and
+  cross-distribution validation.
 - The two remaining 1.0 blockers are hand-drawn ink rendering
   ([issue #6](https://github.com/emsi/OneNoteViewer/issues/6)) and freeform page
   text selection/copy

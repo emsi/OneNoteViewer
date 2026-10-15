@@ -11,8 +11,18 @@ permissions:
 
 jobs:
   native:
-    name: Native build and test gate
-    runs-on: ubuntu-24.04
+    name: Native ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            label: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            label: aarch64 (experimental)
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -66,8 +76,18 @@ jobs:
             xvfb-run -a "${binary}"
 
   flatpak:
-    name: Flatpak x86_64
-    runs-on: ubuntu-24.04
+    name: Flatpak ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            label: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            label: aarch64 (experimental)
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     container:
       image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
       options: --privileged
@@ -85,13 +105,16 @@ jobs:
           ONENOTE_VIEWER_SOURCE_REVISION="${GITHUB_SHA}" \
             ./scripts/source-revision.sh > target/flatpak/source-revision
           revision=$(cat target/flatpak/source-revision)
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "bundle=OneNoteViewer-${version}-linux-x86_64.flatpak" >> "${GITHUB_OUTPUT}"
-          echo "revision=${revision}" >> "${GITHUB_OUTPUT}"
+          {
+            echo "version=${version}"
+            echo "bundle=OneNoteViewer-${version}-linux-${{ matrix.arch }}.flatpak"
+            echo "revision=${revision}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Build Flatpak bundle
         uses: flatpak/flatpak-github-actions/flatpak-builder@401fe28a8384095fc1531b9d320b292f0ee45adb
         with:
+          arch: ${{ matrix.arch }}
           bundle: ${{ steps.release.outputs.bundle }}
           branch: stable
           manifest-path: packaging/flatpak/io.github.emsi.OneNoteViewer.yml
@@ -105,6 +128,7 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           flatpak install --noninteractive "./${BUNDLE}"
+          test "$(flatpak info --show-arch io.github.emsi.OneNoteViewer)" = "${{ matrix.arch }}"
           installed=$(flatpak list --app --columns=application,version,branch |
             awk '$1 == "io.github.emsi.OneNoteViewer" { print $2 "|" $3 }')
           test "${installed}" = "${VERSION}|stable"
@@ -139,15 +163,25 @@ jobs:
       - name: Upload Flatpak bundle
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: onenote-viewer-flatpak-x86_64
+          name: onenote-viewer-flatpak-${{ matrix.arch }}
           path: |
-            OneNoteViewer-*-linux-x86_64.flatpak
-            OneNoteViewer-*-linux-x86_64.flatpak.sha256
+            OneNoteViewer-*-linux-${{ matrix.arch }}.flatpak
+            OneNoteViewer-*-linux-${{ matrix.arch }}.flatpak.sha256
           if-no-files-found: error
 
   appimage:
-    name: AppImage x86_64
-    runs-on: ubuntu-24.04
+    name: AppImage ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            label: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            label: aarch64 (experimental)
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     steps:
       - name: Check out source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -200,7 +234,7 @@ jobs:
       - name: Upload AppImage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: onenote-viewer-appimage-x86_64
+          name: onenote-viewer-appimage-${{ matrix.arch }}
           path: |
             dist/*.AppImage
             dist/*.AppImage.sha256
@@ -225,8 +259,17 @@ jobs:
           merge-multiple: true
 
       - name: Generate combined checksums
+        env:
+          RELEASE_VERSION: ${{ github.ref_name }}
         run: |
           cd dist
+          version="${RELEASE_VERSION#v}"
+          for arch in x86_64 aarch64; do
+            test -s "OneNoteViewer-${version}-${arch}.AppImage"
+            test -s "OneNoteViewer-${version}-linux-${arch}.flatpak"
+            sha256sum --check "OneNoteViewer-${version}-${arch}.AppImage.sha256"
+            sha256sum --check "OneNoteViewer-${version}-linux-${arch}.flatpak.sha256"
+          done
           sha256sum ./*.AppImage ./*.flatpak > SHA256SUMS
 
       - name: Create GitHub release
@@ -234,12 +277,24 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           version="${GITHUB_REF_NAME#v}"
-          bundle="OneNoteViewer-${version}-linux-x86_64.flatpak"
+          bundle="OneNoteViewer-${version}-linux-\${arch}.flatpak"
           read -r -d '' release_notes <<EOF || true
+          ## Architectures
+
+          Flatpak and AppImage are available for x86-64 and ARM64 (aarch64).
+          **ARM64 support is experimental/beta.** Automated native ARM64 tests
+          and package startup checks pass, but ARM desktop hardware, graphics,
+          notebook fidelity, and cross-distribution coverage remain limited.
+
+          | Architecture | Flatpak | AppImage | Support |
+          | --- | --- | --- | --- |
+          | x86-64 | OneNoteViewer-${version}-linux-x86_64.flatpak | OneNoteViewer-${version}-x86_64.AppImage | Existing support |
+          | ARM64 | OneNoteViewer-${version}-linux-aarch64.flatpak | OneNoteViewer-${version}-aarch64.AppImage | Experimental/beta |
+
           ## Install the Flatpak
 
-          Flatpak is the primary release channel. Download \`${bundle}\` and
-          \`${bundle}.sha256\` below.
+          Flatpak is the primary release channel. Download the bundle for your
+          architecture and its matching \`.sha256\` file below.
 
           If upgrading from v0.1.0, remove its legacy \`master\` branch once:
 
@@ -250,6 +305,7 @@ jobs:
           Then verify, install, and run:
 
           \`\`\`bash
+          arch=\$(flatpak --default-arch)
           sha256sum --check ${bundle}.sha256
           flatpak install --user --or-update ./${bundle}
           flatpak run io.github.emsi.OneNoteViewer
@@ -257,12 +313,20 @@ jobs:
 
           This is a directly distributed bundle. To update, download the
           newer bundle and repeat the checksum and install commands.
+
+          ## Run the AppImage
+
+          Download the AppImage matching \`uname -m\` (\`x86_64\` or \`aarch64\`),
+          verify its matching checksum, make it executable, and run it.
+          AppImages are built on Ubuntu 24.04 and require compatible system
+          libraries. Prefer Flatpak on older or substantially different distributions.
           EOF
+          printf '%s\n' "${release_notes}" > release-notes.md
           gh release create "${GITHUB_REF_NAME}" \
             --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --generate-notes \
-            --notes "${release_notes}" \
+            --notes-file release-notes.md \
             --title "OneNote Viewer ${GITHUB_REF_NAME}" \
             dist/*.AppImage \
             dist/*.flatpak \

@@ -4,6 +4,18 @@ Flatpak is the primary OneNote Viewer release channel. It supplies a consistent
 GTK runtime across Linux distributions and includes the `7zz` tool required for
 `.onepkg` import.
 
+Releases provide both Flatpak and AppImage packages for these architectures:
+
+| Processor / `uname -m` | Filename architecture | Status |
+| --- | --- | --- |
+| Intel/AMD 64-bit (`x86_64`) | `x86_64` | Existing support |
+| ARM64 (`aarch64`) | `aarch64` | **Experimental/beta** |
+
+ARM64 packages pass automated tests and packaged startup checks on native ARM64
+CI runners. Testing on physical ARM desktops, graphics drivers, and different
+distributions remains limited. Please report ARM64 problems with your device,
+distribution, package format, and application version.
+
 ## Install
 
 First install Flatpak and enable Flathub using the instructions for your Linux
@@ -11,7 +23,8 @@ distribution at [flatpak.org/setup](https://flatpak.org/setup/).
 
 Then:
 
-1. [Download the latest OneNote Viewer Flatpak](https://github.com/emsi/OneNoteViewer/releases/latest).
+1. [Download the latest OneNote Viewer Flatpak](https://github.com/emsi/OneNoteViewer/releases/latest)
+   matching your architecture in the table above.
 2. Open the downloaded file with your software center and install it.
 3. Start **OneNote Viewer** from the desktop application menu.
 
@@ -19,7 +32,8 @@ The equivalent terminal command, run from the folder containing the downloaded
 file, is:
 
 ```bash
-flatpak install --user --or-update ./OneNoteViewer-0.3.1-linux-x86_64.flatpak
+arch=$(flatpak --default-arch)
+flatpak install --user --or-update ./OneNoteViewer-0.4.0-linux-${arch}.flatpak
 ```
 
 The bundle is published directly through GitHub rather than a Flatpak
@@ -28,29 +42,32 @@ repository. It therefore does not appear in Flathub search results.
 ## Verify the Download
 
 Checksum verification is optional but recommended. Download
-`OneNoteViewer-0.3.1-linux-x86_64.flatpak.sha256` from the
+the matching `OneNoteViewer-0.4.0-linux-<arch>.flatpak.sha256` from the
 [latest release](https://github.com/emsi/OneNoteViewer/releases/latest) into
 the same directory as the Flatpak, then run:
 
 ```bash
-sha256sum --check OneNoteViewer-0.3.1-linux-x86_64.flatpak.sha256
+arch=$(flatpak --default-arch)
+sha256sum --check OneNoteViewer-0.4.0-linux-${arch}.flatpak.sha256
 ```
 
 Both files can also be downloaded from a terminal:
 
 ```bash
-version=0.3.1
+version=0.4.0
+arch=$(flatpak --default-arch)
 curl --fail --location --remote-name \
-  "https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-${version}-linux-x86_64.flatpak"
+  "https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-${version}-linux-${arch}.flatpak"
 curl --fail --location --remote-name \
-  "https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-${version}-linux-x86_64.flatpak.sha256"
+  "https://github.com/emsi/OneNoteViewer/releases/latest/download/OneNoteViewer-${version}-linux-${arch}.flatpak.sha256"
 ```
 
 Or with GitHub CLI:
 
 ```bash
+arch=$(flatpak --default-arch)
 gh release download --repo emsi/OneNoteViewer \
-  --pattern 'OneNoteViewer-*-linux-x86_64.flatpak*'
+  --pattern "OneNoteViewer-*-linux-${arch}.flatpak*"
 ```
 
 ## Update
@@ -69,7 +86,8 @@ Then download the newer Flatpak and open it with the software center again, or
 run:
 
 ```bash
-flatpak install --user --or-update ./OneNoteViewer-0.3.1-linux-x86_64.flatpak
+arch=$(flatpak --default-arch)
+flatpak install --user --or-update ./OneNoteViewer-0.4.0-linux-${arch}.flatpak
 ```
 
 Because this is a directly distributed bundle, `flatpak update` cannot discover
@@ -98,19 +116,24 @@ installed on the host.
 ## AppImage Alternative
 
 The [latest release](https://github.com/emsi/OneNoteViewer/releases/latest)
-also provides an AppImage for running without installation:
+also provides an AppImage for each architecture. Download the one matching
+`uname -m` (`x86_64` or `aarch64`), then run:
 
 ```bash
-chmod +x OneNoteViewer-*-x86_64.AppImage
-./OneNoteViewer-*-x86_64.AppImage
+arch=$(uname -m)
+chmod +x "OneNoteViewer-0.4.0-${arch}.AppImage"
+"./OneNoteViewer-0.4.0-${arch}.AppImage"
 ```
 
 If FUSE is unavailable or incompatible:
 
 ```bash
-./OneNoteViewer-*-x86_64.AppImage --appimage-extract-and-run
+arch=$(uname -m)
+"./OneNoteViewer-0.4.0-${arch}.AppImage" --appimage-extract-and-run
 ```
 
-The AppImage is built on Ubuntu 24.04 and requires a compatible x86-64 Linux
-host. Flatpak is the more portable option across significantly different
-distributions.
+AppImages are built on Ubuntu 24.04 for their respective architectures and
+require compatible host system libraries, including glibc. They are not
+guaranteed to run on older distributions. ARM64 AppImages are experimental/beta,
+just like the ARM64 Flatpak. Flatpak is the more portable option across
+significantly different distributions.
