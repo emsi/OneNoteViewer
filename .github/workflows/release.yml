@@ -128,7 +128,8 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
         run: |
           flatpak install --noninteractive "./${BUNDLE}"
-          test "$(flatpak info --show-arch io.github.emsi.OneNoteViewer)" = "${{ matrix.arch }}"
+          test "$(flatpak info --show-ref io.github.emsi.OneNoteViewer)" = \
+            "app/io.github.emsi.OneNoteViewer/${{ matrix.arch }}/stable"
           installed=$(flatpak list --app --columns=application,version,branch |
             awk '$1 == "io.github.emsi.OneNoteViewer" { print $2 "|" $3 }')
           test "${installed}" = "${VERSION}|stable"
