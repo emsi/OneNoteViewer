@@ -235,8 +235,11 @@ measurement work are tracked in
 
 The primary distributable target is Flatpak using a stable GNOME runtime,
 document portals, and no network access. An AppImage provides an
-installation-free alternative for current x86-64 distributions. Both portable
-formats bundle a pinned external `7zz` process and its corresponding source;
+installation-free alternative for compatible current Linux distributions. Both
+formats are built and tested natively for x86-64 and ARM64 (`aarch64`); ARM64
+support is experimental/beta pending broader desktop and distribution testing.
+Both portable formats bundle a pinned external `7zz` process for their CPU
+architecture and its corresponding source;
 the Flatpak runtime remains separate. Dynamically linked native products are
 built and tested but not published. Development builds remain ordinary Cargo
 builds so packaging does not hide dependency or runtime failures.
