@@ -1,5 +1,5 @@
 use onenote_core::{
-    Attachment, Color, Image, InkStroke, ObjectId, PageId, Rect, ResourceId, TextBlock,
+    Attachment, Color, Image, InkStroke, ObjectId, PageId, Rect, ResourceId, TextBlock, TextStyle,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -63,6 +63,62 @@ impl PageScene {
             .iter()
             .rev()
             .find(|region| contains(region.bounds, x, y))
+    }
+
+    /// Create a blank page scene for a new note page with an editable title.
+    pub fn new_blank(page_id: PageId, title: &str) -> Self {
+        let title_text = if title.trim().is_empty() {
+            "Untitled Page".to_string()
+        } else {
+            title.to_string()
+        };
+        let mut base_style = TextStyle::default();
+        base_style.font_size = Some(20.0);
+        base_style.bold = true;
+        let title_block = TextBlock {
+            text: title_text.clone(),
+            base_style,
+            runs: Vec::new(),
+            math: Vec::new(),
+            links: Vec::new(),
+            alignment: onenote_core::TextAlignment::Left,
+            space_before: 0.0,
+            space_after: 8.0,
+            line_spacing: None,
+        };
+        let title_node = SceneNode {
+            id: SceneNodeId(format!("node_{}_title", page_id.as_str())),
+            source_object_id: ObjectId::new(format!("obj_{}_title", page_id.as_str())),
+            bounds: Rect {
+                x: 48.0,
+                y: 48.0,
+                width: 600.0,
+                height: 38.0,
+            },
+            flow_path: Vec::new(),
+            z_index: 0,
+            primitive: ScenePrimitive::Text {
+                block: Arc::new(title_block),
+                marker: None,
+            },
+            accessibility: AccessibilitySemantics {
+                role: AccessibilityRole::Text,
+                label: title_text,
+                description: None,
+            },
+        };
+        Self {
+            page_id,
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 900.0,
+                height: 1200.0,
+            },
+            nodes: vec![title_node],
+            hit_regions: Vec::new(),
+            diagnostics: Vec::new(),
+        }
     }
 }
 

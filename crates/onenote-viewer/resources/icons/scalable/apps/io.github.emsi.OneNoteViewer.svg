@@ -1,11 +1,68 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-  <rect width="128" height="128" rx="22" fill="#5b2d90"/>
-  <path d="M31 22h67c7 0 12 5 12 12v72H31z" fill="#fff"/>
-  <path d="M18 34c0-7 5-12 12-12h18v84H30c-7 0-12-5-12-12z" fill="#7a45aa"/>
-  <path d="M28 47h11v34H29V62L22 81h-9V47h10v19z" fill="#fff"/>
-  <rect x="59" y="42" width="37" height="6" rx="3" fill="#16836f"/>
-  <rect x="59" y="58" width="27" height="6" rx="3" fill="#b35a24"/>
-  <rect x="59" y="74" width="34" height="6" rx="3" fill="#6b3a96"/>
-  <circle cx="59" cy="95" r="6" fill="#16836f"/>
-  <circle cx="80" cy="95" r="6" fill="#b35a24"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6B11A8"/>
+      <stop offset="50%" stop-color="#50077D"/>
+      <stop offset="100%" stop-color="#2C0347"/>
+    </linearGradient>
+    <linearGradient id="spineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#8A2BE2"/>
+      <stop offset="100%" stop-color="#4B0082"/>
+    </linearGradient>
+    <linearGradient id="penGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00F2FE"/>
+      <stop offset="100%" stop-color="#4FACFE"/>
+    </linearGradient>
+    <linearGradient id="strokeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF007F"/>
+      <stop offset="50%" stop-color="#7928CA"/>
+      <stop offset="100%" stop-color="#00F2FE"/>
+    </linearGradient>
+    <filter id="dropShadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="12" stdDeviation="16" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Base App Tile (Squircle) -->
+  <rect x="32" y="32" width="448" height="448" rx="104" fill="url(#bgGrad)" filter="url(#dropShadow)"/>
+
+  <!-- Subtle Inner Border Highlight -->
+  <rect x="34" y="34" width="444" height="444" rx="102" fill="none" stroke="#FFFFFF" stroke-opacity="0.15" stroke-width="4"/>
+
+  <!-- Notebook Page Sheet -->
+  <path d="M140 96 H388 C406 96 420 110 420 128 V384 C420 402 406 416 388 416 H140 V96 Z" fill="#FFFFFF" filter="url(#dropShadow)"/>
+  
+  <!-- Subtle Page Grid / Rules -->
+  <line x1="168" y1="160" x2="392" y2="160" stroke="#E2E8F0" stroke-width="4" stroke-linecap="round"/>
+  <line x1="168" y1="208" x2="392" y2="208" stroke="#E2E8F0" stroke-width="4" stroke-linecap="round"/>
+  <line x1="168" y1="256" x2="392" y2="256" stroke="#E2E8F0" stroke-width="4" stroke-linecap="round"/>
+  <line x1="168" y1="304" x2="392" y2="304" stroke="#E2E8F0" stroke-width="4" stroke-linecap="round"/>
+  <line x1="168" y1="352" x2="392" y2="352" stroke="#E2E8F0" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Notebook Spine Binding -->
+  <path d="M92 96 H144 V416 H92 C74 416 60 402 60 384 V128 C60 110 74 96 92 96 Z" fill="url(#spineGrad)"/>
+  <line x1="144" y1="96" x2="144" y2="416" stroke="#330055" stroke-width="3"/>
+
+  <!-- Distinctive Brand 'N' Badge on Spine -->
+  <path d="M84 210 H102 L120 286 V210 H134 V302 H116 L98 226 V302 H84 Z" fill="#FFFFFF" filter="url(#dropShadow)"/>
+
+  <!-- In-Canvas Ink Vector Sketch Curve (Glowing Calligraphy Stroke) -->
+  <path d="M 180 320 Q 240 180, 290 280 T 380 220" fill="none" stroke="url(#strokeGrad)" stroke-width="14" stroke-linecap="round" filter="url(#glow)"/>
+
+  <!-- Stylus Digital Pen -->
+  <g transform="translate(320, 100) rotate(35)">
+    <!-- Pen Body -->
+    <rect x="0" y="0" width="32" height="160" rx="16" fill="url(#penGrad)" filter="url(#dropShadow)"/>
+    <!-- Pen Grip Lines -->
+    <rect x="0" y="110" width="32" height="6" fill="#FFFFFF" fill-opacity="0.6"/>
+    <rect x="0" y="122" width="32" height="6" fill="#FFFFFF" fill-opacity="0.6"/>
+    <!-- Pen Tip (Cone) -->
+    <polygon points="0,160 32,160 16,196" fill="#1E293B"/>
+    <!-- Stylus Nib Tip Point -->
+    <polygon points="13,196 19,196 16,204" fill="#00F2FE"/>
+  </g>
 </svg>

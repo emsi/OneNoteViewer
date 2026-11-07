@@ -1,0 +1,1063 @@
+---
+source: crates/parser/tests/lib.rs
+expression: parser.parse_section(tp(&full)).unwrap()
+---
+Section {
+    file_identity: FileIdentity(
+        Guid {0B5DAC4F-F613-4DC3-9312-F722CCCFB433},
+    ),
+    display_name: "Quick Notes",
+    page_series: [
+        PageSeries {
+            pages: [
+                Page {
+                    link_target_id: "{301ACB0B-E552-428F-BA6E-0D5293ECCD35}",
+                    title: Some(
+                        Title {
+                            contents: [
+                                Outline {
+                                    child_level: 1,
+                                    list_spacing: None,
+                                    indents: [
+                                        0.5,
+                                        0.0,
+                                        0.75,
+                                        0.75,
+                                    ],
+                                    alignment_in_parent: None,
+                                    alignment_self: Some(
+                                        LayoutAlignment {
+                                            alignment_horizontal: BiDiNormal,
+                                            alignment_margin_horizontal: Left,
+                                            alignment_vertical: Bottom,
+                                            alignment_margin_vertical: Bottom,
+                                        },
+                                    ),
+                                    layout_max_height: None,
+                                    layout_max_width: Some(
+                                        13.0,
+                                    ),
+                                    layout_reserved_width: None,
+                                    layout_minimum_outline_width: Some(
+                                        4.5,
+                                    ),
+                                    is_layout_size_set_by_user: false,
+                                    offset_horizontal: None,
+                                    offset_vertical: None,
+                                    items: [
+                                        Element(
+                                            OutlineElement {
+                                                contents: [
+                                                    RichText(
+                                                        RichText {
+                                                            text: "My title",
+                                                            text_run_formatting: [
+                                                                ParagraphStyling {
+                                                                    charset: None,
+                                                                    bold: false,
+                                                                    italic: false,
+                                                                    underline: false,
+                                                                    strikethrough: false,
+                                                                    superscript: false,
+                                                                    subscript: false,
+                                                                    font: None,
+                                                                    font_size: None,
+                                                                    font_color: None,
+                                                                    highlight: None,
+                                                                    next_style: None,
+                                                                    style_id: None,
+                                                                    paragraph_alignment: None,
+                                                                    paragraph_space_before: None,
+                                                                    paragraph_space_after: None,
+                                                                    paragraph_line_spacing_exact: None,
+                                                                    language_code: Some(
+                                                                        1033,
+                                                                    ),
+                                                                    math_formatting: false,
+                                                                    hyperlink: false,
+                                                                    hyperlink_protected: false,
+                                                                    hidden: false,
+                                                                },
+                                                            ],
+                                                            text_run_indices: [],
+                                                            paragraph_style: ParagraphStyling {
+                                                                charset: None,
+                                                                bold: false,
+                                                                italic: false,
+                                                                underline: false,
+                                                                strikethrough: false,
+                                                                superscript: false,
+                                                                subscript: false,
+                                                                font: Some(
+                                                                    "Calibri Light",
+                                                                ),
+                                                                font_size: Some(
+                                                                    40,
+                                                                ),
+                                                                font_color: Some(
+                                                                    Auto,
+                                                                ),
+                                                                highlight: None,
+                                                                next_style: Some(
+                                                                    "p",
+                                                                ),
+                                                                style_id: Some(
+                                                                    "PageTitle",
+                                                                ),
+                                                                paragraph_alignment: None,
+                                                                paragraph_space_before: Some(
+                                                                    0.0,
+                                                                ),
+                                                                paragraph_space_after: Some(
+                                                                    0.0,
+                                                                ),
+                                                                paragraph_line_spacing_exact: None,
+                                                                language_code: None,
+                                                                math_formatting: false,
+                                                                hyperlink: false,
+                                                                hyperlink_protected: false,
+                                                                hidden: false,
+                                                            },
+                                                            paragraph_space_before: 0.0,
+                                                            paragraph_space_after: 0.0,
+                                                            paragraph_line_spacing_exact: None,
+                                                            paragraph_alignment: Left,
+                                                            layout_alignment_in_parent: None,
+                                                            layout_alignment_self: None,
+                                                            note_tags: [],
+                                                            embedded_objects: [],
+                                                            math_inline_objects: [],
+                                                        },
+                                                    ),
+                                                ],
+                                                list_contents: [],
+                                                list_spacing: None,
+                                                child_level: 1,
+                                                children: [],
+                                            },
+                                        ),
+                                    ],
+                                },
+                                Outline {
+                                    child_level: 1,
+                                    list_spacing: None,
+                                    indents: [
+                                        0.5,
+                                        0.0,
+                                        0.75,
+                                        0.75,
+                                    ],
+                                    alignment_in_parent: None,
+                                    alignment_self: Some(
+                                        LayoutAlignment {
+                                            alignment_horizontal: BiDiNormal,
+                                            alignment_margin_horizontal: Left,
+                                            alignment_vertical: Bottom,
+                                            alignment_margin_vertical: Bottom,
+                                        },
+                                    ),
+                                    layout_max_height: None,
+                                    layout_max_width: None,
+                                    layout_reserved_width: None,
+                                    layout_minimum_outline_width: None,
+                                    is_layout_size_set_by_user: false,
+                                    offset_horizontal: None,
+                                    offset_vertical: None,
+                                    items: [
+                                        Element(
+                                            OutlineElement {
+                                                contents: [
+                                                    RichText(
+                                                        RichText {
+                                                            text: "Friday, March 7, 2025",
+                                                            text_run_formatting: [
+                                                                ParagraphStyling {
+                                                                    charset: None,
+                                                                    bold: false,
+                                                                    italic: false,
+                                                                    underline: false,
+                                                                    strikethrough: false,
+                                                                    superscript: false,
+                                                                    subscript: false,
+                                                                    font: None,
+                                                                    font_size: None,
+                                                                    font_color: None,
+                                                                    highlight: None,
+                                                                    next_style: None,
+                                                                    style_id: None,
+                                                                    paragraph_alignment: None,
+                                                                    paragraph_space_before: None,
+                                                                    paragraph_space_after: None,
+                                                                    paragraph_line_spacing_exact: None,
+                                                                    language_code: Some(
+                                                                        1033,
+                                                                    ),
+                                                                    math_formatting: false,
+                                                                    hyperlink: false,
+                                                                    hyperlink_protected: false,
+                                                                    hidden: false,
+                                                                },
+                                                            ],
+                                                            text_run_indices: [],
+                                                            paragraph_style: ParagraphStyling {
+                                                                charset: None,
+                                                                bold: false,
+                                                                italic: false,
+                                                                underline: false,
+                                                                strikethrough: false,
+                                                                superscript: false,
+                                                                subscript: false,
+                                                                font: Some(
+                                                                    "Calibri",
+                                                                ),
+                                                                font_size: Some(
+                                                                    20,
+                                                                ),
+                                                                font_color: Some(
+                                                                    Manual {
+                                                                        r: 128,
+                                                                        g: 128,
+                                                                        b: 128,
+                                                                    },
+                                                                ),
+                                                                highlight: None,
+                                                                next_style: None,
+                                                                style_id: Some(
+                                                                    "PageDateTime",
+                                                                ),
+                                                                paragraph_alignment: None,
+                                                                paragraph_space_before: Some(
+                                                                    0.0,
+                                                                ),
+                                                                paragraph_space_after: Some(
+                                                                    0.0,
+                                                                ),
+                                                                paragraph_line_spacing_exact: None,
+                                                                language_code: None,
+                                                                math_formatting: false,
+                                                                hyperlink: false,
+                                                                hyperlink_protected: false,
+                                                                hidden: false,
+                                                            },
+                                                            paragraph_space_before: 0.0,
+                                                            paragraph_space_after: 0.0,
+                                                            paragraph_line_spacing_exact: None,
+                                                            paragraph_alignment: Left,
+                                                            layout_alignment_in_parent: None,
+                                                            layout_alignment_self: None,
+                                                            note_tags: [],
+                                                            embedded_objects: [],
+                                                            math_inline_objects: [],
+                                                        },
+                                                    ),
+                                                ],
+                                                list_contents: [],
+                                                list_spacing: None,
+                                                child_level: 1,
+                                                children: [],
+                                            },
+                                        ),
+                                        Element(
+                                            OutlineElement {
+                                                contents: [
+                                                    RichText(
+                                                        RichText {
+                                                            text: "11:16 AM",
+                                                            text_run_formatting: [
+                                                                ParagraphStyling {
+                                                                    charset: None,
+                                                                    bold: false,
+                                                                    italic: false,
+                                                                    underline: false,
+                                                                    strikethrough: false,
+                                                                    superscript: false,
+                                                                    subscript: false,
+                                                                    font: None,
+                                                                    font_size: None,
+                                                                    font_color: None,
+                                                                    highlight: None,
+                                                                    next_style: None,
+                                                                    style_id: None,
+                                                                    paragraph_alignment: None,
+                                                                    paragraph_space_before: None,
+                                                                    paragraph_space_after: None,
+                                                                    paragraph_line_spacing_exact: None,
+                                                                    language_code: Some(
+                                                                        1033,
+                                                                    ),
+                                                                    math_formatting: false,
+                                                                    hyperlink: false,
+                                                                    hyperlink_protected: false,
+                                                                    hidden: false,
+                                                                },
+                                                            ],
+                                                            text_run_indices: [],
+                                                            paragraph_style: ParagraphStyling {
+                                                                charset: None,
+                                                                bold: false,
+                                                                italic: false,
+                                                                underline: false,
+                                                                strikethrough: false,
+                                                                superscript: false,
+                                                                subscript: false,
+                                                                font: Some(
+                                                                    "Calibri",
+                                                                ),
+                                                                font_size: Some(
+                                                                    20,
+                                                                ),
+                                                                font_color: Some(
+                                                                    Manual {
+                                                                        r: 128,
+                                                                        g: 128,
+                                                                        b: 128,
+                                                                    },
+                                                                ),
+                                                                highlight: None,
+                                                                next_style: None,
+                                                                style_id: Some(
+                                                                    "PageDateTime",
+                                                                ),
+                                                                paragraph_alignment: None,
+                                                                paragraph_space_before: Some(
+                                                                    0.0,
+                                                                ),
+                                                                paragraph_space_after: Some(
+                                                                    0.0,
+                                                                ),
+                                                                paragraph_line_spacing_exact: None,
+                                                                language_code: None,
+                                                                math_formatting: false,
+                                                                hyperlink: false,
+                                                                hyperlink_protected: false,
+                                                                hidden: false,
+                                                            },
+                                                            paragraph_space_before: 0.0,
+                                                            paragraph_space_after: 0.0,
+                                                            paragraph_line_spacing_exact: None,
+                                                            paragraph_alignment: Left,
+                                                            layout_alignment_in_parent: Some(
+                                                                LayoutAlignment {
+                                                                    alignment_horizontal: Left,
+                                                                    alignment_margin_horizontal: Right,
+                                                                    alignment_vertical: Bottom,
+                                                                    alignment_margin_vertical: Bottom,
+                                                                },
+                                                            ),
+                                                            layout_alignment_self: Some(
+                                                                LayoutAlignment {
+                                                                    alignment_horizontal: Left,
+                                                                    alignment_margin_horizontal: Right,
+                                                                    alignment_vertical: Bottom,
+                                                                    alignment_margin_vertical: Bottom,
+                                                                },
+                                                            ),
+                                                            note_tags: [],
+                                                            embedded_objects: [],
+                                                            math_inline_objects: [],
+                                                        },
+                                                    ),
+                                                ],
+                                                list_contents: [],
+                                                list_spacing: None,
+                                                child_level: 1,
+                                                children: [],
+                                            },
+                                        ),
+                                    ],
+                                },
+                            ],
+                            offset_horizontal: 0.0,
+                            offset_vertical: 0.0,
+                            layout_alignment_in_parent: Some(
+                                LayoutAlignment {
+                                    alignment_horizontal: BiDiNormal,
+                                    alignment_margin_horizontal: Left,
+                                    alignment_vertical: Top,
+                                    alignment_margin_vertical: Top,
+                                },
+                            ),
+                            layout_alignment_self: Some(
+                                LayoutAlignment {
+                                    alignment_horizontal: Unknown,
+                                    alignment_margin_horizontal: Right,
+                                    alignment_vertical: Bottom,
+                                    alignment_margin_vertical: Bottom,
+                                },
+                            ),
+                        },
+                    ),
+                    title_text: Some(
+                        "My title",
+                    ),
+                    level: 1,
+                    created_at: 2025-03-07 11:16:44.0 +00,
+                    updated_at: None,
+                    author: None,
+                    height: None,
+                    contents: [
+                        Outline(
+                            Outline {
+                                child_level: 1,
+                                list_spacing: None,
+                                indents: [
+                                    0.5,
+                                    0.0,
+                                    0.75,
+                                    0.75,
+                                ],
+                                alignment_in_parent: None,
+                                alignment_self: Some(
+                                    LayoutAlignment {
+                                        alignment_horizontal: Left,
+                                        alignment_margin_horizontal: Left,
+                                        alignment_vertical: Bottom,
+                                        alignment_margin_vertical: Bottom,
+                                    },
+                                ),
+                                layout_max_height: None,
+                                layout_max_width: Some(
+                                    13.0,
+                                ),
+                                layout_reserved_width: None,
+                                layout_minimum_outline_width: None,
+                                is_layout_size_set_by_user: false,
+                                offset_horizontal: Some(
+                                    1.0,
+                                ),
+                                offset_vertical: Some(
+                                    2.4,
+                                ),
+                                items: [
+                                    Element(
+                                        OutlineElement {
+                                            contents: [
+                                                EmbeddedFile(
+                                                    EmbeddedFile {
+                                                        filename: "Audio Recording.wav",
+                                                        file_type: Audio,
+                                                        data: FileBlob [ 5249464624a0070057415645666d7420100000000100010080bb000000770100 ... b7002a00c9ff4a014afef701b9fe2a005c0023ffe2fff6ff25ff59016bfe2201; 488 KiB ],
+                                                        icon: Some(
+                                                            Picture {
+                                                                data: FileBlob [ 89504e470d0a1a0a0000000d49484452000000300000003008060000005702f9 ... 8da905fa502a8ea34778de2f38229e3baac344e50000000049454e44ae426082; 0 KiB ],
+                                                                extension: Some(
+                                                                    ".png",
+                                                                ),
+                                                            },
+                                                        ),
+                                                        layout_max_width: None,
+                                                        layout_max_height: None,
+                                                        offset_horizontal: None,
+                                                        offset_vertical: None,
+                                                        note_tags: [],
+                                                    },
+                                                ),
+                                            ],
+                                            list_contents: [],
+                                            list_spacing: None,
+                                            child_level: 1,
+                                            children: [],
+                                        },
+                                    ),
+                                    Element(
+                                        OutlineElement {
+                                            contents: [
+                                                RichText(
+                                                    RichText {
+                                                        text: "",
+                                                        text_run_formatting: [
+                                                            ParagraphStyling {
+                                                                charset: None,
+                                                                bold: false,
+                                                                italic: false,
+                                                                underline: false,
+                                                                strikethrough: false,
+                                                                superscript: false,
+                                                                subscript: false,
+                                                                font: None,
+                                                                font_size: None,
+                                                                font_color: None,
+                                                                highlight: None,
+                                                                next_style: None,
+                                                                style_id: None,
+                                                                paragraph_alignment: None,
+                                                                paragraph_space_before: None,
+                                                                paragraph_space_after: None,
+                                                                paragraph_line_spacing_exact: None,
+                                                                language_code: Some(
+                                                                    1033,
+                                                                ),
+                                                                math_formatting: false,
+                                                                hyperlink: false,
+                                                                hyperlink_protected: false,
+                                                                hidden: false,
+                                                            },
+                                                        ],
+                                                        text_run_indices: [],
+                                                        paragraph_style: ParagraphStyling {
+                                                            charset: None,
+                                                            bold: false,
+                                                            italic: false,
+                                                            underline: false,
+                                                            strikethrough: false,
+                                                            superscript: false,
+                                                            subscript: false,
+                                                            font: Some(
+                                                                "Calibri",
+                                                            ),
+                                                            font_size: Some(
+                                                                22,
+                                                            ),
+                                                            font_color: Some(
+                                                                Auto,
+                                                            ),
+                                                            highlight: None,
+                                                            next_style: None,
+                                                            style_id: Some(
+                                                                "p",
+                                                            ),
+                                                            paragraph_alignment: None,
+                                                            paragraph_space_before: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_space_after: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_line_spacing_exact: None,
+                                                            language_code: None,
+                                                            math_formatting: false,
+                                                            hyperlink: false,
+                                                            hyperlink_protected: false,
+                                                            hidden: false,
+                                                        },
+                                                        paragraph_space_before: 0.0,
+                                                        paragraph_space_after: 0.0,
+                                                        paragraph_line_spacing_exact: None,
+                                                        paragraph_alignment: Left,
+                                                        layout_alignment_in_parent: Some(
+                                                            LayoutAlignment {
+                                                                alignment_horizontal: Left,
+                                                                alignment_margin_horizontal: Right,
+                                                                alignment_vertical: Bottom,
+                                                                alignment_margin_vertical: Bottom,
+                                                            },
+                                                        ),
+                                                        layout_alignment_self: Some(
+                                                            LayoutAlignment {
+                                                                alignment_horizontal: Left,
+                                                                alignment_margin_horizontal: Right,
+                                                                alignment_vertical: Bottom,
+                                                                alignment_margin_vertical: Bottom,
+                                                            },
+                                                        ),
+                                                        note_tags: [],
+                                                        embedded_objects: [],
+                                                        math_inline_objects: [],
+                                                    },
+                                                ),
+                                            ],
+                                            list_contents: [],
+                                            list_spacing: None,
+                                            child_level: 1,
+                                            children: [],
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                        Outline(
+                            Outline {
+                                child_level: 1,
+                                list_spacing: None,
+                                indents: [
+                                    0.5,
+                                    0.0,
+                                    0.75,
+                                    0.75,
+                                ],
+                                alignment_in_parent: None,
+                                alignment_self: Some(
+                                    LayoutAlignment {
+                                        alignment_horizontal: Left,
+                                        alignment_margin_horizontal: Left,
+                                        alignment_vertical: Bottom,
+                                        alignment_margin_vertical: Bottom,
+                                    },
+                                ),
+                                layout_max_height: None,
+                                layout_max_width: Some(
+                                    13.0,
+                                ),
+                                layout_reserved_width: None,
+                                layout_minimum_outline_width: None,
+                                is_layout_size_set_by_user: false,
+                                offset_horizontal: Some(
+                                    5.1041665,
+                                ),
+                                offset_vertical: Some(
+                                    3.4583333,
+                                ),
+                                items: [
+                                    Element(
+                                        OutlineElement {
+                                            contents: [
+                                                RichText(
+                                                    RichText {
+                                                        text: "",
+                                                        text_run_formatting: [
+                                                            ParagraphStyling {
+                                                                charset: None,
+                                                                bold: false,
+                                                                italic: false,
+                                                                underline: false,
+                                                                strikethrough: false,
+                                                                superscript: false,
+                                                                subscript: false,
+                                                                font: None,
+                                                                font_size: None,
+                                                                font_color: None,
+                                                                highlight: None,
+                                                                next_style: None,
+                                                                style_id: None,
+                                                                paragraph_alignment: None,
+                                                                paragraph_space_before: None,
+                                                                paragraph_space_after: None,
+                                                                paragraph_line_spacing_exact: None,
+                                                                language_code: Some(
+                                                                    1033,
+                                                                ),
+                                                                math_formatting: false,
+                                                                hyperlink: false,
+                                                                hyperlink_protected: false,
+                                                                hidden: false,
+                                                            },
+                                                        ],
+                                                        text_run_indices: [],
+                                                        paragraph_style: ParagraphStyling {
+                                                            charset: None,
+                                                            bold: false,
+                                                            italic: false,
+                                                            underline: false,
+                                                            strikethrough: false,
+                                                            superscript: false,
+                                                            subscript: false,
+                                                            font: Some(
+                                                                "Calibri",
+                                                            ),
+                                                            font_size: Some(
+                                                                22,
+                                                            ),
+                                                            font_color: Some(
+                                                                Auto,
+                                                            ),
+                                                            highlight: None,
+                                                            next_style: None,
+                                                            style_id: Some(
+                                                                "p",
+                                                            ),
+                                                            paragraph_alignment: None,
+                                                            paragraph_space_before: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_space_after: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_line_spacing_exact: None,
+                                                            language_code: None,
+                                                            math_formatting: false,
+                                                            hyperlink: false,
+                                                            hyperlink_protected: false,
+                                                            hidden: false,
+                                                        },
+                                                        paragraph_space_before: 0.0,
+                                                        paragraph_space_after: 0.0,
+                                                        paragraph_line_spacing_exact: None,
+                                                        paragraph_alignment: Left,
+                                                        layout_alignment_in_parent: None,
+                                                        layout_alignment_self: None,
+                                                        note_tags: [],
+                                                        embedded_objects: [],
+                                                        math_inline_objects: [],
+                                                    },
+                                                ),
+                                            ],
+                                            list_contents: [],
+                                            list_spacing: None,
+                                            child_level: 1,
+                                            children: [],
+                                        },
+                                    ),
+                                    Element(
+                                        OutlineElement {
+                                            contents: [
+                                                RichText(
+                                                    RichText {
+                                                        text: "",
+                                                        text_run_formatting: [
+                                                            ParagraphStyling {
+                                                                charset: None,
+                                                                bold: false,
+                                                                italic: false,
+                                                                underline: false,
+                                                                strikethrough: false,
+                                                                superscript: false,
+                                                                subscript: false,
+                                                                font: None,
+                                                                font_size: None,
+                                                                font_color: None,
+                                                                highlight: None,
+                                                                next_style: None,
+                                                                style_id: None,
+                                                                paragraph_alignment: None,
+                                                                paragraph_space_before: None,
+                                                                paragraph_space_after: None,
+                                                                paragraph_line_spacing_exact: None,
+                                                                language_code: Some(
+                                                                    1033,
+                                                                ),
+                                                                math_formatting: false,
+                                                                hyperlink: false,
+                                                                hyperlink_protected: false,
+                                                                hidden: false,
+                                                            },
+                                                        ],
+                                                        text_run_indices: [],
+                                                        paragraph_style: ParagraphStyling {
+                                                            charset: None,
+                                                            bold: false,
+                                                            italic: false,
+                                                            underline: false,
+                                                            strikethrough: false,
+                                                            superscript: false,
+                                                            subscript: false,
+                                                            font: Some(
+                                                                "Calibri",
+                                                            ),
+                                                            font_size: Some(
+                                                                22,
+                                                            ),
+                                                            font_color: Some(
+                                                                Auto,
+                                                            ),
+                                                            highlight: None,
+                                                            next_style: None,
+                                                            style_id: Some(
+                                                                "p",
+                                                            ),
+                                                            paragraph_alignment: None,
+                                                            paragraph_space_before: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_space_after: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_line_spacing_exact: None,
+                                                            language_code: None,
+                                                            math_formatting: false,
+                                                            hyperlink: false,
+                                                            hyperlink_protected: false,
+                                                            hidden: false,
+                                                        },
+                                                        paragraph_space_before: 0.0,
+                                                        paragraph_space_after: 0.0,
+                                                        paragraph_line_spacing_exact: None,
+                                                        paragraph_alignment: Left,
+                                                        layout_alignment_in_parent: Some(
+                                                            LayoutAlignment {
+                                                                alignment_horizontal: Left,
+                                                                alignment_margin_horizontal: Right,
+                                                                alignment_vertical: Bottom,
+                                                                alignment_margin_vertical: Bottom,
+                                                            },
+                                                        ),
+                                                        layout_alignment_self: Some(
+                                                            LayoutAlignment {
+                                                                alignment_horizontal: Left,
+                                                                alignment_margin_horizontal: Right,
+                                                                alignment_vertical: Bottom,
+                                                                alignment_margin_vertical: Bottom,
+                                                            },
+                                                        ),
+                                                        note_tags: [],
+                                                        embedded_objects: [],
+                                                        math_inline_objects: [],
+                                                    },
+                                                ),
+                                            ],
+                                            list_contents: [],
+                                            list_spacing: None,
+                                            child_level: 1,
+                                            children: [],
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                        Outline(
+                            Outline {
+                                child_level: 1,
+                                list_spacing: None,
+                                indents: [
+                                    0.5,
+                                    0.0,
+                                    0.75,
+                                    0.75,
+                                ],
+                                alignment_in_parent: None,
+                                alignment_self: Some(
+                                    LayoutAlignment {
+                                        alignment_horizontal: Left,
+                                        alignment_margin_horizontal: Left,
+                                        alignment_vertical: Bottom,
+                                        alignment_margin_vertical: Bottom,
+                                    },
+                                ),
+                                layout_max_height: None,
+                                layout_max_width: Some(
+                                    13.0,
+                                ),
+                                layout_reserved_width: None,
+                                layout_minimum_outline_width: None,
+                                is_layout_size_set_by_user: false,
+                                offset_horizontal: Some(
+                                    1.2708334,
+                                ),
+                                offset_vertical: Some(
+                                    6.3333335,
+                                ),
+                                items: [
+                                    Element(
+                                        OutlineElement {
+                                            contents: [
+                                                RichText(
+                                                    RichText {
+                                                        text: "Some text here",
+                                                        text_run_formatting: [
+                                                            ParagraphStyling {
+                                                                charset: None,
+                                                                bold: false,
+                                                                italic: false,
+                                                                underline: false,
+                                                                strikethrough: false,
+                                                                superscript: false,
+                                                                subscript: false,
+                                                                font: None,
+                                                                font_size: None,
+                                                                font_color: None,
+                                                                highlight: None,
+                                                                next_style: None,
+                                                                style_id: None,
+                                                                paragraph_alignment: None,
+                                                                paragraph_space_before: None,
+                                                                paragraph_space_after: None,
+                                                                paragraph_line_spacing_exact: None,
+                                                                language_code: Some(
+                                                                    1033,
+                                                                ),
+                                                                math_formatting: false,
+                                                                hyperlink: false,
+                                                                hyperlink_protected: false,
+                                                                hidden: false,
+                                                            },
+                                                        ],
+                                                        text_run_indices: [],
+                                                        paragraph_style: ParagraphStyling {
+                                                            charset: None,
+                                                            bold: false,
+                                                            italic: false,
+                                                            underline: false,
+                                                            strikethrough: false,
+                                                            superscript: false,
+                                                            subscript: false,
+                                                            font: Some(
+                                                                "Calibri",
+                                                            ),
+                                                            font_size: Some(
+                                                                22,
+                                                            ),
+                                                            font_color: Some(
+                                                                Auto,
+                                                            ),
+                                                            highlight: None,
+                                                            next_style: None,
+                                                            style_id: Some(
+                                                                "p",
+                                                            ),
+                                                            paragraph_alignment: None,
+                                                            paragraph_space_before: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_space_after: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_line_spacing_exact: None,
+                                                            language_code: None,
+                                                            math_formatting: false,
+                                                            hyperlink: false,
+                                                            hyperlink_protected: false,
+                                                            hidden: false,
+                                                        },
+                                                        paragraph_space_before: 0.0,
+                                                        paragraph_space_after: 0.0,
+                                                        paragraph_line_spacing_exact: None,
+                                                        paragraph_alignment: Left,
+                                                        layout_alignment_in_parent: None,
+                                                        layout_alignment_self: None,
+                                                        note_tags: [],
+                                                        embedded_objects: [],
+                                                        math_inline_objects: [],
+                                                    },
+                                                ),
+                                            ],
+                                            list_contents: [],
+                                            list_spacing: None,
+                                            child_level: 1,
+                                            children: [],
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                        Outline(
+                            Outline {
+                                child_level: 1,
+                                list_spacing: None,
+                                indents: [
+                                    0.5,
+                                    0.0,
+                                    0.75,
+                                    0.75,
+                                ],
+                                alignment_in_parent: None,
+                                alignment_self: Some(
+                                    LayoutAlignment {
+                                        alignment_horizontal: Left,
+                                        alignment_margin_horizontal: Left,
+                                        alignment_vertical: Bottom,
+                                        alignment_margin_vertical: Bottom,
+                                    },
+                                ),
+                                layout_max_height: None,
+                                layout_max_width: Some(
+                                    13.0,
+                                ),
+                                layout_reserved_width: None,
+                                layout_minimum_outline_width: None,
+                                is_layout_size_set_by_user: false,
+                                offset_horizontal: Some(
+                                    5.0,
+                                ),
+                                offset_vertical: Some(
+                                    7.7708335,
+                                ),
+                                items: [
+                                    Element(
+                                        OutlineElement {
+                                            contents: [
+                                                RichText(
+                                                    RichText {
+                                                        text: "",
+                                                        text_run_formatting: [
+                                                            ParagraphStyling {
+                                                                charset: None,
+                                                                bold: false,
+                                                                italic: false,
+                                                                underline: false,
+                                                                strikethrough: false,
+                                                                superscript: false,
+                                                                subscript: false,
+                                                                font: None,
+                                                                font_size: None,
+                                                                font_color: None,
+                                                                highlight: None,
+                                                                next_style: None,
+                                                                style_id: None,
+                                                                paragraph_alignment: None,
+                                                                paragraph_space_before: None,
+                                                                paragraph_space_after: None,
+                                                                paragraph_line_spacing_exact: None,
+                                                                language_code: Some(
+                                                                    1033,
+                                                                ),
+                                                                math_formatting: false,
+                                                                hyperlink: false,
+                                                                hyperlink_protected: false,
+                                                                hidden: false,
+                                                            },
+                                                        ],
+                                                        text_run_indices: [],
+                                                        paragraph_style: ParagraphStyling {
+                                                            charset: None,
+                                                            bold: false,
+                                                            italic: false,
+                                                            underline: false,
+                                                            strikethrough: false,
+                                                            superscript: false,
+                                                            subscript: false,
+                                                            font: Some(
+                                                                "Calibri",
+                                                            ),
+                                                            font_size: Some(
+                                                                22,
+                                                            ),
+                                                            font_color: Some(
+                                                                Auto,
+                                                            ),
+                                                            highlight: None,
+                                                            next_style: None,
+                                                            style_id: Some(
+                                                                "p",
+                                                            ),
+                                                            paragraph_alignment: None,
+                                                            paragraph_space_before: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_space_after: Some(
+                                                                0.0,
+                                                            ),
+                                                            paragraph_line_spacing_exact: None,
+                                                            language_code: None,
+                                                            math_formatting: false,
+                                                            hyperlink: false,
+                                                            hyperlink_protected: false,
+                                                            hidden: false,
+                                                        },
+                                                        paragraph_space_before: 0.0,
+                                                        paragraph_space_after: 0.0,
+                                                        paragraph_line_spacing_exact: None,
+                                                        paragraph_alignment: Left,
+                                                        layout_alignment_in_parent: None,
+                                                        layout_alignment_self: None,
+                                                        note_tags: [],
+                                                        embedded_objects: [],
+                                                        math_inline_objects: [],
+                                                    },
+                                                ),
+                                            ],
+                                            list_contents: [],
+                                            list_spacing: None,
+                                            child_level: 1,
+                                            children: [],
+                                        },
+                                    ),
+                                ],
+                            },
+                        ),
+                    ],
+                    ink_recognition: None,
+                },
+            ],
+        },
+    ],
+    color: Some(
+        Color {
+            alpha: 255,
+            r: 246,
+            g: 176,
+            b: 120,
+        },
+    ),
+    report: Report {
+        warnings: [],
+    },
+}

@@ -18,14 +18,14 @@ use onenote_core::{
     ResourceId, ResourceRef, SectionId, SourceDescriptor, SourceId,
 };
 use onenote_index::{IndexProfile, IndexUpdate, MatchedField, SearchHit, SearchQuery, TextRange};
-use onenote_render::{HitAction, ScenePrimitive};
+use onenote_render::{HitAction, PageScene, ScenePrimitive};
 use onenote_render_gtk::{
-    find_text_ranges, FindMatch, FindOptions, FindTextRange, PageView, DEFAULT_ZOOM,
+    find_text_ranges, FindMatch, FindOptions, FindTextRange, InkEditTool, PageView, DEFAULT_ZOOM,
 };
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
@@ -150,7 +150,7 @@ pub(crate) fn check_icons() -> Result<()> {
         anyhow::bail!("application icon is not registered: {APP_ICON_NAME}");
     }
     let renderer = gtk::gsk::CairoRenderer::new();
-    renderer.realize_for_display(&display)?;
+    renderer.realize(None::<&gtk::gdk::Surface>)?;
     let colors = [
         gtk::gdk::RGBA::new(0.125, 0.129, 0.141, 1.0),
         gtk::gdk::RGBA::new(0.75, 0.0, 0.0, 1.0),
@@ -716,6 +716,7 @@ struct Viewer {
     pages_collapsed: Rc<Cell<bool>>,
     page_view: PageView,
     canvas_stack: gtk::Stack,
+    word_editor: crate::word_editor::LiveWordEditor,
     page_title: gtk::Label,
     page_date: gtk::Label,
     page_context: gtk::Label,
@@ -733,6 +734,7 @@ struct Viewer {
     status: gtk::Label,
     spinner: gtk::Spinner,
     zoom_label: gtk::Label,
+    ink_undo_button: gtk::Button,
     operation_activity: gtk::Revealer,
     operation_activity_title: gtk::Label,
     operation_activity_phase: gtk::Label,
@@ -883,10 +885,13 @@ impl Viewer {
         let spinner = gtk::Spinner::new();
         spinner.set_tooltip_text(Some("Background activity"));
 
-        let brand = gtk::Label::new(Some("OneNote Viewer"));
+        let brand = gtk::Label::new(Some("OneNoteOnly"));
         brand.add_css_class("brand");
 
         let file_menu = gio::Menu::new();
+        file_menu.append(Some("📚 New Notebook... (Ctrl+Shift+N)"), Some("win.new-notebook"));
+        file_menu.append(Some("📑 New Section... (Ctrl+Alt+N)"), Some("win.new-section"));
+        file_menu.append(Some("📄 New Page (Ctrl+N)"), Some("win.new-page"));
         file_menu.append(Some("Open OneNote File..."), Some("win.open-file"));
         file_menu.append(Some("Open Notebook Folder..."), Some("win.open-folder"));
         file_menu.append(
@@ -918,10 +923,10 @@ impl Viewer {
         preferences_menu.append(Some("Settings"), Some("win.settings"));
         application_menu.append_section(None, &preferences_menu);
         let information_menu = gio::Menu::new();
-        information_menu.append(Some("About OneNote Viewer"), Some("win.about"));
+        information_menu.append(Some("About OneNoteOnly"), Some("win.about"));
         application_menu.append_section(None, &information_menu);
         let quit_menu = gio::Menu::new();
-        quit_menu.append(Some("Quit OneNote Viewer"), Some("win.quit"));
+        quit_menu.append(Some("Quit OneNoteOnly"), Some("win.quit"));
         application_menu.append_section(None, &quit_menu);
         let menu = gtk::MenuButton::builder()
             .icon_name("onenote-menu-symbolic")
@@ -938,18 +943,34 @@ impl Viewer {
         header.set_title_widget(Some(&workspace_search));
         header.pack_end(&menu);
 
+        let notebook_actions = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        let add_notebook_btn = icon_button("folder-new-symbolic", "New Notebook (Ctrl+Shift+N)");
+        add_notebook_btn.set_action_name(Some("win.new-notebook"));
+        add_notebook_btn.add_css_class("flat");
+
+        let add_section_btn = icon_button("document-new-symbolic", "New Section (Ctrl+Alt+N)");
+        add_section_btn.set_action_name(Some("win.new-section"));
+        add_section_btn.add_css_class("flat");
+
+        notebook_actions.append(&add_notebook_btn);
+        notebook_actions.append(&add_section_btn);
+        notebook_actions.append(&close_source);
+
         let notebooks = CollapsibleNavigationBand::new(
             "NOTEBOOKS",
             &notebook_tree.view,
             NOTEBOOK_NAVIGATION_WIDTH,
-            Some(&close_source),
+            Some(notebook_actions.upcast_ref()),
             restored_panes.notebooks_collapsed,
         );
+        let add_page_btn = icon_button("list-add-symbolic", "Add New Page (Ctrl+N)");
+        add_page_btn.set_action_name(Some("win.new-page"));
+        add_page_btn.add_css_class("flat");
         let pages = CollapsibleNavigationBand::new(
             "PAGES",
             &page_list,
             PAGE_NAVIGATION_WIDTH,
-            None,
+            Some(add_page_btn.upcast_ref()),
             restored_panes.pages_collapsed,
         );
         let results = navigation_band("SEARCH RESULTS", &result_list, SEARCH_RESULTS_WIDTH);
@@ -1069,6 +1090,18 @@ impl Viewer {
         let zoom_out = icon_button("onenote-zoom-out-symbolic", "Zoom out");
         let zoom_in = icon_button("onenote-zoom-in-symbolic", "Zoom in");
         let zoom_reset = icon_button("onenote-zoom-reset-symbolic", "Reset zoom");
+        let ink_pen = gtk::CheckButton::with_label("Draw");
+        ink_pen.set_tooltip_text(Some(
+            "Draw ink on this page. Changes are saved separately from the .one file.",
+        ));
+        let ink_eraser = gtk::CheckButton::with_label("Erase");
+        ink_eraser.set_group(Some(&ink_pen));
+        ink_eraser.set_tooltip_text(Some("Erase imported or locally drawn ink on this page."));
+        let ink_undo = gtk::Button::with_label("Undo ink");
+        ink_undo.set_sensitive(false);
+        ink_undo.set_tooltip_text(Some("Undo the last local ink edit."));
+        let edit_text = gtk::Button::with_label("Edit text");
+        edit_text.set_tooltip_text(Some("Select a text paragraph, then edit its local copy."));
         let zoom_label = gtk::Label::new(Some(&format_zoom(page_view.zoom())));
         zoom_label.set_width_chars(5);
         let status = gtk::Label::builder()
@@ -1085,6 +1118,10 @@ impl Viewer {
         footer.set_margin_bottom(4);
         footer.append(&status);
         footer.append(&spinner);
+        footer.append(&ink_pen);
+        footer.append(&ink_eraser);
+        footer.append(&ink_undo);
+        footer.append(&edit_text);
         footer.append(&zoom_out);
         footer.append(&zoom_label);
         footer.append(&zoom_in);
@@ -1125,10 +1162,21 @@ impl Viewer {
             .child(&activity_content)
             .build();
 
+        let word_editor = crate::word_editor::LiveWordEditor::new();
+        let work_paned = gtk::Paned::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .start_child(&canvas_stack)
+            .end_child(&word_editor.revealer)
+            .resize_start_child(true)
+            .shrink_start_child(false)
+            .resize_end_child(false)
+            .shrink_end_child(true)
+            .build();
+
         let content_paned = gtk::Paned::builder()
             .orientation(gtk::Orientation::Horizontal)
             .start_child(&navigation_stack)
-            .end_child(&canvas_stack)
+            .end_child(&work_paned)
             .resize_start_child(false)
             .shrink_start_child(true)
             .position(initial_navigation_width)
@@ -1153,14 +1201,30 @@ impl Viewer {
             &content_paned,
         );
 
+        let ribbon_bar = build_ribbon_toolbar(
+            &page_view,
+            &page_find_revealer,
+            &notebooks.toggle,
+            &pages.toggle,
+            &edit_text,
+            &ink_pen,
+            &ink_eraser,
+            &ink_undo,
+            &zoom_in,
+            &zoom_out,
+            &zoom_reset,
+            &word_editor,
+        );
+
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.append(&ribbon_bar);
         root.append(&operation_activity);
         root.append(&content_paned);
         root.append(&separator_horizontal());
         root.append(&footer);
         let window = gtk::ApplicationWindow::builder()
             .application(application)
-            .title("OneNote Viewer")
+            .title("OneNoteOnly")
             .icon_name(APP_ICON_NAME)
             .default_width(1_500)
             .default_height(920)
@@ -1185,6 +1249,7 @@ impl Viewer {
             pages_collapsed: Rc::clone(&pages.collapsed),
             page_view,
             canvas_stack,
+            word_editor,
             page_title,
             page_date,
             page_context,
@@ -1202,6 +1267,7 @@ impl Viewer {
             status,
             spinner,
             zoom_label,
+            ink_undo_button: ink_undo.clone(),
             operation_activity,
             operation_activity_title,
             operation_activity_phase,
@@ -1258,6 +1324,32 @@ impl Viewer {
             });
         }
         viewer.window.add_action(&open_file);
+        let new_page_action = gio::SimpleAction::new("new-page", None);
+        let weak_new_page = Rc::downgrade(&viewer);
+        new_page_action.connect_activate(move |_, _| {
+            if let Some(viewer) = weak_new_page.upgrade() {
+                viewer.create_new_page();
+            }
+        });
+        viewer.window.add_action(&new_page_action);
+
+        let new_notebook_action = gio::SimpleAction::new("new-notebook", None);
+        let weak_new_notebook = Rc::downgrade(&viewer);
+        new_notebook_action.connect_activate(move |_, _| {
+            if let Some(viewer) = weak_new_notebook.upgrade() {
+                viewer.show_new_notebook_dialog();
+            }
+        });
+        viewer.window.add_action(&new_notebook_action);
+
+        let new_section_action = gio::SimpleAction::new("new-section", None);
+        let weak_new_section = Rc::downgrade(&viewer);
+        new_section_action.connect_activate(move |_, _| {
+            if let Some(viewer) = weak_new_section.upgrade() {
+                viewer.show_new_section_dialog();
+            }
+        });
+        viewer.window.add_action(&new_section_action);
         viewer.window.add_action(&open_folder);
         viewer.window.add_action(&open_backup_folder);
         viewer.window.add_action(&import_package);
@@ -1273,6 +1365,9 @@ impl Viewer {
         viewer.window.add_action(&page_find_next_action);
         viewer.window.add_action(&page_find_previous_action);
         application.set_accels_for_action("win.open-file", &["<Primary>o"]);
+        application.set_accels_for_action("win.new-page", &["<Primary>n"]);
+        application.set_accels_for_action("win.new-notebook", &["<Primary><Shift>n"]);
+        application.set_accels_for_action("win.new-section", &["<Primary><Alt>n", "<Primary><Shift>s"]);
         application.set_accels_for_action("win.open-folder", &["<Primary><Shift>o"]);
         application.set_accels_for_action("win.import-package", &["<Primary><Shift>i"]);
         application.set_accels_for_action("win.settings", &["<Primary>comma"]);
@@ -1304,6 +1399,8 @@ impl Viewer {
         viewer.connect_system_theme();
         viewer.connect_operation_activity();
         viewer.connect_zoom(&zoom_out, &zoom_in, &zoom_reset);
+        viewer.connect_ink_editing(&ink_pen, &ink_eraser, &ink_undo);
+        viewer.connect_text_editing(&edit_text);
         viewer.connect_page_actions();
         viewer.poll_events();
         viewer
@@ -1678,6 +1775,378 @@ impl Viewer {
         });
     }
 
+    fn connect_ink_editing(
+        self: &Rc<Self>,
+        pen: &gtk::CheckButton,
+        eraser: &gtk::CheckButton,
+        undo: &gtk::Button,
+    ) {
+        let weak = Rc::downgrade(self);
+        let eraser_peer = eraser.clone();
+        pen.connect_toggled(move |button| {
+            if let Some(viewer) = weak.upgrade() {
+                let tool = if button.is_active() {
+                    InkEditTool::Pen
+                } else if eraser_peer.is_active() {
+                    InkEditTool::Eraser
+                } else {
+                    InkEditTool::View
+                };
+                viewer.page_view.canvas().set_ink_tool(tool);
+            }
+        });
+        let weak = Rc::downgrade(self);
+        let pen_peer = pen.clone();
+        eraser.connect_toggled(move |button| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer
+                    .page_view
+                    .canvas()
+                    .set_ink_tool(if button.is_active() {
+                        InkEditTool::Eraser
+                    } else if pen_peer.is_active() {
+                        InkEditTool::Pen
+                    } else {
+                        InkEditTool::View
+                    });
+            }
+        });
+        let weak = Rc::downgrade(self);
+        undo.connect_clicked(move |_| {
+            if let Some(viewer) = weak.upgrade() {
+                viewer.page_view.canvas().undo_ink_edit();
+                // The edit callback persists the restored document as well.
+            }
+        });
+        let weak = Rc::downgrade(self);
+        let undo_button = undo.clone();
+        self.page_view
+            .canvas()
+            .set_ink_edit_handler(Some(move |edits| {
+                if let Some(viewer) = weak.upgrade() {
+                    let key = viewer.active_ink_edit_key();
+                    if let Some(key) = key {
+                        match crate::ink_edits::save_page(&key, &edits) {
+                            Ok(()) => viewer
+                                .status
+                                .set_label("Page edits saved locally; original .one unchanged"),
+                            Err(error) => {
+                                viewer.show_error("Could not save ink edits", &error.to_string())
+                            }
+                        }
+                    }
+                    undo_button.set_sensitive(viewer.page_view.canvas().can_undo_ink_edit());
+                }
+            }));
+    }
+
+    fn connect_text_editing(self: &Rc<Self>, button: &gtk::Button) {
+        let weak = Rc::downgrade(self);
+        button.connect_clicked(move |_| {
+            let Some(viewer) = weak.upgrade() else {
+                return;
+            };
+            if let Some((node_id, text)) = viewer.page_view.canvas().selected_text() {
+                viewer.word_editor.load_text(node_id, text);
+            } else {
+                viewer.word_editor.revealer.set_reveal_child(true);
+                viewer
+                    .status
+                    .set_label("Click any text paragraph on the page to edit it live in Word Editor");
+            }
+        });
+
+        let weak = Rc::downgrade(self);
+        self.page_view
+            .canvas()
+            .set_text_selection_handler(Some(move |node_id: String, text: String| {
+                if let Some(viewer) = weak.upgrade() {
+                    viewer.word_editor.load_text(node_id.clone(), text.clone());
+                    if node_id.ends_with("_title") {
+                        viewer.page_title.set_label(&text);
+                        let selected = viewer.page_selection.selected();
+                        if selected != NO_SELECTION {
+                            viewer.page_model.splice(selected, 1, &[&gtk_text(&text)]);
+                        }
+                    }
+                }
+            }));
+
+        let weak = Rc::downgrade(self);
+        self.word_editor
+            .buffer
+            .connect_changed(move |buffer| {
+                let Some(viewer) = weak.upgrade() else {
+                    return;
+                };
+                if *viewer.word_editor.is_updating_internal.borrow() {
+                    return;
+                }
+                let (start, end) = buffer.bounds();
+                let text = buffer.text(&start, &end, false).to_string();
+                viewer.word_editor.update_stats(&text);
+                *viewer.word_editor.is_updating_internal.borrow_mut() = true;
+                crate::word_editor::apply_formatting_tags(buffer);
+                *viewer.word_editor.is_updating_internal.borrow_mut() = false;
+                let active_node = viewer.word_editor.active_node_id.borrow().clone();
+                if let Some(node_id) = active_node {
+                    viewer
+                        .page_view
+                        .canvas()
+                        .set_text_replacement(&node_id, text.clone());
+                    viewer
+                        .word_editor
+                        .status_label
+                        .set_label("● Saved live to page");
+                    if node_id.ends_with("_title") {
+                        viewer.page_title.set_label(&text);
+                        let selected = viewer.page_selection.selected();
+                        if selected != NO_SELECTION {
+                            viewer.page_model.splice(selected, 1, &[&gtk_text(&text)]);
+                        }
+                    }
+                }
+            });
+    }
+
+    #[allow(dead_code)]
+    fn open_text_editor(self: &Rc<Self>, node_id: String, text: String) {
+        self.word_editor.load_text(node_id, text);
+    }
+
+    pub fn create_new_page(self: &Rc<Self>) {
+        let timestamp = glib::DateTime::now_local().map_or(0, |dt| dt.to_unix() * 1_000_000 + dt.microsecond() as i64);
+        let page_id = PageId::new(format!("page_{timestamp}"));
+        let active = self.state.borrow().active.clone();
+        let (source_id, section_id) = if let Some(active) = active {
+            if let Some(sec) = active.section {
+                (active.source, sec.section_id)
+            } else {
+                (active.source, SectionId::new("default_section".to_string()))
+            }
+        } else {
+            (SourceId::new("local_notebook".to_string()), SectionId::new("quick_notes".to_string()))
+        };
+
+        let new_row = PageRow {
+            source: source_id.clone(),
+            section: section_id.clone(),
+            page: page_id.clone(),
+        };
+        self.state.borrow_mut().pages.push(new_row);
+
+        append_model(&self.page_model, "Untitled Page");
+        let new_idx = self.page_model.n_items() - 1;
+        self.selection_syncing.set(true);
+        self.page_selection.set_selected(new_idx);
+        self.selection_syncing.set(false);
+
+        self.state.borrow_mut().active = Some(ActiveLocation {
+            source: source_id,
+            section: Some(SectionLocation {
+                section_id,
+                page_id: Some(page_id.clone()),
+            }),
+        });
+
+        let blank_scene = Arc::new(PageScene::new_blank(page_id.clone(), "Untitled Page"));
+        self.page_view.set_scene(Some(blank_scene));
+        self.canvas_stack.set_visible_child_name("document");
+        self.page_title.set_label("Untitled Page");
+        let now_str = glib::DateTime::now_local()
+            .map(|dt| dt.format("%A, %B %e, %Y  %l:%M %P").unwrap_or_default().to_string())
+            .unwrap_or_default();
+        self.page_date.set_label(&now_str);
+        self.status.set_label("New page created · Click anywhere to type notes");
+
+        let title_node_id = format!("node_{}_title", page_id.as_str());
+        self.page_view.canvas().select_node_by_id(&title_node_id, "Untitled Page".len());
+        self.page_view.canvas().grab_focus();
+        self.word_editor.load_text(title_node_id, "Untitled Page".to_string());
+    }
+
+    fn active_notebook_directory(&self) -> Option<PathBuf> {
+        let state = self.state.borrow();
+        let active = state.active.as_ref()?;
+        let source = state
+            .sources
+            .iter()
+            .find(|source| source.loaded.notebook.source_id == active.source)?;
+        let path = source.descriptor.path();
+        if path.is_dir() {
+            Some(path.to_path_buf())
+        } else if let Some(parent) = path.parent() {
+            Some(parent.to_path_buf())
+        } else {
+            None
+        }
+    }
+
+    pub fn show_new_notebook_dialog(self: &Rc<Self>) {
+        let default_location = self
+            .active_notebook_directory()
+            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+            .unwrap_or_else(|| self.settings.borrow().notebooks_location.clone());
+
+        let weak_create = Rc::downgrade(self);
+        let weak_err = Rc::downgrade(self);
+        crate::dialogs::present_new_notebook(
+            &self.window,
+            default_location,
+            move |name, folder| {
+                if let Some(viewer) = weak_create.upgrade() {
+                    viewer.create_notebook(name, folder)
+                } else {
+                    false
+                }
+            },
+            move |title, detail| {
+                if let Some(viewer) = weak_err.upgrade() {
+                    viewer.show_error(title, detail);
+                }
+            },
+        );
+    }
+
+    pub fn show_new_section_dialog(self: &Rc<Self>) {
+        let default_location = self
+            .active_notebook_directory()
+            .unwrap_or_else(|| self.settings.borrow().notebooks_location.clone());
+
+        let weak_create = Rc::downgrade(self);
+        let weak_err = Rc::downgrade(self);
+        crate::dialogs::present_new_section(
+            &self.window,
+            default_location,
+            move |name, folder| {
+                if let Some(viewer) = weak_create.upgrade() {
+                    viewer.create_section(name, folder)
+                } else {
+                    false
+                }
+            },
+            move |title, detail| {
+                if let Some(viewer) = weak_err.upgrade() {
+                    viewer.show_error(title, detail);
+                }
+            },
+        );
+    }
+
+    fn create_notebook(self: &Rc<Self>, name: &str, parent_folder: &Path) -> bool {
+        let notebook_dir = parent_folder.join(name.trim());
+        if notebook_dir.exists() {
+            self.show_error(
+                "Notebook Already Exists",
+                &format!("A folder named '{}' already exists in {}.", name, parent_folder.display()),
+            );
+            return false;
+        }
+
+        if let Err(e) = std::fs::create_dir_all(&notebook_dir) {
+            self.show_error(
+                "Could Not Create Notebook Folder",
+                &format!("Failed to create directory {}: {}", notebook_dir.display(), e),
+            );
+            return false;
+        }
+
+        let toc_file = notebook_dir.join("Open Notebook.onetoc2");
+        if let Err(e) = std::fs::write(&toc_file, crate::templates::TEMPLATE_ONETOC2) {
+            self.show_error(
+                "Could Not Initialize Notebook",
+                &format!("Failed to write Open Notebook.onetoc2: {}", e),
+            );
+            return false;
+        }
+
+        let section_file = notebook_dir.join("Quick Notes.one");
+        if let Err(e) = std::fs::write(&section_file, crate::templates::TEMPLATE_SECTION_ONE) {
+            self.show_error(
+                "Could Not Create Initial Section",
+                &format!("Failed to write Quick Notes.one: {}", e),
+            );
+            return false;
+        }
+
+        self.status.set_label(&format!("Notebook '{}' created", name));
+        self.discover(notebook_dir);
+        true
+    }
+
+    fn create_section(self: &Rc<Self>, name: &str, notebook_folder: &Path) -> bool {
+        let file_name = if name.ends_with(".one") {
+            name.to_string()
+        } else {
+            format!("{}.one", name)
+        };
+        let section_path = notebook_folder.join(&file_name);
+
+        if section_path.exists() {
+            self.show_error(
+                "Section Already Exists",
+                &format!("A section file named '{}' already exists in {}.", file_name, notebook_folder.display()),
+            );
+            return false;
+        }
+
+        if let Err(e) = std::fs::create_dir_all(notebook_folder) {
+            self.show_error(
+                "Could Not Prepare Folder",
+                &format!("Failed to prepare directory {}: {}", notebook_folder.display(), e),
+            );
+            return false;
+        }
+
+        if let Err(e) = std::fs::write(&section_path, crate::templates::TEMPLATE_SECTION_ONE) {
+            self.show_error(
+                "Could Not Create Section File",
+                &format!("Failed to write {}: {}", section_path.display(), e),
+            );
+            return false;
+        }
+
+        self.status.set_label(&format!("Section '{}' created", file_name));
+
+        let toc = notebook_folder.join("Open Notebook.onetoc2");
+        if toc.exists() {
+            self.discover(notebook_folder.to_path_buf());
+        } else {
+            self.load_source(SourceDescriptor::native(section_path), None);
+        }
+        true
+    }
+
+    fn active_ink_edit_key(&self) -> Option<String> {
+        let scene = self.page_view.canvas().scene()?;
+        self.ink_edit_key_for_page(&scene.page_id)
+    }
+
+    fn ink_edit_key_for_page(&self, page_id: &PageId) -> Option<String> {
+        let selected = usize::try_from(self.page_selection.selected()).ok();
+        let state = self.state.borrow();
+        let row = selected.and_then(|idx| state.pages.get(idx));
+        let source = row.and_then(|row| {
+            state
+                .sources
+                .iter()
+                .find(|source| source.loaded.notebook.source_id == row.source)
+        });
+        if let Some(source) = source {
+            Some(crate::ink_edits::page_key(
+                source.loaded.notebook.source_id.as_str(),
+                source.loaded.notebook.fingerprint.as_str(),
+                page_id.as_str(),
+            ))
+        } else {
+            Some(crate::ink_edits::page_key(
+                "local_user",
+                "local_notebook",
+                page_id.as_str(),
+            ))
+        }
+    }
+
     fn connect_page_actions(self: &Rc<Self>) {
         let weak = Rc::downgrade(self);
         self.page_view.set_action_handler(Some(move |action| {
@@ -1747,37 +2216,28 @@ impl Viewer {
 
     fn choose_attachment_destination(self: &Rc<Self>, context: AttachmentContext) {
         let initial_name = crate::attachment::sanitized_filename(&context.resource.name);
-        let dialog = gtk::FileDialog::builder()
-            .title("Save Attachment")
-            .accept_label("Save")
-            .initial_name(initial_name)
-            .modal(true)
-            .build();
-        let weak = Rc::downgrade(self);
-        dialog.save(
+        let chooser = gtk::FileChooserNative::new(
+            Some("Save Attachment"),
             Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |result| match result {
-                Ok(destination) => {
-                    if let Some(viewer) = weak.upgrade() {
-                        viewer.start_attachment_copy(
-                            context,
-                            destination,
-                            worker::AttachmentPurpose::Save,
-                        );
-                    }
-                }
-                Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
-                Err(error) => {
-                    if let Some(viewer) = weak.upgrade() {
-                        viewer.show_error(
-                            "Could not choose attachment destination",
-                            &error.to_string(),
-                        );
-                    }
-                }
-            },
+            gtk::FileChooserAction::Save,
+            Some("Save"),
+            Some("Cancel"),
         );
+        chooser.set_current_name(&initial_name);
+        chooser.set_modal(true);
+        let weak = Rc::downgrade(self);
+        chooser.connect_response(move |dialog, response| {
+            if response == gtk::ResponseType::Accept {
+                if let (Some(viewer), Some(file)) = (weak.upgrade(), dialog.file()) {
+                    viewer.start_attachment_copy(
+                        context.clone(),
+                        file,
+                        worker::AttachmentPurpose::Save,
+                    );
+                }
+            }
+        });
+        chooser.show();
     }
 
     fn open_attachment(self: &Rc<Self>, context: AttachmentContext) {
@@ -1844,18 +2304,9 @@ impl Viewer {
     }
 
     fn launch_attachment(self: &Rc<Self>, file: &gio::File) {
-        let launcher = gtk::FileLauncher::new(Some(file));
-        launcher.set_writable(false);
-        let weak = Rc::downgrade(self);
-        launcher.launch(
-            Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |result| {
-                if let (Err(error), Some(viewer)) = (result, weak.upgrade()) {
-                    viewer.show_error("Could not open attachment", &error.to_string());
-                }
-            },
-        );
+        if let Err(error) = gio::AppInfo::launch_default_for_uri(&file.uri(), None::<&gio::AppLaunchContext>) {
+            self.show_error("Could not open attachment", &error.to_string());
+        }
     }
 
     fn open_link(self: &Rc<Self>, target: &str) {
@@ -1999,31 +2450,15 @@ impl Viewer {
 
     fn launch_local_path(self: &Rc<Self>, target: &str) {
         let file = gio::File::for_path(target);
-        let launcher = gtk::FileLauncher::new(Some(&file));
-        let weak = Rc::downgrade(self);
-        launcher.launch(
-            Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |result| {
-                if let (Err(error), Some(viewer)) = (result, weak.upgrade()) {
-                    viewer.show_error("Could not open local file", &error.to_string());
-                }
-            },
-        );
+        if let Err(error) = gio::AppInfo::launch_default_for_uri(&file.uri(), None::<&gio::AppLaunchContext>) {
+            self.show_error("Could not open local file", &error.to_string());
+        }
     }
 
     fn launch_uri(self: &Rc<Self>, target: &str) {
-        let launcher = gtk::UriLauncher::new(target);
-        let weak = Rc::downgrade(self);
-        launcher.launch(
-            Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |result| {
-                if let (Err(error), Some(viewer)) = (result, weak.upgrade()) {
-                    viewer.show_error("Could not open link", &error.to_string());
-                }
-            },
-        );
+        if let Err(error) = gio::AppInfo::launch_default_for_uri(target, None::<&gio::AppLaunchContext>) {
+            self.show_error("Could not open link", &error.to_string());
+        }
     }
 
     fn poll_events(self: &Rc<Self>) {
@@ -2096,14 +2531,26 @@ impl Viewer {
                 self.spinner.stop();
                 match result {
                     Ok(scene) => {
+                        let edit_key = self.ink_edit_key_for_page(&scene.page_id);
                         self.page_view.set_scene(Some(scene));
+                        if let Some(key) = edit_key {
+                            match crate::ink_edits::load_page(&key) {
+                                Ok(edits) => self.page_view.canvas().set_ink_edits(edits),
+                                Err(error) => self.show_error(
+                                    "Could not load local ink edits",
+                                    &error.to_string(),
+                                ),
+                            }
+                        }
+                        self.ink_undo_button.set_sensitive(false);
                         self.canvas_stack.set_visible_child_name("document");
                         self.refresh_page_find_action();
                         if self.page_find_revealer.reveals_child() {
                             self.recompute_page_find(true);
                         }
                         self.reveal_pending_target();
-                        self.status.set_label("Page ready");
+                        self.status
+                            .set_label("Page ready · draw or erase to edit ink");
                     }
                     Err(error) => self.show_error("Could not render page", &error),
                 }
@@ -3651,80 +4098,76 @@ impl Viewer {
     }
 
     fn choose_file(self: &Rc<Self>) {
-        let dialog = gtk::FileDialog::builder()
-            .title("Open OneNote file")
-            .modal(true)
-            .build();
-        let weak = Rc::downgrade(self);
-        dialog.open_multiple(
+        let chooser = gtk::FileChooserNative::new(
+            Some("Open OneNote file"),
             Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |result| {
-                let Some(viewer) = weak.upgrade() else {
-                    return;
-                };
-                match result {
-                    Ok(files) => {
-                        for position in 0..files.n_items() {
-                            if let Some(path) = files
-                                .item(position)
-                                .and_then(|item| item.downcast::<gio::File>().ok())
-                                .and_then(|file| file.path())
-                            {
+            gtk::FileChooserAction::Open,
+            Some("Open"),
+            Some("Cancel"),
+        );
+        chooser.set_select_multiple(true);
+        chooser.set_modal(true);
+        let weak = Rc::downgrade(self);
+        chooser.connect_response(move |dialog, response| {
+            if response == gtk::ResponseType::Accept {
+                if let Some(viewer) = weak.upgrade() {
+                    let files = dialog.files();
+                    for position in 0..files.n_items() {
+                        if let Some(file) = files
+                            .item(position)
+                            .and_then(|item| item.downcast::<gio::File>().ok())
+                        {
+                            if let Some(path) = file.path() {
                                 viewer.discover(path);
                             }
                         }
                     }
-                    Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
-                    Err(error) => viewer.show_error("Could not select file", &error.to_string()),
                 }
-            },
-        );
+            }
+        });
+        chooser.show();
     }
 
     fn choose_folder(self: &Rc<Self>) {
-        let dialog = gtk::FileDialog::builder()
-            .title("Open notebook folder")
-            .modal(true)
-            .build();
-        let weak = Rc::downgrade(self);
-        dialog.select_folder(
+        let chooser = gtk::FileChooserNative::new(
+            Some("Open notebook folder"),
             Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |result| {
-                let Some(viewer) = weak.upgrade() else {
-                    return;
-                };
-                match result {
-                    Ok(file) => {
+            gtk::FileChooserAction::SelectFolder,
+            Some("Select"),
+            Some("Cancel"),
+        );
+        chooser.set_modal(true);
+        let weak = Rc::downgrade(self);
+        chooser.connect_response(move |dialog, response| {
+            if response == gtk::ResponseType::Accept {
+                if let Some(viewer) = weak.upgrade() {
+                    if let Some(file) = dialog.file() {
                         if let Some(path) = file.path() {
                             viewer.discover(path);
                         }
                     }
-                    Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
-                    Err(error) => viewer.show_error("Could not select folder", &error.to_string()),
                 }
-            },
-        );
+            }
+        });
+        chooser.show();
     }
 
     fn choose_backup_folder(self: &Rc<Self>) {
         let initial = gio::File::for_path(&self.settings.borrow().notebooks_location);
-        let dialog = gtk::FileDialog::builder()
-            .title("Open OneNote backup folder")
-            .initial_folder(&initial)
-            .modal(true)
-            .build();
-        let weak = Rc::downgrade(self);
-        dialog.select_folder(
+        let chooser = gtk::FileChooserNative::new(
+            Some("Open OneNote backup folder"),
             Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |result| {
-                let Some(viewer) = weak.upgrade() else {
-                    return;
-                };
-                match result {
-                    Ok(file) => {
+            gtk::FileChooserAction::SelectFolder,
+            Some("Select"),
+            Some("Cancel"),
+        );
+        let _ = chooser.set_current_folder(Some(&initial));
+        chooser.set_modal(true);
+        let weak = Rc::downgrade(self);
+        chooser.connect_response(move |dialog, response| {
+            if response == gtk::ResponseType::Accept {
+                if let Some(viewer) = weak.upgrade() {
+                    if let Some(file) = dialog.file() {
                         if let Some(path) = file.path() {
                             viewer.start_backup_load(
                                 SourceDescriptor::backup(
@@ -3736,13 +4179,10 @@ impl Viewer {
                             );
                         }
                     }
-                    Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
-                    Err(error) => {
-                        viewer.show_error("Could not select backup folder", &error.to_string());
-                    }
                 }
-            },
-        );
+            }
+        });
+        chooser.show();
     }
 
     fn refresh_active_source(self: &Rc<Self>) {
@@ -3878,34 +4318,28 @@ impl Viewer {
         let filter = gtk::FileFilter::new();
         filter.set_name(Some("OneNote packages"));
         filter.add_suffix("onepkg");
-        let filters = gio::ListStore::new::<gtk::FileFilter>();
-        filters.append(&filter);
-        let dialog = gtk::FileDialog::builder()
-            .title("Select OneNote package")
-            .accept_label("Select")
-            .modal(true)
-            .filters(&filters)
-            .default_filter(&filter)
-            .build();
-        let weak = Rc::downgrade(self);
-        dialog.open(
+        let chooser = gtk::FileChooserNative::new(
+            Some("Select OneNote package"),
             Some(&self.window),
-            None::<&gio::Cancellable>,
-            move |result| {
-                let Some(viewer) = weak.upgrade() else {
-                    return;
-                };
-                match result {
-                    Ok(file) => {
+            gtk::FileChooserAction::Open,
+            Some("Select"),
+            Some("Cancel"),
+        );
+        chooser.set_filter(&filter);
+        chooser.set_modal(true);
+        let weak = Rc::downgrade(self);
+        chooser.connect_response(move |dialog, response| {
+            if response == gtk::ResponseType::Accept {
+                if let Some(viewer) = weak.upgrade() {
+                    if let Some(file) = dialog.file() {
                         if let Some(package) = file.path() {
                             viewer.confirm_package_import(package);
                         }
                     }
-                    Err(error) if error.matches(gtk::DialogError::Dismissed) => {}
-                    Err(error) => viewer.show_error("Could not select package", &error.to_string()),
                 }
-            },
-        );
+            }
+        });
+        chooser.show();
     }
 
     fn confirm_package_import(self: &Rc<Self>, package: PathBuf) {
@@ -4008,7 +4442,7 @@ impl Viewer {
 
     fn apply_theme(&self, preference: ThemePreference) {
         let theme = effective_theme(preference);
-        self.style_provider.load_from_string(&theme_css(theme));
+        self.style_provider.load_from_data(&theme_css(theme));
         self.page_view
             .set_default_text_color(&theme_default_text_color(theme));
     }
@@ -4370,7 +4804,7 @@ fn list_view(model: &gtk::StringList, css_class: &str) -> (gtk::SingleSelection,
         label.set_margin_bottom(8);
         item.set_child(Some(&label));
     });
-    factory.connect_bind(|_, item| bind_string(item, false));
+    factory.connect_bind(|_, item| bind_string(item.upcast_ref(), false));
     list.set_factory(Some(&factory));
     (selection, list)
 }
@@ -4420,7 +4854,7 @@ fn result_list(model: &gio::ListStore) -> (gtk::SingleSelection, gtk::ListView) 
         content.append(&excerpt);
         item.set_child(Some(&content));
     });
-    factory.connect_bind(|_, item| bind_search_result(item));
+    factory.connect_bind(|_, item| bind_search_result(item.upcast_ref()));
     list.set_factory(Some(&factory));
     (selection, list)
 }
@@ -4561,7 +4995,7 @@ struct CollapsibleNavigationBand {
     heading: gtk::Label,
     body: gtk::ScrolledWindow,
     toggle: gtk::Button,
-    header_action: Option<gtk::Button>,
+    header_action: Option<gtk::Widget>,
     expanded_width: i32,
     collapsed: Rc<Cell<bool>>,
 }
@@ -4571,7 +5005,7 @@ impl CollapsibleNavigationBand {
         title: &str,
         list: &gtk::ListView,
         expanded_width: i32,
-        header_action: Option<&gtk::Button>,
+        header_action: Option<&gtk::Widget>,
         collapsed: bool,
     ) -> Self {
         let heading = gtk::Label::builder()
@@ -4759,6 +5193,696 @@ fn separator() -> gtk::Separator {
 
 fn separator_horizontal() -> gtk::Separator {
     gtk::Separator::new(gtk::Orientation::Horizontal)
+}
+
+fn ribbon_separator() -> gtk::Separator {
+    let sep = gtk::Separator::new(gtk::Orientation::Vertical);
+    sep.add_css_class("ribbon-sep");
+    sep
+}
+
+fn build_ribbon_toolbar(
+    page_view: &PageView,
+    page_find_revealer: &gtk::Revealer,
+    notebooks_toggle: &gtk::Button,
+    pages_toggle: &gtk::Button,
+    _edit_text_btn: &gtk::Button,
+    ink_pen_btn: &gtk::CheckButton,
+    ink_eraser_btn: &gtk::CheckButton,
+    ink_undo_btn: &gtk::Button,
+    zoom_in_btn: &gtk::Button,
+    zoom_out_btn: &gtk::Button,
+    zoom_reset_btn: &gtk::Button,
+    word_editor: &crate::word_editor::LiveWordEditor,
+) -> gtk::Box {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    container.add_css_class("ribbon-container");
+
+    let tabs_bar = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    tabs_bar.add_css_class("ribbon-tabs-bar");
+
+    let tab_home = gtk::Button::with_label("Home");
+    let tab_insert = gtk::Button::with_label("Insert");
+    let tab_draw = gtk::Button::with_label("Draw");
+    let tab_view = gtk::Button::with_label("View");
+
+    for tab in [&tab_home, &tab_insert, &tab_draw, &tab_view] {
+        tab.add_css_class("ribbon-tab");
+    }
+    tab_draw.add_css_class("active");
+
+    tabs_bar.append(&tab_home);
+    tabs_bar.append(&tab_insert);
+    tabs_bar.append(&tab_draw);
+    tabs_bar.append(&tab_view);
+    container.append(&tabs_bar);
+
+    let stack = gtk::Stack::builder()
+        .transition_type(gtk::StackTransitionType::Crossfade)
+        .build();
+
+    // 1. Draw ribbon
+    let draw_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    draw_box.add_css_class("ribbon-toolbar");
+
+    let btn_select = gtk::Button::with_label("✋ Select");
+    btn_select.add_css_class("ribbon-btn");
+    btn_select.set_tooltip_text(Some("Selection / Text pointer mode"));
+
+    let btn_eraser = gtk::Button::with_label("🧹 Eraser");
+    btn_eraser.add_css_class("ribbon-btn");
+    btn_eraser.set_tooltip_text(Some("Erase ink strokes"));
+
+    draw_box.append(&btn_select);
+    draw_box.append(&btn_eraser);
+    draw_box.append(&ribbon_separator());
+
+    // Pens
+    let pen_black = gtk::Button::with_label("⚫ Black (1.5mm)");
+    let pen_blue = gtk::Button::with_label("🔵 Blue (1.5mm)");
+    let pen_red = gtk::Button::with_label("🔴 Red (1.5mm)");
+    let pen_green = gtk::Button::with_label("🟢 Green (1.5mm)");
+    let pen_purple = gtk::Button::with_label("🟣 Purple (1.5mm)");
+    let pen_yellow_hl = gtk::Button::with_label("🟡 Highlighter");
+    let pen_green_hl = gtk::Button::with_label("🟢 Highlighter");
+
+    let pen_buttons = [
+        (&pen_black, onenote_core::Color { red: 32, green: 31, blue: 30, alpha: 255 }, 1.5),
+        (&pen_blue, onenote_core::Color { red: 39, green: 87, blue: 180, alpha: 255 }, 1.5),
+        (&pen_red, onenote_core::Color { red: 216, green: 59, blue: 1, alpha: 255 }, 1.5),
+        (&pen_green, onenote_core::Color { red: 16, green: 124, blue: 65, alpha: 255 }, 1.5),
+        (&pen_purple, onenote_core::Color { red: 91, green: 45, blue: 144, alpha: 255 }, 1.5),
+        (&pen_yellow_hl, onenote_core::Color { red: 255, green: 241, blue: 0, alpha: 128 }, 5.0),
+        (&pen_green_hl, onenote_core::Color { red: 142, green: 237, blue: 71, alpha: 128 }, 5.0),
+    ];
+
+    let all_tool_btns: std::rc::Rc<Vec<gtk::Button>> = std::rc::Rc::new(vec![
+        btn_select.clone(),
+        btn_eraser.clone(),
+        pen_black.clone(),
+        pen_blue.clone(),
+        pen_red.clone(),
+        pen_green.clone(),
+        pen_purple.clone(),
+        pen_yellow_hl.clone(),
+        pen_green_hl.clone(),
+    ]);
+
+    let set_active_btn = {
+        let all = std::rc::Rc::clone(&all_tool_btns);
+        move |target: &gtk::Button| {
+            for b in all.iter() {
+                if b == target {
+                    b.add_css_class("active");
+                } else {
+                    b.remove_css_class("active");
+                }
+            }
+        }
+    };
+
+    btn_select.add_css_class("active");
+
+    {
+        let set_active = set_active_btn.clone();
+        let pen_btn = ink_pen_btn.clone();
+        let eraser_btn = ink_eraser_btn.clone();
+        let pv = page_view.clone();
+        btn_select.connect_clicked(move |b| {
+            set_active(b);
+            pen_btn.set_active(false);
+            eraser_btn.set_active(false);
+            pv.canvas().set_ink_tool(InkEditTool::View);
+        });
+    }
+
+    {
+        let set_active = set_active_btn.clone();
+        let pen_btn = ink_pen_btn.clone();
+        let eraser_btn = ink_eraser_btn.clone();
+        let pv = page_view.clone();
+        btn_eraser.connect_clicked(move |b| {
+            set_active(b);
+            pen_btn.set_active(false);
+            eraser_btn.set_active(true);
+            pv.canvas().set_ink_tool(InkEditTool::Eraser);
+        });
+    }
+
+    for (btn, color, width) in pen_buttons {
+        btn.add_css_class("ribbon-btn");
+        draw_box.append(btn);
+        let set_active = set_active_btn.clone();
+        let pen_btn = ink_pen_btn.clone();
+        let eraser_btn = ink_eraser_btn.clone();
+        let pv = page_view.clone();
+        btn.connect_clicked(move |b| {
+            set_active(b);
+            pv.canvas().set_pen_color(color);
+            pv.canvas().set_pen_width(width);
+            pv.canvas().set_ink_tool(InkEditTool::Pen);
+            eraser_btn.set_active(false);
+            pen_btn.set_active(true);
+        });
+    }
+
+    draw_box.append(&ribbon_separator());
+
+    // Thickness
+    let th_fine = gtk::Button::with_label("0.5pt");
+    let th_med = gtk::Button::with_label("1.5pt");
+    let th_thick = gtk::Button::with_label("3.0pt");
+    let th_marker = gtk::Button::with_label("6.0pt");
+    for (th_btn, w) in [(&th_fine, 0.75), (&th_med, 1.5), (&th_thick, 3.0), (&th_marker, 6.0)] {
+        th_btn.add_css_class("ribbon-btn");
+        draw_box.append(th_btn);
+        let pv = page_view.clone();
+        th_btn.connect_clicked(move |_| {
+            pv.canvas().set_pen_width(w);
+        });
+    }
+
+    draw_box.append(&ribbon_separator());
+
+    let undo_btn = gtk::Button::with_label("↺ Undo");
+    undo_btn.add_css_class("ribbon-btn");
+    {
+        let original_undo = ink_undo_btn.clone();
+        undo_btn.connect_clicked(move |_| {
+            original_undo.emit_clicked();
+        });
+    }
+    draw_box.append(&undo_btn);
+
+    draw_box.append(&ribbon_separator());
+
+    let export_btn = gtk::Button::with_label("🌐 View HTML");
+    export_btn.add_css_class("ribbon-btn");
+    export_btn.set_tooltip_text(Some("Open interactive HTML view of your notebook"));
+    export_btn.connect_clicked(move |_| {
+        let path = "/home/rohan/Documents/OneNote_Export/Unit_2/index.html";
+        let _ = gio::AppInfo::launch_default_for_uri(&format!("file://{path}"), None::<&gio::AppLaunchContext>);
+    });
+    draw_box.append(&export_btn);
+
+    stack.add_named(&draw_box, Some("draw"));
+
+    // 2. Home ribbon
+    let home_box = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    home_box.add_css_class("ribbon-toolbar");
+
+    let new_nb_btn = gtk::Button::with_label("📚 New Notebook");
+    new_nb_btn.add_css_class("ribbon-btn");
+    new_nb_btn.add_css_class("word-tb-btn-primary");
+    new_nb_btn.set_tooltip_text(Some("Create a new OneNote notebook (Ctrl+Shift+N)"));
+    new_nb_btn.set_action_name(Some("win.new-notebook"));
+    home_box.append(&new_nb_btn);
+
+    let new_sec_btn = gtk::Button::with_label("📑 New Section");
+    new_sec_btn.add_css_class("ribbon-btn");
+    new_sec_btn.add_css_class("word-tb-btn-primary");
+    new_sec_btn.set_tooltip_text(Some("Create a new section sub-file (.one) (Ctrl+Alt+N)"));
+    new_sec_btn.set_action_name(Some("win.new-section"));
+    home_box.append(&new_sec_btn);
+
+    let new_page_btn = gtk::Button::with_label("📄 New Page");
+    new_page_btn.add_css_class("ribbon-btn");
+    new_page_btn.add_css_class("word-tb-btn-primary");
+    new_page_btn.set_tooltip_text(Some("Create a new blank page (Ctrl+N)"));
+    new_page_btn.set_action_name(Some("win.new-page"));
+    home_box.append(&new_page_btn);
+    home_box.append(&ribbon_separator());
+
+    let find_btn = gtk::Button::with_label("🔍 Find");
+    find_btn.add_css_class("ribbon-btn");
+    {
+        let rev = page_find_revealer.clone();
+        find_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(!rev.reveals_child());
+        });
+    }
+    home_box.append(&find_btn);
+    home_box.append(&ribbon_separator());
+
+    let word_toggle_btn = gtk::Button::with_label("📝 Word Editor");
+    word_toggle_btn.add_css_class("ribbon-btn");
+    word_toggle_btn.add_css_class("word-tb-btn-primary");
+    word_toggle_btn.set_tooltip_text(Some("Toggle Live Word Document Editor pane"));
+    {
+        let rev = word_editor.revealer.clone();
+        word_toggle_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(!rev.reveals_child());
+        });
+    }
+    home_box.append(&word_toggle_btn);
+    home_box.append(&ribbon_separator());
+
+    let task_btn = gtk::Button::with_label("☐ To-Do Task");
+    task_btn.add_css_class("ribbon-btn");
+    task_btn.set_tooltip_text(Some("Insert or toggle To-Do task checkbox (Ctrl+1)"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        task_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            let cursor_mark = buf.get_insert();
+            let iter = buf.iter_at_mark(&cursor_mark);
+            let line = iter.line();
+            let mut line_start = buf.iter_at_line(line).unwrap_or(iter);
+            let mut line_end = line_start;
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+            let line_text = buf.text(&line_start, &line_end, false).to_string();
+            let new_line = if line_text.starts_with("☐ ") {
+                line_text.replacen("☐ ", "☑ ", 1)
+            } else if line_text.starts_with("☑ ") {
+                line_text.replacen("☑ ", "☐ ", 1)
+            } else if line_text.starts_with("[ ] ") {
+                line_text.replacen("[ ] ", "[x] ", 1)
+            } else if line_text.starts_with("[x] ") {
+                line_text.replacen("[x] ", "[ ] ", 1)
+            } else {
+                format!("☐ {line_text}")
+            };
+            buf.delete(&mut line_start, &mut line_end);
+            buf.insert(&mut line_start, &new_line);
+        });
+    }
+    home_box.append(&task_btn);
+
+    let bullet_btn = gtk::Button::with_label("• Bullets");
+    bullet_btn.add_css_class("ribbon-btn");
+    bullet_btn.set_tooltip_text(Some("Bulleted list"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        bullet_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            let cursor_mark = buf.get_insert();
+            let iter = buf.iter_at_mark(&cursor_mark);
+            let line = iter.line();
+            let mut line_start = buf.iter_at_line(line).unwrap_or(iter);
+            let mut line_end = line_start;
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+            let line_text = buf.text(&line_start, &line_end, false).to_string();
+            let new_line = if line_text.starts_with("• ") {
+                line_text.replacen("• ", "", 1)
+            } else {
+                format!("• {line_text}")
+            };
+            buf.delete(&mut line_start, &mut line_end);
+            buf.insert(&mut line_start, &new_line);
+        });
+    }
+    home_box.append(&bullet_btn);
+
+    let number_btn = gtk::Button::with_label("1. Numbers");
+    number_btn.add_css_class("ribbon-btn");
+    number_btn.set_tooltip_text(Some("Numbered list"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        number_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            let cursor_mark = buf.get_insert();
+            let iter = buf.iter_at_mark(&cursor_mark);
+            let line = iter.line();
+            let mut line_start = buf.iter_at_line(line).unwrap_or(iter);
+            let mut line_end = line_start;
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+            let line_text = buf.text(&line_start, &line_end, false).to_string();
+            let new_line = if line_text.starts_with("1. ") {
+                line_text.replacen("1. ", "", 1)
+            } else {
+                format!("1. {line_text}")
+            };
+            buf.delete(&mut line_start, &mut line_end);
+            buf.insert(&mut line_start, &new_line);
+        });
+    }
+    home_box.append(&number_btn);
+    home_box.append(&ribbon_separator());
+
+    let bold_btn = gtk::Button::with_label("B");
+    bold_btn.add_css_class("ribbon-btn");
+    bold_btn.add_css_class("word-btn-bold");
+    bold_btn.set_tooltip_text(Some("Bold (Ctrl+B)"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        bold_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            if let Some((mut start, mut end)) = buf.selection_bounds() {
+                let sel = buf.text(&start, &end, false).to_string();
+                let wrapped = format!("**{sel}**");
+                buf.delete(&mut start, &mut end);
+                buf.insert(&mut start, &wrapped);
+            } else {
+                buf.insert_at_cursor("****");
+            }
+        });
+    }
+    home_box.append(&bold_btn);
+
+    let italic_btn = gtk::Button::with_label("I");
+    italic_btn.add_css_class("ribbon-btn");
+    italic_btn.add_css_class("word-btn-italic");
+    italic_btn.set_tooltip_text(Some("Italic (Ctrl+I)"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        italic_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            if let Some((mut start, mut end)) = buf.selection_bounds() {
+                let sel = buf.text(&start, &end, false).to_string();
+                let wrapped = format!("*{sel}*");
+                buf.delete(&mut start, &mut end);
+                buf.insert(&mut start, &wrapped);
+            } else {
+                buf.insert_at_cursor("**");
+            }
+        });
+    }
+    home_box.append(&italic_btn);
+
+    let underline_btn = gtk::Button::with_label("U");
+    underline_btn.add_css_class("ribbon-btn");
+    underline_btn.add_css_class("word-btn-underline");
+    underline_btn.set_tooltip_text(Some("Underline (Ctrl+U)"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        underline_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            if let Some((mut start, mut end)) = buf.selection_bounds() {
+                let sel = buf.text(&start, &end, false).to_string();
+                let wrapped = format!("<u>{sel}</u>");
+                buf.delete(&mut start, &mut end);
+                buf.insert(&mut start, &wrapped);
+            } else {
+                buf.insert_at_cursor("<u></u>");
+            }
+        });
+    }
+    home_box.append(&underline_btn);
+    home_box.append(&ribbon_separator());
+
+    let h1_btn = gtk::Button::with_label("H1");
+    h1_btn.add_css_class("ribbon-btn");
+    h1_btn.set_tooltip_text(Some("Heading 1 (22pt Bold)"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        h1_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            let cursor_mark = buf.get_insert();
+            let iter = buf.iter_at_mark(&cursor_mark);
+            let line = iter.line();
+            let mut line_start = buf.iter_at_line(line).unwrap_or(iter);
+            let mut line_end = line_start;
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+            let line_text = buf.text(&line_start, &line_end, false).to_string();
+            let clean = line_text.trim_start_matches("# ").trim_start_matches("## ").trim_start_matches("### ");
+            let new_line = format!("# {clean}");
+            buf.delete(&mut line_start, &mut line_end);
+            buf.insert(&mut line_start, &new_line);
+        });
+    }
+    home_box.append(&h1_btn);
+
+    let h2_btn = gtk::Button::with_label("H2");
+    h2_btn.add_css_class("ribbon-btn");
+    h2_btn.set_tooltip_text(Some("Heading 2 (18pt Bold)"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        h2_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            let cursor_mark = buf.get_insert();
+            let iter = buf.iter_at_mark(&cursor_mark);
+            let line = iter.line();
+            let mut line_start = buf.iter_at_line(line).unwrap_or(iter);
+            let mut line_end = line_start;
+            if !line_end.ends_line() {
+                line_end.forward_to_line_end();
+            }
+            let line_text = buf.text(&line_start, &line_end, false).to_string();
+            let clean = line_text.trim_start_matches("# ").trim_start_matches("## ").trim_start_matches("### ");
+            let new_line = format!("## {clean}");
+            buf.delete(&mut line_start, &mut line_end);
+            buf.insert(&mut line_start, &new_line);
+        });
+    }
+    home_box.append(&h2_btn);
+    home_box.append(&ribbon_separator());
+
+    let table_btn = gtk::Button::with_label("📊 Table");
+    table_btn.add_css_class("ribbon-btn");
+    table_btn.set_tooltip_text(Some("Insert 3x3 table"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        table_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            buf.insert_at_cursor("\n| Column 1 | Column 2 | Column 3 |\n| :--- | :--- | :--- |\n| Item A | Details B | Notes C |\n");
+        });
+    }
+    home_box.append(&table_btn);
+
+    let time_btn = gtk::Button::with_label("📅 Date/Time");
+    time_btn.add_css_class("ribbon-btn");
+    time_btn.set_tooltip_text(Some("Insert current timestamp"));
+    {
+        let rev = word_editor.revealer.clone();
+        let buf = word_editor.buffer.clone();
+        time_btn.connect_clicked(move |_| {
+            rev.set_reveal_child(true);
+            let now = glib::DateTime::now_local()
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").unwrap_or_default().to_string())
+                .unwrap_or_else(|_| "2026-11-08".to_string());
+            buf.insert_at_cursor(&format!(" {now} "));
+        });
+    }
+    home_box.append(&time_btn);
+    home_box.append(&ribbon_separator());
+
+    let add_text_btn = gtk::Button::with_label("➕ Add Text");
+    add_text_btn.add_css_class("ribbon-btn");
+    add_text_btn.set_tooltip_text(Some("Add a new note container anywhere on this page"));
+    {
+        let pv = page_view.clone();
+        let we = word_editor.revealer.clone();
+        let we_buf = word_editor.buffer.clone();
+        let node_id_cell = word_editor.active_node_id.clone();
+        add_text_btn.connect_clicked(move |_| {
+            let id = pv.canvas().add_text_box_at(120.0, 120.0, "Type your note here...");
+            *node_id_cell.borrow_mut() = Some(id);
+            we_buf.set_text("Type your note here...");
+            we.set_reveal_child(true);
+        });
+    }
+    home_box.append(&add_text_btn);
+
+    let add_image_btn = gtk::Button::with_label("🖼️ Add Image");
+    add_image_btn.add_css_class("ribbon-btn");
+    add_image_btn.set_tooltip_text(Some("Insert an image from your computer anywhere on this page"));
+    {
+        let pv = page_view.clone();
+        add_image_btn.connect_clicked(move |b| {
+            let root = b.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            let chooser = gtk::FileChooserNative::new(
+                Some("Insert Image on Page"),
+                root.as_ref(),
+                gtk::FileChooserAction::Open,
+                Some("Insert"),
+                Some("Cancel"),
+            );
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Images (*.png, *.jpg, *.jpeg, *.svg, *.webp, *.bmp, *.gif)"));
+            filter.add_mime_type("image/*");
+            filter.add_pattern("*.png");
+            filter.add_pattern("*.jpg");
+            filter.add_pattern("*.jpeg");
+            filter.add_pattern("*.svg");
+            filter.add_pattern("*.webp");
+            filter.add_pattern("*.bmp");
+            filter.add_pattern("*.gif");
+            chooser.add_filter(&filter);
+            chooser.set_modal(true);
+            let pv_clone = pv.clone();
+            chooser.connect_response(move |dialog, response| {
+                if response == gtk::ResponseType::Accept {
+                    if let Some(file) = dialog.file() {
+                        if let Some(path) = file.path() {
+                            let path_str = path.to_string_lossy().to_string();
+                            pv_clone.canvas().add_image_at(100.0, 100.0, &path_str);
+                        }
+                    }
+                }
+            });
+            chooser.show();
+        });
+    }
+    home_box.append(&add_image_btn);
+
+    stack.add_named(&home_box, Some("home"));
+
+    // 3. Insert ribbon
+    let insert_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    insert_box.add_css_class("ribbon-toolbar");
+
+    let ins_nb_btn = gtk::Button::with_label("📚 New Notebook");
+    ins_nb_btn.add_css_class("ribbon-btn");
+    ins_nb_btn.add_css_class("word-tb-btn-primary");
+    ins_nb_btn.set_tooltip_text(Some("Insert a new OneNote notebook (Ctrl+Shift+N)"));
+    ins_nb_btn.set_action_name(Some("win.new-notebook"));
+    insert_box.append(&ins_nb_btn);
+
+    let ins_sec_btn = gtk::Button::with_label("📑 New Section");
+    ins_sec_btn.add_css_class("ribbon-btn");
+    ins_sec_btn.add_css_class("word-tb-btn-primary");
+    ins_sec_btn.set_tooltip_text(Some("Insert a new section sub-file (.one) (Ctrl+Alt+N)"));
+    ins_sec_btn.set_action_name(Some("win.new-section"));
+    insert_box.append(&ins_sec_btn);
+
+    let ins_new_page_btn = gtk::Button::with_label("📄 New Page");
+    ins_new_page_btn.add_css_class("ribbon-btn");
+    ins_new_page_btn.add_css_class("word-tb-btn-primary");
+    ins_new_page_btn.set_tooltip_text(Some("Insert a new blank page (Ctrl+N)"));
+    ins_new_page_btn.set_action_name(Some("win.new-page"));
+    insert_box.append(&ins_new_page_btn);
+    insert_box.append(&ribbon_separator());
+
+    let ins_text_btn = gtk::Button::with_label("➕ Insert Text Box");
+    ins_text_btn.add_css_class("ribbon-btn");
+    {
+        let pv = page_view.clone();
+        let we = word_editor.revealer.clone();
+        let we_buf = word_editor.buffer.clone();
+        let node_id_cell = word_editor.active_node_id.clone();
+        ins_text_btn.connect_clicked(move |_| {
+            let id = pv.canvas().add_text_box_at(120.0, 120.0, "Type your note here...");
+            *node_id_cell.borrow_mut() = Some(id);
+            we_buf.set_text("Type your note here...");
+            we.set_reveal_child(true);
+        });
+    }
+    insert_box.append(&ins_text_btn);
+
+    let ins_image_btn = gtk::Button::with_label("🖼️ Insert Image Anywhere");
+    ins_image_btn.add_css_class("ribbon-btn");
+    {
+        let pv = page_view.clone();
+        ins_image_btn.connect_clicked(move |b| {
+            let root = b.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            let chooser = gtk::FileChooserNative::new(
+                Some("Insert Image on Page"),
+                root.as_ref(),
+                gtk::FileChooserAction::Open,
+                Some("Insert"),
+                Some("Cancel"),
+            );
+            let filter = gtk::FileFilter::new();
+            filter.set_name(Some("Images (*.png, *.jpg, *.jpeg, *.svg, *.webp, *.bmp, *.gif)"));
+            filter.add_mime_type("image/*");
+            filter.add_pattern("*.png");
+            filter.add_pattern("*.jpg");
+            filter.add_pattern("*.jpeg");
+            filter.add_pattern("*.svg");
+            filter.add_pattern("*.webp");
+            filter.add_pattern("*.bmp");
+            filter.add_pattern("*.gif");
+            chooser.add_filter(&filter);
+            chooser.set_modal(true);
+            let pv_clone = pv.clone();
+            chooser.connect_response(move |dialog, response| {
+                if response == gtk::ResponseType::Accept {
+                    if let Some(file) = dialog.file() {
+                        if let Some(path) = file.path() {
+                            let path_str = path.to_string_lossy().to_string();
+                            pv_clone.canvas().add_image_at(100.0, 100.0, &path_str);
+                        }
+                    }
+                }
+            });
+            chooser.show();
+        });
+    }
+    insert_box.append(&ins_image_btn);
+    insert_box.append(&ribbon_separator());
+
+    let export_all = gtk::Button::with_label("📥 Export Section to SVG / HTML");
+    export_all.add_css_class("ribbon-btn");
+    export_all.connect_clicked(move |_| {
+        let _ = std::process::Command::new("/home/rohan/.local/bin/onenote-export")
+            .arg("/home/rohan/Documents/OneNoteViewer/Spintronics/Unit 2.one")
+            .arg("/home/rohan/Documents/OneNote_Export/Unit_2")
+            .spawn();
+    });
+    insert_box.append(&export_all);
+    stack.add_named(&insert_box, Some("insert"));
+
+    // 4. View ribbon
+    let view_box = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    view_box.add_css_class("ribbon-toolbar");
+    let v_zoom_in = gtk::Button::with_label("➕ Zoom In");
+    let v_zoom_reset = gtk::Button::with_label("↺ 100% Reset");
+    let v_zoom_out = gtk::Button::with_label("➖ Zoom Out");
+    for (b, target) in [(&v_zoom_in, zoom_in_btn), (&v_zoom_reset, zoom_reset_btn), (&v_zoom_out, zoom_out_btn)] {
+        b.add_css_class("ribbon-btn");
+        view_box.append(b);
+        let t = target.clone();
+        b.connect_clicked(move |_| {
+            t.emit_clicked();
+        });
+    }
+    view_box.append(&ribbon_separator());
+    let v_toggle_nb = gtk::Button::with_label("📑 Notebooks Pane");
+    let v_toggle_pg = gtk::Button::with_label("📑 Pages Pane");
+    for (b, target) in [(&v_toggle_nb, notebooks_toggle), (&v_toggle_pg, pages_toggle)] {
+        b.add_css_class("ribbon-btn");
+        view_box.append(b);
+        let t = target.clone();
+        b.connect_clicked(move |_| {
+            t.emit_clicked();
+        });
+    }
+    stack.add_named(&view_box, Some("view"));
+
+    stack.set_visible_child_name("draw");
+    container.append(&stack);
+
+    let tabs = [
+        (tab_home, "home"),
+        (tab_insert, "insert"),
+        (tab_draw, "draw"),
+        (tab_view, "view"),
+    ];
+    let all_tab_btns: Vec<gtk::Button> = tabs.iter().map(|(t, _)| t.clone()).collect();
+    for (tab_btn, name) in tabs {
+        let all_tabs = all_tab_btns.clone();
+        let s = stack.clone();
+        let tab_clone = tab_btn.clone();
+        tab_btn.connect_clicked(move |_| {
+            for t in &all_tabs {
+                if t == &tab_clone {
+                    t.add_css_class("active");
+                } else {
+                    t.remove_css_class("active");
+                }
+            }
+            s.set_visible_child_name(name);
+        });
+    }
+
+    container
 }
 
 fn format_zoom(zoom: f32) -> String {
@@ -5083,6 +6207,123 @@ fn theme_css(theme: EffectiveTheme) -> String {
             font-size: 16px;
             font-weight: 700;
             color: @accent;
+        }}
+        .ribbon-container {{
+            background: @surface;
+            border-bottom: 1px solid @border;
+        }}
+        .ribbon-tabs-bar {{
+            background: @surface;
+            border-bottom: 1px solid @border;
+            padding: 0 8px;
+        }}
+        .ribbon-tab {{
+            background: transparent;
+            border: none;
+            border-radius: 0;
+            padding: 6px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            color: @text;
+            box-shadow: none;
+            border-bottom: 3px solid transparent;
+        }}
+        .ribbon-tab:hover {{
+            background: @control_hover;
+        }}
+        .ribbon-tab.active {{
+            color: @accent;
+            font-weight: 700;
+            border-bottom: 3px solid @accent;
+        }}
+        .ribbon-toolbar {{
+            padding: 6px 12px;
+            min-height: 42px;
+        }}
+        .ribbon-btn {{
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-size: 12px;
+            font-weight: 500;
+        }}
+        .ribbon-btn:checked, .ribbon-btn.active {{
+            background: #ede4f3;
+            border-color: @accent;
+            color: @accent;
+            font-weight: 700;
+        }}
+        .ribbon-sep {{
+            min-width: 1px;
+            background: @border;
+            margin: 4px 6px;
+        }}
+        .word-editor-container {{
+            background: @surface;
+            border-left: 1px solid @border;
+            min-width: 420px;
+        }}
+        .word-editor-header {{
+            padding: 8px 12px;
+            background: @control_bg;
+            border-bottom: 1px solid @border;
+        }}
+        .word-editor-title {{
+            font-weight: 700;
+            font-size: 13px;
+            color: @accent;
+        }}
+        .word-live-badge {{
+            background: #26a269;
+            color: #ffffff;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 8px;
+            border-radius: 10px;
+        }}
+        .word-toolbar-row {{
+            padding: 4px 8px;
+            background: @surface;
+            border-bottom: 1px solid @border;
+        }}
+        .word-tb-btn {{
+            border-radius: 4px;
+            padding: 2px 7px;
+            font-size: 11px;
+            font-weight: 600;
+            min-height: 26px;
+        }}
+        .word-tb-btn-primary {{
+            border-radius: 4px;
+            padding: 2px 9px;
+            font-size: 11px;
+            font-weight: 700;
+            background: #7719aa;
+            color: #ffffff;
+            min-height: 26px;
+        }}
+        .word-btn-bold {{
+            font-weight: 900;
+        }}
+        .word-btn-italic {{
+            font-style: italic;
+        }}
+        .word-btn-underline {{
+            text-decoration: underline;
+        }}
+        .word-btn-strike {{
+            text-decoration: line-through;
+        }}
+        .word-editor-view {{
+            font-size: 14px;
+            line-height: 1.6;
+            background: @surface;
+            color: @text;
+        }}
+        .word-editor-footer {{
+            padding: 6px 12px;
+            background: @control_bg;
+            border-top: 1px solid @border;
+            font-size: 11px;
         }}
         searchentry, searchentry:backdrop,
         entry, entry:backdrop {{
@@ -5491,7 +6732,7 @@ fn install_resources(theme: ThemePreference) -> gtk::CssProvider {
     gtk::IconTheme::for_display(&display).add_resource_path("/io/github/emsi/OneNoteViewer/icons");
     gtk::Window::set_default_icon_name(APP_ICON_NAME);
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(&theme_css(effective_theme(theme)));
+    provider.load_from_data(&theme_css(effective_theme(theme)));
     gtk::style_context_add_provider_for_display(
         &display,
         &provider,
@@ -6037,7 +7278,7 @@ mod tests {
             "NOTEBOOKS",
             &notebook_list,
             NOTEBOOK_NAVIGATION_WIDTH,
-            Some(&close_source),
+            Some(close_source.upcast_ref()),
             false,
         );
         let pages =

@@ -5,6 +5,7 @@
 mod canvas;
 mod find;
 mod image_cache;
+mod ink_edit;
 mod math_cache;
 mod resolved_layout;
 mod text;
@@ -12,6 +13,9 @@ mod view;
 
 pub use canvas::{normalize_zoom, PageCanvas, DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM};
 pub use find::{find_text_ranges, FindMatch, FindOptions, FindTextRange};
+pub use ink_edit::{
+    EditableImage, EditableStroke, EditableTextBox, ErasedStroke, InkEditDocument, InkEditTool,
+};
 pub use math_cache::TypstMathBackend;
 pub use view::PageView;
 

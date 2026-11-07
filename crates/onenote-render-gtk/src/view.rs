@@ -61,6 +61,26 @@ impl PageView {
         self.canvas.set_action_handler(handler);
     }
 
+    /// Set callback when a text paragraph is selected on the page.
+    pub fn set_text_selection_handler(&self, handler: Option<impl Fn(String, String) + 'static>) {
+        self.canvas.set_text_selection_handler(handler);
+    }
+
+    /// Trigger editing on the selected text node.
+    pub fn trigger_edit_on_selected(&self) {
+        self.canvas.trigger_edit_on_selected();
+    }
+
+    /// Add a text box at page logical coordinates (x, y).
+    pub fn add_text_box_at(&self, x: f32, y: f32, text: &str) -> String {
+        self.canvas.add_text_box_at(x, y, text)
+    }
+
+    /// Add an image at page logical coordinates (x, y).
+    pub fn add_image_at(&self, x: f32, y: f32, path: &str) -> Option<String> {
+        self.canvas.add_image_at(x, y, path)
+    }
+
     /// Set zoom while preserving the viewport center.
     pub fn set_zoom(&self, zoom: f32) {
         let old_zoom = self.canvas.zoom();
@@ -103,6 +123,26 @@ impl PageView {
     /// Current fallback for text whose `OneNote` style uses automatic color.
     pub fn default_text_color(&self) -> gdk::RGBA {
         self.canvas.default_text_color()
+    }
+
+    /// Set the pen color for drawing ink.
+    pub fn set_pen_color(&self, color: onenote_core::Color) {
+        self.canvas.set_pen_color(color);
+    }
+
+    /// Current pen color for drawing ink.
+    pub fn pen_color(&self) -> onenote_core::Color {
+        self.canvas.pen_color()
+    }
+
+    /// Set the pen width in logical points.
+    pub fn set_pen_width(&self, width: f32) {
+        self.canvas.set_pen_width(width);
+    }
+
+    /// Current pen width in logical points.
+    pub fn pen_width(&self) -> f32 {
+        self.canvas.pen_width()
     }
 
     /// Find occurrences using the renderer's displayed text and resolved geometry.
