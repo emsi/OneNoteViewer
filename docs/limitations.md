@@ -7,18 +7,21 @@ of truth for their status.
 
 ## 1.0 Blockers
 
-- **Hand-drawn ink:** stored handwriting-recognition text can be searchable, but
-  ink strokes are not rendered yet
+- **Hand-drawn ink:** rendering and local Draw/Erase/Undo support are available,
+  but they still need validation against more representative notebooks
   ([issue #6](https://github.com/emsi/OneNoteViewer/issues/6)).
-- **Freeform text selection:** page titles, dates, and notebook paths can be
-  copied, but text on the freeform page canvas cannot yet be selected or copied
+- **Freeform text:** text blocks can be replaced with **Edit text** after
+  selecting a paragraph. Formatting in an edited block falls back to its base
+  paragraph style. Canvas text still cannot be selected or copied
   ([issue #8](https://github.com/emsi/OneNoteViewer/issues/8)).
 
 ## Product Boundaries
 
-- OneNote Viewer opens local notebook data. It does not synchronize with
-  OneDrive, edit notebooks, or reproduce live Microsoft 365 collaboration and
-  cloud services.
+- OneNote Viewer opens local notebook data and does not synchronize with
+  OneDrive or reproduce live Microsoft 365 collaboration and cloud services.
+  The source `.one` file stays read-only. Local ink and text edits are stored
+  separately in OneNote Viewer app data and are not written back into native
+  OneNote files.
 - Password-protected sections and unconverted OneNote 2003/2007 files are not
   supported.
 - Search uses text and metadata stored by OneNote. It does not inspect the body

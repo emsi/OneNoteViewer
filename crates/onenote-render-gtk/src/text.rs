@@ -454,7 +454,7 @@ fn color_channel(value: u8) -> u16 {
     u16::from(value) * 257
 }
 
-fn to_pango_units(value: f32) -> i32 {
+pub(crate) fn to_pango_units(value: f32) -> i32 {
     let scaled = value * 1_024.0;
     if scaled.is_nan() {
         0
@@ -465,7 +465,7 @@ fn to_pango_units(value: f32) -> i32 {
     }
 }
 
-fn from_pango_units(value: i32) -> f32 {
+pub(crate) fn from_pango_units(value: i32) -> f32 {
     value.to_f32().unwrap_or(0.0) / 1_024.0
 }
 

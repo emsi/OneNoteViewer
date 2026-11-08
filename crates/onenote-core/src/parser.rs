@@ -36,6 +36,8 @@ use std::path::{Path, PathBuf};
 use typed_path::{PathType, TypedPath};
 use uuid::Uuid;
 
+const HIMETRIC_TO_LOGICAL_PIXELS: f32 = 96.0 / 2540.0;
+
 /// Defensive projection limits applied after native format parsing.
 #[derive(Clone, Copy, Debug)]
 pub struct ParseLimits {
@@ -728,13 +730,87 @@ impl Projector {
 
     fn element_content(&mut self, content: &Content, key: &str) -> Result<ElementContent> {
         match content {
-            Content::RichText(text) => Ok(ElementContent::Text(project_text(text, self.options))),
+            Content::RichText(text) => {
+                let embedded_inks: Vec<&ParserInk> = text
+                    .embedded_objects()
+                    .iter()
+                    .filter_map(|obj| match obj {
+                        onenote_parser::contents::EmbeddedObject::Ink(container) => {
+                            Some(container.ink())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+
+                if !embedded_inks.is_empty() {
+                    let mut strokes = Vec::new();
+                    let mut recognized = Vec::new();
+                    let mut point_count = 0_usize;
+                    for embedded_ink in embedded_inks {
+                        append_ink(
+                            embedded_ink,
+                            0.0,
+                            0.0,
+                            &mut strokes,
+                            &mut recognized,
+                            &mut point_count,
+                            self.limits.max_ink_points_per_object,
+                            &self.source_path,
+                        )?;
+                    }
+                    if !strokes.is_empty() {
+                        let mut min_x = f32::INFINITY;
+                        let mut min_y = f32::INFINITY;
+                        for stroke in &strokes {
+                            for point in &stroke.points {
+                                min_x = min_x.min(point.x);
+                                min_y = min_y.min(point.y);
+                            }
+                        }
+                        if min_x.is_finite() && min_y.is_finite() {
+                            for stroke in &mut strokes {
+                                for point in &mut stroke.points {
+                                    point.x -= min_x;
+                                    point.y -= min_y;
+                                }
+                            }
+                        }
+                        recognized.sort();
+                        recognized.dedup();
+                        return Ok(ElementContent::Ink(Ink {
+                            strokes,
+                            recognized_text: (!recognized.is_empty())
+                                .then(|| recognized.join(" ")),
+                        }));
+                    }
+                }
+                Ok(ElementContent::Text(project_text(text, self.options)))
+            }
             Content::Table(table) => Ok(ElementContent::Table(self.table(table, key)?)),
             Content::Image(image) => Ok(ElementContent::Image(self.image(image, key)?)),
             Content::EmbeddedFile(file) => {
                 Ok(ElementContent::Attachment(self.attachment(file, key)?))
             }
-            Content::Ink(ink) => Ok(ElementContent::Ink(self.ink(ink)?)),
+            Content::Ink(ink) => {
+                let mut projected = self.ink(ink)?;
+                let mut min_x = f32::INFINITY;
+                let mut min_y = f32::INFINITY;
+                for stroke in &projected.strokes {
+                    for point in &stroke.points {
+                        min_x = min_x.min(point.x);
+                        min_y = min_y.min(point.y);
+                    }
+                }
+                if min_x.is_finite() && min_y.is_finite() {
+                    for stroke in &mut projected.strokes {
+                        for point in &mut stroke.points {
+                            point.x -= min_x;
+                            point.y -= min_y;
+                        }
+                    }
+                }
+                Ok(ElementContent::Ink(projected))
+            }
             Content::Unknown => Ok(ElementContent::Unknown),
         }
     }
@@ -941,30 +1017,50 @@ impl Projector {
         z_index: usize,
     ) -> Result<PageObject> {
         self.bump_object()?;
-        let bounds = ink.bounding_box().map_or(
+        let projected_ink = self.ink(ink)?;
+        // InkBoundingBox is absent or unreliable in a number of real sections
+        // (including placeholders that claim a 1x1 box). Derive the visual
+        // extent from the decoded stroke coordinates so the renderer's local
+        // coordinate transform uses the same geometry as the actual paths.
+        let mut points = projected_ink
+            .strokes
+            .iter()
+            .flat_map(|stroke| stroke.points.iter());
+        let bounds = if let Some(first) = points.next() {
+            let (mut min_x, mut min_y, mut max_x, mut max_y) =
+                (first.x, first.y, first.x, first.y);
+            for point in points {
+                min_x = min_x.min(point.x);
+                min_y = min_y.min(point.y);
+                max_x = max_x.max(point.x);
+                max_y = max_y.max(point.y);
+            }
+            let max_stroke_width = projected_ink
+                .strokes
+                .iter()
+                .map(|stroke| stroke.width.max(stroke.height))
+                .fold(1.0_f32, f32::max);
+            let padding = (max_stroke_width / 2.0).ceil() + 1.0;
+            Rect {
+                x: (min_x - padding).max(0.0),
+                y: (min_y - padding).max(0.0),
+                width: ((max_x - min_x) + 2.0 * padding).max(1.0),
+                height: ((max_y - min_y) + 2.0 * padding).max(1.0),
+            }
+        } else {
             Rect {
                 x: ink.offset_horizontal().map_or(0.0, half_inches),
                 y: ink.offset_vertical().map_or(0.0, half_inches),
                 width: 1.0,
                 height: 1.0,
-            },
-            |bounds| Rect {
-                x: ink
-                    .offset_horizontal()
-                    .map_or_else(|| finite(bounds.x()), half_inches),
-                y: ink
-                    .offset_vertical()
-                    .map_or_else(|| finite(bounds.y()), half_inches),
-                width: finite(bounds.width()).max(1.0),
-                height: finite(bounds.height()).max(1.0),
-            },
-        );
+            }
+        };
         Ok(PageObject {
             id: ObjectId::new(self.id("object", &format!("{page_id}/{key}"))),
             role: PageObjectRole::Body,
             bounds,
             z_index: u32::try_from(z_index).unwrap_or(u32::MAX),
-            kind: ObjectKind::Ink(self.ink(ink)?),
+            kind: ObjectKind::Ink(projected_ink),
         })
     }
 
@@ -974,6 +1070,8 @@ impl Projector {
         let mut point_count = 0_usize;
         append_ink(
             ink,
+            0.0,
+            0.0,
             &mut strokes,
             &mut recognized,
             &mut point_count,
@@ -1343,12 +1441,16 @@ fn project_number_format(format: char) -> ListNumberFormat {
 
 fn append_ink(
     ink: &ParserInk,
+    parent_offset_x: f32,
+    parent_offset_y: f32,
     output: &mut Vec<InkStroke>,
     recognized: &mut Vec<String>,
     point_count: &mut usize,
     point_limit: usize,
     source_path: &Path,
 ) -> Result<()> {
+    let offset_x = parent_offset_x + ink.offset_horizontal().map_or(0.0, half_inches);
+    let offset_y = parent_offset_y + ink.offset_vertical().map_or(0.0, half_inches);
     for stroke in ink.ink_strokes() {
         *point_count = point_count.saturating_add(stroke.path().len());
         if *point_count > point_limit {
@@ -1364,17 +1466,19 @@ fn append_ink(
         if let Some(word) = &word {
             recognized.push(word.clone());
         }
+        let width = (finite(stroke.width()) * HIMETRIC_TO_LOGICAL_PIXELS).max(1.0);
+        let height = (finite(stroke.height()) * HIMETRIC_TO_LOGICAL_PIXELS).max(1.0);
         output.push(InkStroke {
             points: stroke
                 .path()
                 .iter()
                 .map(|point| InkPoint {
-                    x: finite(point.x()),
-                    y: finite(point.y()),
+                    x: finite(point.x()) * HIMETRIC_TO_LOGICAL_PIXELS + offset_x,
+                    y: finite(point.y()) * HIMETRIC_TO_LOGICAL_PIXELS + offset_y,
                 })
                 .collect(),
-            width: finite(stroke.width()),
-            height: finite(stroke.height()),
+            width,
+            height,
             color: stroke.color().map(project_ink_color),
             opacity: stroke.transparency().unwrap_or(u8::MAX),
             recognized_word: word,
@@ -1383,6 +1487,8 @@ fn append_ink(
     for child in ink.child_groups() {
         append_ink(
             child,
+            offset_x,
+            offset_y,
             output,
             recognized,
             point_count,

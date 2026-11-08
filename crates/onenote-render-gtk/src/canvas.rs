@@ -2,10 +2,15 @@ use crate::image_cache::{self, DecodedImage, ImageDecodeFailure, MAX_TEXTURE_CAC
 use crate::math_cache::{self, MathKey, MathSize, TypstMathBackend};
 use crate::resolved_layout::ResolvedLayout;
 use crate::text;
+use crate::{
+    EditableImage, EditableStroke, EditableTextBox, ErasedStroke, InkEditDocument, InkEditTool,
+};
 use crate::{FindMatch, FindOptions};
 use gtk::gdk;
+use gtk::gio;
 use gtk::glib;
 use gtk::graphene;
+use gtk::pango;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use num_traits::ToPrimitive;
@@ -28,6 +33,8 @@ pub const MIN_ZOOM: f32 = 0.25;
 /// Largest supported page zoom scale (400%).
 pub const MAX_ZOOM: f32 = 4.0;
 type ActionHandler = Rc<dyn Fn(HitAction)>;
+type InkEditHandler = Rc<dyn Fn(InkEditDocument)>;
+type TextSelectionHandler = Rc<dyn Fn(String, String)>;
 
 #[derive(Default)]
 struct FindHighlights {
@@ -38,10 +45,11 @@ struct FindHighlights {
 
 mod imp {
     use super::{
-        gdk, glib, ActionHandler, Arc, Cell, FindHighlights, HashMap, HashSet, ImageDecodeFailure,
-        MathKey, MathLayoutBackend, OnceLock, PageScene, Rc, RefCell, ResolvedLayout, ResourceId,
-        ResourceStore, SceneNodeId, TypstMathBackend, CANVAS_MARGIN, DEFAULT_ZOOM, MAX_ZOOM,
-        MIN_ZOOM,
+        gdk, glib, ActionHandler, Arc, Cell, Color, EditableStroke, FindHighlights, HashMap, HashSet,
+        ImageDecodeFailure, InkEditDocument, InkEditHandler, InkEditTool, MathKey,
+        MathLayoutBackend, OnceLock, PageScene, Rc, RefCell, ResolvedLayout, ResourceId,
+        ResourceStore, SceneNodeId, TextSelectionHandler, TypstMathBackend, CANVAS_MARGIN,
+        DEFAULT_ZOOM, MAX_ZOOM, MIN_ZOOM,
     };
     use gtk::prelude::*;
     use gtk::subclass::prelude::ObjectSubclassIsExt;
@@ -70,6 +78,19 @@ mod imp {
         pub(super) math_backend: RefCell<Arc<dyn MathLayoutBackend>>,
         pub(super) math_generation: Cell<u64>,
         pub(super) find_highlights: RefCell<FindHighlights>,
+        pub(super) ink_tool: Cell<InkEditTool>,
+        pub(super) ink_edits: RefCell<InkEditDocument>,
+        pub(super) pending_ink: RefCell<Option<EditableStroke>>,
+        pub(super) ink_undo: RefCell<Vec<InkEditDocument>>,
+        pub(super) ink_edit_handler: RefCell<Option<InkEditHandler>>,
+        pub(super) selected_text_node: RefCell<Option<SceneNodeId>>,
+        pub(super) cursor_char_idx: Cell<usize>,
+        pub(super) cursor_blink_visible: Cell<bool>,
+        pub(super) text_selection_handler: RefCell<Option<TextSelectionHandler>>,
+        pub(super) drag_start: Cell<(f64, f64)>,
+        pub(super) ink_drag_dirty: Cell<bool>,
+        pub(super) pen_color: Cell<Color>,
+        pub(super) pen_width: Cell<f32>,
         #[cfg(test)]
         pub(super) viewport_redraw_requests: Cell<u64>,
     }
@@ -99,6 +120,24 @@ mod imp {
                 math_backend: RefCell::new(Arc::new(TypstMathBackend::new())),
                 math_generation: Cell::default(),
                 find_highlights: RefCell::default(),
+                ink_tool: Cell::default(),
+                ink_edits: RefCell::default(),
+                pending_ink: RefCell::default(),
+                ink_undo: RefCell::default(),
+                ink_edit_handler: RefCell::default(),
+                selected_text_node: RefCell::default(),
+                cursor_char_idx: Cell::new(0),
+                cursor_blink_visible: Cell::new(true),
+                text_selection_handler: RefCell::default(),
+                drag_start: Cell::new((0.0, 0.0)),
+                ink_drag_dirty: Cell::default(),
+                pen_color: Cell::new(Color {
+                    red: 32,
+                    green: 31,
+                    blue: 30,
+                    alpha: 255,
+                }),
+                pen_width: Cell::new(2.0),
                 #[cfg(test)]
                 viewport_redraw_requests: Cell::default(),
             }
@@ -141,12 +180,36 @@ mod imp {
             let click = gtk::GestureClick::new();
             click.set_button(gdk::BUTTON_PRIMARY);
             let weak = object.downgrade();
-            click.connect_released(move |_, _, x, y| {
+            click.connect_released(move |_, _n_press, x, y| {
                 if let Some(object) = weak.upgrade() {
                     object.activate_at(x, y);
                 }
             });
             object.add_controller(click);
+            let drag = gtk::GestureDrag::new();
+            drag.set_button(gdk::BUTTON_PRIMARY);
+            let weak = object.downgrade();
+            drag.connect_drag_begin(move |_, x, y| {
+                if let Some(object) = weak.upgrade() {
+                    object.imp().drag_start.set((x, y));
+                    object.begin_ink_edit(x, y);
+                }
+            });
+            let weak = object.downgrade();
+            drag.connect_drag_update(move |_, offset_x, offset_y| {
+                if let Some(object) = weak.upgrade() {
+                    let (start_x, start_y) = object.imp().drag_start.get();
+                    object.update_ink_edit(start_x + offset_x, start_y + offset_y);
+                }
+            });
+            let weak = object.downgrade();
+            drag.connect_drag_end(move |_, offset_x, offset_y| {
+                if let Some(object) = weak.upgrade() {
+                    let (start_x, start_y) = object.imp().drag_start.get();
+                    object.finish_ink_edit(start_x + offset_x, start_y + offset_y);
+                }
+            });
+            object.add_controller(drag);
             let motion = gtk::EventControllerMotion::new();
             let weak = object.downgrade();
             motion.connect_motion(move |_, x, y| {
@@ -165,21 +228,36 @@ mod imp {
             object.add_controller(motion);
             let keys = gtk::EventControllerKey::new();
             let weak = object.downgrade();
-            keys.connect_key_pressed(move |_, key, _, _| {
+            keys.connect_key_pressed(move |_, key, _, state| {
                 let Some(object) = weak.upgrade() else {
                     return glib::Propagation::Proceed;
                 };
-                if matches!(key, gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::space) {
+                if matches!(key, gdk::Key::Return | gdk::Key::KP_Enter | gdk::Key::space)
+                    && object.imp().selected_text_node.borrow().is_none()
+                {
                     if object.activate_focused_attachment() {
                         return glib::Propagation::Stop;
                     }
-                } else if key == gdk::Key::Escape {
+                } else if key == gdk::Key::Escape && object.imp().selected_text_node.borrow().is_none() {
                     object.imp().focused_attachment.set(None);
                     object.queue_draw();
                 }
-                glib::Propagation::Proceed
+                object.handle_key_pressed(key, state)
             });
             object.add_controller(keys);
+
+            let weak = object.downgrade();
+            glib::timeout_add_local(std::time::Duration::from_millis(530), move || {
+                let Some(object) = weak.upgrade() else {
+                    return glib::ControlFlow::Break;
+                };
+                if object.imp().selected_text_node.borrow().is_some() && object.has_focus() {
+                    let cur = object.imp().cursor_blink_visible.get();
+                    object.imp().cursor_blink_visible.set(!cur);
+                    object.queue_draw();
+                }
+                glib::ControlFlow::Continue
+            });
         }
     }
 
@@ -250,6 +328,12 @@ impl PageCanvas {
     pub fn set_scene(&self, scene: Option<Arc<PageScene>>) {
         let imp = self.imp();
         *imp.scene.borrow_mut() = scene;
+        *imp.ink_edits.borrow_mut() = InkEditDocument::default();
+        *imp.selected_text_node.borrow_mut() = None;
+        imp.cursor_char_idx.set(0);
+        imp.cursor_blink_visible.set(true);
+        imp.pending_ink.borrow_mut().take();
+        imp.ink_undo.borrow_mut().clear();
         imp.hovered_attachment.borrow_mut().take();
         imp.focused_attachment.set(None);
         *imp.find_highlights.borrow_mut() = FindHighlights::default();
@@ -268,6 +352,232 @@ impl PageCanvas {
             .set(imp.math_generation.get().wrapping_add(1));
         self.queue_resize();
         self.queue_draw();
+    }
+
+    /// Select the pointer tool for local page ink editing.
+    pub fn set_ink_tool(&self, tool: InkEditTool) {
+        self.imp().ink_tool.set(tool);
+        self.set_cursor_from_name(match tool {
+            InkEditTool::View => None,
+            InkEditTool::Pen => Some("crosshair"),
+            InkEditTool::Eraser => Some("not-allowed"),
+        });
+    }
+
+    /// Set the pen color for drawing ink.
+    pub fn set_pen_color(&self, color: Color) {
+        self.imp().pen_color.set(color);
+    }
+
+    /// Current pen color for drawing ink.
+    pub fn pen_color(&self) -> Color {
+        self.imp().pen_color.get()
+    }
+
+    /// Set the pen width in logical points.
+    pub fn set_pen_width(&self, width: f32) {
+        self.imp().pen_width.set(width.max(0.5));
+    }
+
+    /// Current pen width in logical points.
+    pub fn pen_width(&self) -> f32 {
+        self.imp().pen_width.get()
+    }
+
+    /// Replace local edits layered over the current page.
+    pub fn set_ink_edits(&self, edits: InkEditDocument) {
+        *self.imp().ink_edits.borrow_mut() = edits;
+        self.imp().pending_ink.borrow_mut().take();
+        self.imp().ink_undo.borrow_mut().clear();
+        self.invalidate_text_geometry();
+        self.queue_resize();
+        self.queue_draw();
+    }
+
+    /// Return the text currently associated with a given node.
+    pub fn text_for_node(&self, node_id: &SceneNodeId) -> Option<String> {
+        let edits = self.imp().ink_edits.borrow();
+        if let Some(tb) = edits.added_text_boxes.iter().find(|tb| tb.id == node_id.0) {
+            return Some(tb.text.clone());
+        }
+        let scene = self.scene()?;
+        let node = scene.nodes.iter().find(|node| &node.id == node_id)?;
+        let ScenePrimitive::Text { block, .. } = &node.primitive else {
+            return None;
+        };
+        let text = edits
+            .text_replacements
+            .get(&node.id.0)
+            .cloned()
+            .unwrap_or_else(|| block.visible_text());
+        Some(text)
+    }
+
+    /// Add a new text box at page logical coordinates (x, y).
+    pub fn add_text_box_at(&self, x: f32, y: f32, initial_text: &str) -> String {
+        let timestamp = glib::DateTime::now_local().map_or(0, |dt| dt.to_unix() * 1_000_000 + dt.microsecond() as i64);
+        let id = format!("textbox_{timestamp}");
+        let new_box = EditableTextBox {
+            id: id.clone(),
+            x,
+            y,
+            width: 340.0,
+            height: 48.0,
+            text: initial_text.to_string(),
+        };
+        self.imp().ink_edits.borrow_mut().added_text_boxes.push(new_box);
+        *self.imp().selected_text_node.borrow_mut() = Some(SceneNodeId(id.clone()));
+        self.imp().cursor_char_idx.set(initial_text.len());
+        self.imp().cursor_blink_visible.set(true);
+        self.invalidate_text_geometry();
+        self.queue_resize();
+        self.queue_draw();
+        self.emit_ink_edits_changed();
+        id
+    }
+
+    /// Add an image at page logical coordinates (x, y).
+    pub fn add_image_at(&self, x: f32, y: f32, file_path: &str) -> Option<String> {
+        let file = gio::File::for_path(file_path);
+        let texture = gdk::Texture::from_file(&file).ok()?;
+        let orig_w = texture.width() as f32;
+        let orig_h = texture.height() as f32;
+        let scale = (450.0 / orig_w).min(1.0);
+        let width = orig_w * scale;
+        let height = orig_h * scale;
+
+        let timestamp = glib::DateTime::now_local().map_or(0, |dt| dt.to_unix());
+        let id = format!("image_{timestamp}");
+        let new_img = EditableImage {
+            id: id.clone(),
+            x,
+            y,
+            width,
+            height,
+            file_path: file_path.to_string(),
+        };
+        self.imp().ink_edits.borrow_mut().added_images.push(new_img);
+        *self.imp().selected_text_node.borrow_mut() = Some(SceneNodeId(id.clone()));
+        self.queue_draw();
+        self.emit_ink_edits_changed();
+        Some(id)
+    }
+
+    /// Set callback when a text node is selected on the page.
+    pub fn set_text_selection_handler(&self, handler: Option<impl Fn(String, String) + 'static>) {
+        *self.imp().text_selection_handler.borrow_mut() =
+            handler.map(|h| Rc::new(h) as TextSelectionHandler);
+    }
+
+    /// Trigger edit on the currently selected text node.
+    pub fn trigger_edit_on_selected(&self) {
+        if let Some((node_id, text)) = self.selected_text() {
+            if let Some(handler) = self.imp().text_selection_handler.borrow().as_ref() {
+                handler(node_id, text);
+            }
+        }
+    }
+
+    /// Select a text node and place cursor at a specific character offset.
+    pub fn select_node_by_id(&self, node_id: &str, cursor: usize) {
+        *self.imp().selected_text_node.borrow_mut() = Some(SceneNodeId(node_id.to_string()));
+        self.imp().cursor_char_idx.set(cursor);
+        self.imp().cursor_blink_visible.set(true);
+        self.queue_draw();
+    }
+
+    /// Toggle task checkbox on the currently selected text node if applicable.
+    pub fn toggle_selected_task(&self) -> bool {
+        let Some((node_id, text)) = self.selected_text() else {
+            return false;
+        };
+        if text.starts_with("[ ] ") {
+            self.set_text_replacement(&node_id, text.replacen("[ ] ", "[x] ", 1))
+        } else if text.starts_with("[x] ") {
+            self.set_text_replacement(&node_id, text.replacen("[x] ", "[ ] ", 1))
+        } else if text.starts_with("[X] ") {
+            self.set_text_replacement(&node_id, text.replacen("[X] ", "[ ] ", 1))
+        } else if text.starts_with("☐ ") {
+            self.set_text_replacement(&node_id, text.replacen("☐ ", "☑ ", 1))
+        } else if text.starts_with("☑ ") {
+            self.set_text_replacement(&node_id, text.replacen("☑ ", "☐ ", 1))
+        } else {
+            self.set_text_replacement(&node_id, format!("☐ {text}"))
+        }
+    }
+
+    /// Return the selected text node and its currently displayed text.
+    pub fn selected_text(&self) -> Option<(String, String)> {
+        let selected = self.imp().selected_text_node.borrow().clone()?;
+        let text = self.text_for_node(&selected)?;
+        Some((selected.0, text))
+    }
+
+    /// Apply a local replacement to one text node without changing its source file.
+    pub fn set_text_replacement(&self, node_id: &str, replacement: String) -> bool {
+        {
+            let mut edits = self.imp().ink_edits.borrow_mut();
+            if let Some(tb) = edits.added_text_boxes.iter_mut().find(|tb| tb.id == node_id) {
+                tb.text = replacement;
+                drop(edits);
+                self.invalidate_text_geometry();
+                self.queue_resize();
+                self.queue_draw();
+                self.emit_ink_edits_changed();
+                return true;
+            }
+        }
+        let Some(scene) = self.scene() else {
+            return false;
+        };
+        let Some(node) = scene.nodes.iter().find(|node| node.id.0 == node_id) else {
+            return false;
+        };
+        let ScenePrimitive::Text { block, .. } = &node.primitive else {
+            return false;
+        };
+        let original = block.visible_text();
+        let mut edits = self.imp().ink_edits.borrow_mut();
+        if replacement == original {
+            edits.text_replacements.remove(node_id);
+        } else {
+            edits
+                .text_replacements
+                .insert(node_id.to_owned(), replacement);
+        }
+        drop(edits);
+        self.invalidate_text_geometry();
+        self.queue_resize();
+        self.queue_draw();
+        self.emit_ink_edits_changed();
+        true
+    }
+
+    /// Return the local edit layer for persistence by the host application.
+    pub fn ink_edits(&self) -> InkEditDocument {
+        self.imp().ink_edits.borrow().clone()
+    }
+
+    /// Notify the host after a completed local ink edit.
+    pub fn set_ink_edit_handler(&self, handler: Option<impl Fn(InkEditDocument) + 'static>) {
+        *self.imp().ink_edit_handler.borrow_mut() =
+            handler.map(|handler| Rc::new(handler) as InkEditHandler);
+    }
+
+    /// Undo the most recent local ink edit.
+    pub fn undo_ink_edit(&self) -> bool {
+        let Some(previous) = self.imp().ink_undo.borrow_mut().pop() else {
+            return false;
+        };
+        *self.imp().ink_edits.borrow_mut() = previous;
+        self.emit_ink_edits_changed();
+        self.queue_draw();
+        true
+    }
+
+    /// Whether a local ink edit can be undone.
+    pub fn can_undo_ink_edit(&self) -> bool {
+        !self.imp().ink_undo.borrow().is_empty()
     }
 
     /// Current scene.
@@ -511,6 +821,11 @@ impl PageCanvas {
     }
 
     fn activate_at(&self, x: f64, y: f64) {
+        if self.imp().ink_tool.get() != InkEditTool::View {
+            return;
+        }
+        self.grab_focus();
+        self.select_or_create_text_at(x, y);
         let action = self.action_at(x, y);
         if let Some(HitAction::OpenAttachment(resource_id)) = &action {
             self.focus_attachment(resource_id);
@@ -522,7 +837,300 @@ impl PageCanvas {
         }
     }
 
+    fn select_or_create_text_at(&self, x: f64, y: f64) {
+        let Some(scene) = self.scene() else {
+            return;
+        };
+        let resolved = self.resolved_layout(&scene);
+        let logical_x =
+            f64_to_f32(x / f64::from(self.zoom())) + resolved.bounds.x - CANVAS_MARGIN;
+        let logical_y =
+            f64_to_f32(y / f64::from(self.zoom())) + resolved.bounds.y - CANVAS_MARGIN;
+
+        // Prune previous empty text box if the user clicked away without typing anything
+        {
+            let mut edits = self.imp().ink_edits.borrow_mut();
+            if let Some(prev) = self.imp().selected_text_node.borrow().as_ref() {
+                edits.added_text_boxes.retain(|tb| tb.id != prev.0 || !tb.text.trim().is_empty());
+            }
+        }
+
+        // Check scene text nodes
+        let mut hit: Option<(SceneNodeId, f32, f32)> = scene.nodes.iter().rev().find_map(|node| {
+            let ScenePrimitive::Text { .. } = &node.primitive else {
+                return None;
+            };
+            let bounds = resolved.node_bounds(node);
+            if contains(bounds, logical_x, logical_y) {
+                Some((node.id.clone(), logical_x - bounds.x, logical_y - bounds.y))
+            } else {
+                None
+            }
+        });
+
+        // Check added text boxes
+        if hit.is_none() {
+            let edits = self.imp().ink_edits.borrow();
+            for tb in edits.added_text_boxes.iter().rev() {
+                let bounds = Rect { x: tb.x, y: tb.y, width: tb.width, height: tb.height };
+                if contains(bounds, logical_x, logical_y) {
+                    hit = Some((SceneNodeId(tb.id.clone()), logical_x - bounds.x, logical_y - bounds.y));
+                    break;
+                }
+            }
+        }
+
+        // Check added images
+        if hit.is_none() {
+            let edits = self.imp().ink_edits.borrow();
+            for img in edits.added_images.iter().rev() {
+                let bounds = Rect { x: img.x, y: img.y, width: img.width, height: img.height };
+                if contains(bounds, logical_x, logical_y) {
+                    hit = Some((SceneNodeId(img.id.clone()), logical_x - bounds.x, logical_y - bounds.y));
+                    break;
+                }
+            }
+        }
+
+        if let Some((node_id, rel_x, rel_y)) = hit {
+            // Checkbox toggle if clicked near left edge on to-do item
+            if let Some(text) = self.text_for_node(&node_id) {
+                if rel_x < 28.0 && (text.starts_with("[ ] ") || text.starts_with("[x] ") || text.starts_with("[X] ") || text.starts_with("☐ ") || text.starts_with("☑ ")) {
+                    let toggled = if text.starts_with("[ ] ") {
+                        text.replacen("[ ] ", "[x] ", 1)
+                    } else if text.starts_with("[x] ") {
+                        text.replacen("[x] ", "[ ] ", 1)
+                    } else if text.starts_with("[X] ") {
+                        text.replacen("[X] ", "[ ] ", 1)
+                    } else if text.starts_with("☐ ") {
+                        text.replacen("☐ ", "☑ ", 1)
+                    } else {
+                        text.replacen("☑ ", "☐ ", 1)
+                    };
+                    self.set_text_replacement(&node_id.0, toggled);
+                }
+            }
+
+            *self.imp().selected_text_node.borrow_mut() = Some(node_id.clone());
+
+            // Compute cursor character index using layout
+            if let Some(text) = self.text_for_node(&node_id) {
+                let layout = self.get_layout_for_node(&node_id, &text);
+                let (_, byte_idx, trailing) = layout.xy_to_index(text::to_pango_units(rel_x), text::to_pango_units(rel_y));
+                let mut cursor = if byte_idx >= 0 {
+                    let b = byte_idx as usize;
+                    if trailing > 0 && b < text.len() {
+                        text[b..].char_indices().nth(1).map(|(i, _)| b + i).unwrap_or(text.len())
+                    } else {
+                        b.min(text.len())
+                    }
+                } else {
+                    text.len()
+                };
+                while !text.is_char_boundary(cursor) && cursor > 0 {
+                    cursor -= 1;
+                }
+                self.imp().cursor_char_idx.set(cursor);
+            } else {
+                self.imp().cursor_char_idx.set(0);
+            }
+            self.imp().cursor_blink_visible.set(true);
+
+            if let Some(handler) = self.imp().text_selection_handler.borrow().as_ref() {
+                if let Some(text) = self.text_for_node(&node_id) {
+                    handler(node_id.0.clone(), text);
+                }
+            }
+        } else {
+            // Clicked on empty canvas!
+            // In OneNote, clicking anywhere on blank paper creates a floating note container and places cursor there!
+            let new_id = self.add_text_box_at(logical_x, logical_y, "");
+            self.imp().cursor_char_idx.set(0);
+            self.imp().cursor_blink_visible.set(true);
+            if let Some(handler) = self.imp().text_selection_handler.borrow().as_ref() {
+                handler(new_id, String::new());
+            }
+        }
+
+        self.queue_draw();
+    }
+
+    fn get_layout_for_node(&self, node_id: &SceneNodeId, text: &str) -> pango::Layout {
+        if let Some(scene) = self.scene() {
+            if let Some(node) = scene.nodes.iter().find(|n| &n.id == node_id) {
+                if let ScenePrimitive::Text { block, marker } = &node.primitive {
+                    return self.text_layout(node, block, marker.as_deref()).layout.clone();
+                }
+            }
+        }
+        let default_style = onenote_core::TextStyle::default();
+        let (clean_text, base_style, runs) = Self::parse_formatted_text(&default_style, text);
+        let block = onenote_core::TextBlock {
+            text: clean_text,
+            base_style,
+            runs,
+            math: Vec::new(),
+            links: Vec::new(),
+            alignment: onenote_core::TextAlignment::Left,
+            space_before: 0.0,
+            space_after: 0.0,
+            line_spacing: None,
+        };
+        text::layout_with_math(&self.pango_context(), &block, None, 340.0, |_, _| None).layout
+    }
+
+    fn handle_key_pressed(&self, key: gdk::Key, state: gdk::ModifierType) -> glib::Propagation {
+        if self.imp().ink_tool.get() != InkEditTool::View {
+            return glib::Propagation::Proceed;
+        }
+        let Some(node_id) = self.imp().selected_text_node.borrow().clone() else {
+            return glib::Propagation::Proceed;
+        };
+
+        let Some(mut text) = self.text_for_node(&node_id) else {
+            return glib::Propagation::Proceed;
+        };
+
+        let mut cursor = self.imp().cursor_char_idx.get().min(text.len());
+        while !text.is_char_boundary(cursor) && cursor > 0 {
+            cursor -= 1;
+        }
+
+        match key {
+            gdk::Key::Escape => {
+                let is_empty = text.trim().is_empty();
+                if is_empty {
+                    self.imp().ink_edits.borrow_mut().added_text_boxes.retain(|tb| tb.id != node_id.0);
+                    self.emit_ink_edits_changed();
+                }
+                *self.imp().selected_text_node.borrow_mut() = None;
+                self.queue_draw();
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::BackSpace => {
+                if cursor > 0 {
+                    let prev_idx = text[..cursor].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                    text.drain(prev_idx..cursor);
+                    cursor = prev_idx;
+                    self.update_node_text(&node_id, text, cursor);
+                }
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::Delete => {
+                if cursor < text.len() {
+                    let next_idx = text[cursor..].char_indices().nth(1).map(|(i, _)| cursor + i).unwrap_or(text.len());
+                    text.drain(cursor..next_idx);
+                    self.update_node_text(&node_id, text, cursor);
+                }
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::Left => {
+                if cursor > 0 {
+                    cursor = text[..cursor].char_indices().last().map(|(i, _)| i).unwrap_or(0);
+                    self.imp().cursor_char_idx.set(cursor);
+                    self.imp().cursor_blink_visible.set(true);
+                    self.queue_draw();
+                }
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::Right => {
+                if cursor < text.len() {
+                    cursor = text[cursor..].char_indices().nth(1).map(|(i, _)| cursor + i).unwrap_or(text.len());
+                    self.imp().cursor_char_idx.set(cursor);
+                    self.imp().cursor_blink_visible.set(true);
+                    self.queue_draw();
+                }
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::Home => {
+                let start_of_line = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                self.imp().cursor_char_idx.set(start_of_line);
+                self.imp().cursor_blink_visible.set(true);
+                self.queue_draw();
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::End => {
+                let end_of_line = text[cursor..].find('\n').map(|i| cursor + i).unwrap_or(text.len());
+                self.imp().cursor_char_idx.set(end_of_line);
+                self.imp().cursor_blink_visible.set(true);
+                self.queue_draw();
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::Up => {
+                let line_start = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let col = cursor - line_start;
+                if line_start > 0 {
+                    let prev_line_start = text[..line_start - 1].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                    let prev_line_len = (line_start - 1) - prev_line_start;
+                    cursor = prev_line_start + col.min(prev_line_len);
+                    while !text.is_char_boundary(cursor) && cursor > 0 {
+                        cursor -= 1;
+                    }
+                    self.imp().cursor_char_idx.set(cursor);
+                    self.imp().cursor_blink_visible.set(true);
+                    self.queue_draw();
+                }
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::Down => {
+                if let Some(nl) = text[cursor..].find('\n').map(|i| cursor + i) {
+                    let line_start = text[..cursor].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                    let col = cursor - line_start;
+                    let next_line_start = nl + 1;
+                    let next_line_len = text[next_line_start..].find('\n').unwrap_or_else(|| text.len() - next_line_start);
+                    cursor = next_line_start + col.min(next_line_len);
+                    while !text.is_char_boundary(cursor) && cursor > 0 {
+                        cursor -= 1;
+                    }
+                    self.imp().cursor_char_idx.set(cursor);
+                    self.imp().cursor_blink_visible.set(true);
+                    self.queue_draw();
+                }
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::Tab => {
+                text.insert_str(cursor, "    ");
+                cursor += 4;
+                self.update_node_text(&node_id, text, cursor);
+                return glib::Propagation::Stop;
+            }
+            gdk::Key::Return | gdk::Key::KP_Enter => {
+                text.insert(cursor, '\n');
+                cursor += 1;
+                self.update_node_text(&node_id, text, cursor);
+                return glib::Propagation::Stop;
+            }
+            _ => {
+                if state.contains(gdk::ModifierType::CONTROL_MASK) || state.contains(gdk::ModifierType::ALT_MASK) {
+                    return glib::Propagation::Proceed;
+                }
+                if let Some(ch) = key.to_unicode() {
+                    if !ch.is_control() {
+                        text.insert(cursor, ch);
+                        cursor += ch.len_utf8();
+                        self.update_node_text(&node_id, text, cursor);
+                        return glib::Propagation::Stop;
+                    }
+                }
+            }
+        }
+        glib::Propagation::Proceed
+    }
+
+    fn update_node_text(&self, node_id: &SceneNodeId, text: String, cursor: usize) {
+        self.set_text_replacement(&node_id.0, text.clone());
+        self.imp().cursor_char_idx.set(cursor);
+        self.imp().cursor_blink_visible.set(true);
+        if let Some(handler) = self.imp().text_selection_handler.borrow().as_ref() {
+            handler(node_id.0.clone(), text);
+        }
+        self.queue_draw();
+    }
+
     fn update_pointer_at(&self, x: f64, y: f64) {
+        if self.imp().ink_tool.get() != InkEditTool::View {
+            return;
+        }
         match self.action_at(x, y) {
             Some(HitAction::OpenLink(target)) => {
                 self.set_cursor_from_name(Some("pointer"));
@@ -537,10 +1145,167 @@ impl PageCanvas {
                 self.set_hovered_attachment(Some(resource_id));
             }
             Some(HitAction::SelectObject(_)) | None => {
-                self.set_cursor_from_name(None);
+                self.set_cursor_from_name(Some("text"));
                 self.set_tooltip_text(None);
                 self.set_hovered_attachment(None);
             }
+        }
+    }
+
+    fn begin_ink_edit(&self, x: f64, y: f64) {
+        let tool = self.imp().ink_tool.get();
+        if tool == InkEditTool::View || self.scene().is_none() {
+            return;
+        }
+        let point = self.page_point(x, y);
+        self.imp().ink_drag_dirty.set(false);
+        match tool {
+            InkEditTool::Pen => {
+                *self.imp().pending_ink.borrow_mut() = Some(EditableStroke {
+                    points: vec![point],
+                    color: self.imp().pen_color.get(),
+                    width: self.imp().pen_width.get(),
+                });
+            }
+            InkEditTool::Eraser => {
+                self.imp().ink_undo.borrow_mut().push(self.ink_edits());
+                self.erase_ink_at(point);
+            }
+            InkEditTool::View => {}
+        }
+        self.queue_draw();
+    }
+
+    fn update_ink_edit(&self, x: f64, y: f64) {
+        let point = self.page_point(x, y);
+        match self.imp().ink_tool.get() {
+            InkEditTool::Pen => {
+                if let Some(stroke) = self.imp().pending_ink.borrow_mut().as_mut() {
+                    if stroke.points.last().is_none_or(|last| {
+                        (last.x - point.x).abs() + (last.y - point.y).abs() >= 0.7
+                    }) {
+                        stroke.points.push(point);
+                        self.queue_draw();
+                    }
+                }
+            }
+            InkEditTool::Eraser => {
+                self.erase_ink_at(point);
+                self.queue_draw();
+            }
+            InkEditTool::View => {}
+        }
+    }
+
+    fn finish_ink_edit(&self, x: f64, y: f64) {
+        match self.imp().ink_tool.get() {
+            InkEditTool::Pen => {
+                self.update_ink_edit(x, y);
+                if let Some(stroke) = self.imp().pending_ink.borrow_mut().take() {
+                    if !stroke.points.is_empty() {
+                        self.imp().ink_undo.borrow_mut().push(self.ink_edits());
+                        self.imp().ink_edits.borrow_mut().added_strokes.push(stroke);
+                        self.emit_ink_edits_changed();
+                    }
+                }
+            }
+            InkEditTool::Eraser => {
+                self.update_ink_edit(x, y);
+                if self.imp().ink_drag_dirty.replace(false) {
+                    self.emit_ink_edits_changed();
+                } else {
+                    self.imp().ink_undo.borrow_mut().pop();
+                }
+            }
+            InkEditTool::View => {}
+        }
+        self.queue_draw();
+    }
+
+    fn page_point(&self, x: f64, y: f64) -> onenote_core::InkPoint {
+        let Some(scene) = self.scene() else {
+            return onenote_core::InkPoint { x: 0.0, y: 0.0 };
+        };
+        let resolved = self.resolved_layout(&scene);
+        onenote_core::InkPoint {
+            x: f64_to_f32(x / f64::from(self.zoom())) + resolved.bounds.x - CANVAS_MARGIN,
+            y: f64_to_f32(y / f64::from(self.zoom())) + resolved.bounds.y - CANVAS_MARGIN,
+        }
+    }
+
+    fn emit_ink_edits_changed(&self) {
+        let document = self.ink_edits();
+        if let Some(handler) = self.imp().ink_edit_handler.borrow().as_ref() {
+            handler(document);
+        }
+    }
+
+    fn erase_ink_at(&self, point: onenote_core::InkPoint) {
+        let Some(scene) = self.scene() else {
+            return;
+        };
+        let resolved = self.resolved_layout(&scene);
+        let radius = 10.0_f32;
+        for node in &scene.nodes {
+            let ScenePrimitive::Ink { strokes } = &node.primitive else {
+                continue;
+            };
+            let bounds = resolved.node_bounds(node);
+            if point.x < bounds.x - radius
+                || point.x > bounds.x + bounds.width + radius
+                || point.y < bounds.y - radius
+                || point.y > bounds.y + bounds.height + radius
+            {
+                continue;
+            }
+            for (stroke_index, stroke) in strokes.iter().enumerate() {
+                let hit = if stroke.points.len() == 1 {
+                    point_segment_distance(point, stroke.points[0], stroke.points[0]) <= radius
+                } else {
+                    stroke.points.windows(2).any(|segment| {
+                        point_segment_distance(point, segment[0], segment[1]) <= radius
+                    })
+                };
+                if hit {
+                    let erased = ErasedStroke {
+                        object_id: node.source_object_id.as_str().to_owned(),
+                        stroke_index,
+                    };
+                    let mut edits = self.imp().ink_edits.borrow_mut();
+                    if !edits.erased_strokes.contains(&erased) {
+                        edits.erased_strokes.push(erased);
+                        self.imp().ink_drag_dirty.set(true);
+                    }
+                }
+            }
+        }
+        let erased_added: Vec<usize> = self
+            .imp()
+            .ink_edits
+            .borrow()
+            .added_strokes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, stroke)| {
+                let hit = if stroke.points.len() == 1 {
+                    point_segment_distance(point, stroke.points[0], stroke.points[0]) <= radius
+                } else {
+                    stroke.points.windows(2).any(|segment| {
+                        point_segment_distance(point, segment[0], segment[1]) <= radius
+                    })
+                };
+                hit.then_some(index)
+            })
+            .collect();
+        if !erased_added.is_empty() {
+            let mut edits = self.imp().ink_edits.borrow_mut();
+            for index in erased_added.into_iter().rev() {
+                edits.added_strokes.remove(index);
+            }
+            self.imp().ink_drag_dirty.set(true);
+        }
+        if self.imp().ink_drag_dirty.get() {
+            self.queue_draw();
         }
     }
 
@@ -694,6 +1459,140 @@ impl PageCanvas {
         None
     }
 
+/// Parse basic markdown syntax (# heading, **bold**, *italic*, <u>underline</u>, ~~strike~~)
+/// into clean display text and exact TextRun ranges.
+pub fn parse_formatted_text(
+    base: &onenote_core::TextStyle,
+    input: &str,
+) -> (String, onenote_core::TextStyle, Vec<onenote_core::TextRun>) {
+    let mut base_style = base.clone();
+    let trimmed = input.trim_start();
+    let text_to_parse = if trimmed.starts_with("# ") {
+        base_style.bold = true;
+        base_style.font_size = Some(24.0);
+        trimmed[2..].trim_start()
+    } else if trimmed.starts_with("## ") {
+        base_style.bold = true;
+        base_style.font_size = Some(18.0);
+        trimmed[3..].trim_start()
+    } else if trimmed.starts_with("### ") {
+        base_style.bold = true;
+        base_style.font_size = Some(15.0);
+        trimmed[4..].trim_start()
+    } else if trimmed.starts_with("> ") {
+        base_style.italic = true;
+        trimmed[2..].trim_start()
+    } else {
+        input
+    };
+
+    let mut clean_text = String::with_capacity(text_to_parse.len());
+    let mut runs = Vec::new();
+    let mut chars = text_to_parse.chars().peekable();
+    let mut current_utf16: u32 = 0;
+
+    while let Some(c) = chars.next() {
+        if c == '*' && chars.peek() == Some(&'*') {
+            chars.next();
+            let mut content = String::new();
+            let mut closed = false;
+            while let Some(bc) = chars.next() {
+                if bc == '*' && chars.peek() == Some(&'*') {
+                    chars.next();
+                    closed = true;
+                    break;
+                } else {
+                    content.push(bc);
+                }
+            }
+            if closed {
+                let start_utf16 = current_utf16;
+                let len_utf16 = content.encode_utf16().count() as u32;
+                current_utf16 += len_utf16;
+                clean_text.push_str(&content);
+                let mut style = base_style.clone();
+                style.bold = true;
+                runs.push(onenote_core::TextRun {
+                    start_utf16,
+                    end_utf16: current_utf16,
+                    style,
+                });
+            } else {
+                clean_text.push_str("**");
+                current_utf16 += 2;
+                clean_text.push_str(&content);
+                current_utf16 += content.encode_utf16().count() as u32;
+            }
+        } else if c == '*' {
+            let mut content = String::new();
+            let mut closed = false;
+            while let Some(ic) = chars.next() {
+                if ic == '*' {
+                    closed = true;
+                    break;
+                } else {
+                    content.push(ic);
+                }
+            }
+            if closed && !content.is_empty() {
+                let start_utf16 = current_utf16;
+                let len_utf16 = content.encode_utf16().count() as u32;
+                current_utf16 += len_utf16;
+                clean_text.push_str(&content);
+                let mut style = base_style.clone();
+                style.italic = true;
+                runs.push(onenote_core::TextRun {
+                    start_utf16,
+                    end_utf16: current_utf16,
+                    style,
+                });
+            } else {
+                clean_text.push('*');
+                current_utf16 += 1;
+                clean_text.push_str(&content);
+                current_utf16 += content.encode_utf16().count() as u32;
+            }
+        } else if c == '~' && chars.peek() == Some(&'~') {
+            chars.next();
+            let mut content = String::new();
+            let mut closed = false;
+            while let Some(sc) = chars.next() {
+                if sc == '~' && chars.peek() == Some(&'~') {
+                    chars.next();
+                    closed = true;
+                    break;
+                } else {
+                    content.push(sc);
+                }
+            }
+            if closed {
+                let start_utf16 = current_utf16;
+                let len_utf16 = content.encode_utf16().count() as u32;
+                current_utf16 += len_utf16;
+                clean_text.push_str(&content);
+                let mut style = base_style.clone();
+                style.strikethrough = true;
+                runs.push(onenote_core::TextRun {
+                    start_utf16,
+                    end_utf16: current_utf16,
+                    style,
+                });
+            } else {
+                clean_text.push_str("~~");
+                current_utf16 += 2;
+                clean_text.push_str(&content);
+                current_utf16 += content.encode_utf16().count() as u32;
+            }
+        } else {
+            let utf16_len = c.len_utf16() as u32;
+            current_utf16 += utf16_len;
+            clean_text.push(c);
+        }
+    }
+
+    (clean_text, base_style, runs)
+}
+
     fn text_layout(
         &self,
         node: &SceneNode,
@@ -703,9 +1602,27 @@ impl PageCanvas {
         if let Some(layout) = self.imp().text_layouts.borrow().get(&node.id).cloned() {
             return layout;
         }
+        let edited_block = self
+            .imp()
+            .ink_edits
+            .borrow()
+            .text_replacements
+            .get(&node.id.0)
+            .map(|replacement| {
+                let (clean_text, base_style, runs) =
+                    Self::parse_formatted_text(&block.base_style, replacement);
+                let mut edited = block.clone();
+                edited.text = clean_text;
+                edited.base_style = base_style;
+                edited.runs = runs;
+                edited.math.clear();
+                edited.links.clear();
+                edited
+            });
+        let layout_block = edited_block.as_ref().unwrap_or(block);
         let layout = Rc::new(text::layout_with_math(
             &self.pango_context(),
-            block,
+            layout_block,
             marker,
             node.bounds.width,
             |span, style| self.math_shape(span, style),
@@ -775,10 +1692,179 @@ impl PageCanvas {
             CANVAS_MARGIN - resolved.bounds.x,
             CANVAS_MARGIN - resolved.bounds.y,
         ));
+        let edits = self.imp().ink_edits.borrow();
+        let mut ink_batch: Vec<(&SceneNode, Rect, &[onenote_core::InkStroke])> = Vec::new();
+        let mut ink_batch_bounds: Option<Rect> = None;
+
         for node in resolved.visible_nodes(&scene, viewport, VIEWPORT_OVERSCAN) {
-            self.snapshot_node(snapshot, node, resolved.node_bounds(node));
+            let node_bounds = resolved.node_bounds(node);
+            if let ScenePrimitive::Ink { strokes } = &node.primitive {
+                let exceeds_limit = ink_batch_bounds
+                    .is_some_and(|b| b.width > 4096.0 || b.height > 4096.0);
+                if exceeds_limit {
+                    if let Some(bounds) = ink_batch_bounds.take() {
+                        snapshot_ink_batch(snapshot, bounds, &ink_batch, &edits.erased_strokes);
+                        ink_batch.clear();
+                    }
+                }
+                ink_batch_bounds = Some(ink_batch_bounds.map_or(node_bounds, |b| Rect::union(b, node_bounds)));
+                ink_batch.push((node, node_bounds, strokes));
+            } else {
+                if let Some(bounds) = ink_batch_bounds.take() {
+                    snapshot_ink_batch(snapshot, bounds, &ink_batch, &edits.erased_strokes);
+                    ink_batch.clear();
+                }
+                self.snapshot_node(snapshot, node, node_bounds);
+            }
+        }
+        if let Some(bounds) = ink_batch_bounds.take() {
+            snapshot_ink_batch(snapshot, bounds, &ink_batch, &edits.erased_strokes);
+            ink_batch.clear();
         }
         self.snapshot_find_highlights(snapshot, viewport);
+        let edits = self.imp().ink_edits.borrow();
+        snapshot_editable_ink(
+            snapshot,
+            resolved.bounds,
+            &edits.added_strokes,
+            self.imp().pending_ink.borrow().as_ref(),
+        );
+
+        // Render added images anywhere on page
+        for img in &edits.added_images {
+            let file = gio::File::for_path(&img.file_path);
+            if let Ok(texture) = gdk::Texture::from_file(&file) {
+                let rect = graphene_rect(Rect {
+                    x: img.x,
+                    y: img.y,
+                    width: img.width,
+                    height: img.height,
+                });
+                snapshot.append_texture(&texture, &rect);
+                if self.imp().selected_text_node.borrow().as_ref().map(|s| &s.0) == Some(&img.id) {
+                    snapshot_attachment_border(
+                        snapshot,
+                        Rect {
+                            x: img.x,
+                            y: img.y,
+                            width: img.width,
+                            height: img.height,
+                        },
+                        gdk::RGBA::new(0.46, 0.12, 0.65, 0.85),
+                        2.0,
+                    );
+                }
+            }
+        }
+
+        // Render added text boxes anywhere on page
+        for tb in &edits.added_text_boxes {
+            let default_style = onenote_core::TextStyle::default();
+            let (clean_text, base_style, runs) = Self::parse_formatted_text(&default_style, &tb.text);
+            let text_block = onenote_core::TextBlock {
+                text: clean_text.clone(),
+                base_style,
+                runs,
+                math: Vec::new(),
+                links: Vec::new(),
+                alignment: onenote_core::TextAlignment::Left,
+                space_before: 0.0,
+                space_after: 0.0,
+                line_spacing: None,
+            };
+            let layout = text::layout_with_math(
+                &self.pango_context(),
+                &text_block,
+                None,
+                tb.width,
+                |_, _| None,
+            );
+            let bounds = Rect {
+                x: tb.x,
+                y: tb.y,
+                width: tb.width,
+                height: tb.height,
+            };
+            let is_selected = self.imp().selected_text_node.borrow().as_ref().map(|s| &s.0) == Some(&tb.id);
+            if is_selected {
+                let pad = 4.0;
+                let cont_bounds = Rect {
+                    x: bounds.x - pad,
+                    y: bounds.y - pad,
+                    width: bounds.width + pad * 2.0,
+                    height: bounds.height + pad * 2.0,
+                };
+                snapshot.append_color(
+                    &gdk::RGBA::new(0.46, 0.12, 0.65, 0.08),
+                    &graphene_rect(cont_bounds),
+                );
+                snapshot_attachment_border(
+                    snapshot,
+                    cont_bounds,
+                    gdk::RGBA::new(0.46, 0.12, 0.65, 0.75),
+                    1.5,
+                );
+                let handle_bounds = Rect {
+                    x: cont_bounds.x,
+                    y: (cont_bounds.y - 6.0).max(0.0),
+                    width: cont_bounds.width.min(60.0).max(24.0),
+                    height: 5.0,
+                };
+                snapshot.append_color(
+                    &gdk::RGBA::new(0.46, 0.12, 0.65, 0.85),
+                    &graphene_rect(handle_bounds),
+                );
+
+                if self.imp().cursor_blink_visible.get() {
+                    let cursor_byte = self.imp().cursor_char_idx.get().min(clean_text.len());
+                    let pos = layout.layout.index_to_pos(i32::try_from(cursor_byte).unwrap_or(0));
+                    let cur_x = bounds.x + text::from_pango_units(pos.x());
+                    let cur_y = bounds.y + text::from_pango_units(pos.y());
+                    let cur_h = text::from_pango_units(pos.height()).max(18.0);
+                    let cursor_rect = Rect {
+                        x: cur_x,
+                        y: cur_y,
+                        width: 2.0,
+                        height: cur_h,
+                    };
+                    snapshot.append_color(
+                        &gdk::RGBA::new(0.12, 0.12, 0.15, 1.0),
+                        &graphene_rect(cursor_rect),
+                    );
+                }
+            }
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(tb.x, tb.y));
+            if clean_text.is_empty() && is_selected {
+                let placeholder_block = onenote_core::TextBlock {
+                    text: "Type note here...".to_string(),
+                    base_style: {
+                        let mut s = onenote_core::TextStyle::default();
+                        s.foreground = Some(Color { red: 160, green: 160, blue: 160, alpha: 180 });
+                        s
+                    },
+                    runs: Vec::new(),
+                    math: Vec::new(),
+                    links: Vec::new(),
+                    alignment: onenote_core::TextAlignment::Left,
+                    space_before: 0.0,
+                    space_after: 0.0,
+                    line_spacing: None,
+                };
+                let pl_layout = text::layout_with_math(
+                    &self.pango_context(),
+                    &placeholder_block,
+                    None,
+                    tb.width,
+                    |_, _| None,
+                );
+                snapshot.append_layout(&pl_layout.layout, &gdk::RGBA::new(0.65, 0.65, 0.65, 0.6));
+            } else {
+                snapshot.append_layout(&layout.layout, &self.default_text_color());
+            }
+            snapshot.restore();
+        }
+
         snapshot.restore();
     }
 
@@ -824,7 +1910,55 @@ impl PageCanvas {
                 corner_radius: _,
             } => snapshot.append_color(&rgba(*color), &graphene_rect(node_bounds)),
             ScenePrimitive::Text { block, marker } => {
+                let is_selected = self.imp().selected_text_node.borrow().as_ref() == Some(&node.id);
+                if is_selected {
+                    let pad = 4.0;
+                    let cont_bounds = Rect {
+                        x: node_bounds.x - pad,
+                        y: node_bounds.y - pad,
+                        width: node_bounds.width + pad * 2.0,
+                        height: node_bounds.height + pad * 2.0,
+                    };
+                    snapshot.append_color(
+                        &gdk::RGBA::new(0.46, 0.12, 0.65, 0.08),
+                        &graphene_rect(cont_bounds),
+                    );
+                    snapshot_attachment_border(
+                        snapshot,
+                        cont_bounds,
+                        gdk::RGBA::new(0.46, 0.12, 0.65, 0.75),
+                        1.5,
+                    );
+                    let handle_bounds = Rect {
+                        x: cont_bounds.x,
+                        y: (cont_bounds.y - 6.0).max(0.0),
+                        width: cont_bounds.width.min(60.0).max(24.0),
+                        height: 5.0,
+                    };
+                    snapshot.append_color(
+                        &gdk::RGBA::new(0.46, 0.12, 0.65, 0.85),
+                        &graphene_rect(handle_bounds),
+                    );
+                }
                 let layout = self.text_layout(node, block, marker.as_deref());
+                if is_selected && self.imp().cursor_blink_visible.get() {
+                    let current_text = self.text_for_node(&node.id).unwrap_or_else(|| block.visible_text());
+                    let cursor_byte = self.imp().cursor_char_idx.get().min(current_text.len());
+                    let pos = layout.layout.index_to_pos(i32::try_from(cursor_byte).unwrap_or(0));
+                    let cur_x = node_bounds.x + text::from_pango_units(pos.x());
+                    let cur_y = node_bounds.y + text::from_pango_units(pos.y());
+                    let cur_h = text::from_pango_units(pos.height()).max(18.0);
+                    let cursor_rect = Rect {
+                        x: cur_x,
+                        y: cur_y,
+                        width: 2.0,
+                        height: cur_h,
+                    };
+                    snapshot.append_color(
+                        &gdk::RGBA::new(0.12, 0.12, 0.15, 1.0),
+                        &graphene_rect(cursor_rect),
+                    );
+                }
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(node_bounds.x, node_bounds.y));
                 snapshot.append_layout(&layout.layout, &self.default_text_color());
@@ -872,7 +2006,16 @@ impl PageCanvas {
                         .is_some_and(|(resource_id, _, _)| resource_id == attachment.resource.id);
                 self.snapshot_attachment(snapshot, node_bounds, attachment, hovered, focused);
             }
-            ScenePrimitive::Ink { strokes } => snapshot_ink(snapshot, node_bounds, strokes),
+            ScenePrimitive::Ink { strokes } => {
+                let edits = self.imp().ink_edits.borrow();
+                snapshot_ink(
+                    snapshot,
+                    node_bounds,
+                    strokes,
+                    &edits.erased_strokes,
+                    node.source_object_id.as_str(),
+                );
+            }
             ScenePrimitive::Line {
                 color,
                 width,
@@ -1255,14 +2398,90 @@ impl Default for PageCanvas {
     }
 }
 
-fn snapshot_ink(snapshot: &gtk::Snapshot, bounds: Rect, strokes: &[onenote_core::InkStroke]) {
-    let cairo = snapshot.append_cairo(&graphene_rect(bounds));
-    let Some(source_bounds) = ink_bounds(strokes) else {
+fn snapshot_ink_batch(
+    snapshot: &gtk::Snapshot,
+    bounds: Rect,
+    batch: &[(&SceneNode, Rect, &[onenote_core::InkStroke])],
+    erased: &[ErasedStroke],
+) {
+    if batch.is_empty() {
         return;
-    };
-    let scale_x = f64::from(bounds.width / source_bounds.width.max(1.0));
-    let scale_y = f64::from(bounds.height / source_bounds.height.max(1.0));
-    for stroke in strokes {
+    }
+    let cairo = snapshot.append_cairo(&graphene_rect(bounds));
+    cairo.translate(f64::from(bounds.x), f64::from(bounds.y));
+    for (node, node_bounds, strokes) in batch {
+        let dx = node_bounds.x - node.bounds.x;
+        let dy = node_bounds.y - node.bounds.y;
+        let object_id = node.source_object_id.as_str();
+        for (index, stroke) in strokes.iter().enumerate() {
+            if erased
+                .iter()
+                .any(|entry| entry.object_id == object_id && entry.stroke_index == index)
+            {
+                continue;
+            }
+            let Some(first) = stroke.points.first() else {
+                continue;
+            };
+            let color = stroke.color.unwrap_or(Color {
+                red: 32,
+                green: 31,
+                blue: 30,
+                alpha: 255,
+            });
+            cairo.set_source_rgba(
+                f64::from(color.red) / 255.0,
+                f64::from(color.green) / 255.0,
+                f64::from(color.blue) / 255.0,
+                f64::from(stroke.opacity) / 255.0,
+            );
+            cairo.set_line_width(f64::from(stroke.width.max(1.0)));
+            cairo.set_line_cap(gtk::cairo::LineCap::Round);
+            cairo.set_line_join(gtk::cairo::LineJoin::Round);
+            let first_x = f64::from(first.x + dx - bounds.x);
+            let first_y = f64::from(first.y + dy - bounds.y);
+            cairo.move_to(first_x, first_y);
+            if stroke.points.len() == 1 {
+                cairo.arc(
+                    first_x,
+                    first_y,
+                    f64::from(stroke.width.max(1.0)) / 2.0,
+                    0.0,
+                    std::f64::consts::TAU,
+                );
+                let _ignored = cairo.fill();
+                continue;
+            }
+            for point in &stroke.points[1..] {
+                cairo.line_to(
+                    f64::from(point.x + dx - bounds.x),
+                    f64::from(point.y + dy - bounds.y),
+                );
+            }
+            let _ignored = cairo.stroke();
+        }
+    }
+}
+
+fn snapshot_ink(
+    snapshot: &gtk::Snapshot,
+    bounds: Rect,
+    strokes: &[onenote_core::InkStroke],
+    erased: &[ErasedStroke],
+    object_id: &str,
+) {
+    if strokes.is_empty() {
+        return;
+    }
+    let cairo = snapshot.append_cairo(&graphene_rect(bounds));
+    cairo.translate(f64::from(bounds.x), f64::from(bounds.y));
+    for (index, stroke) in strokes.iter().enumerate() {
+        if erased
+            .iter()
+            .any(|entry| entry.object_id == object_id && entry.stroke_index == index)
+        {
+            continue;
+        }
         let Some(first) = stroke.points.first() else {
             continue;
         };
@@ -1281,15 +2500,70 @@ fn snapshot_ink(snapshot: &gtk::Snapshot, bounds: Rect, strokes: &[onenote_core:
         cairo.set_line_width(f64::from(stroke.width.max(1.0)));
         cairo.set_line_cap(gtk::cairo::LineCap::Round);
         cairo.set_line_join(gtk::cairo::LineJoin::Round);
-        cairo.move_to(
-            f64::from(first.x - source_bounds.x) * scale_x,
-            f64::from(first.y - source_bounds.y) * scale_y,
-        );
+        let first_x = f64::from(first.x - bounds.x);
+        let first_y = f64::from(first.y - bounds.y);
+        cairo.move_to(first_x, first_y);
+        if stroke.points.len() == 1 {
+            cairo.arc(
+                first_x,
+                first_y,
+                f64::from(stroke.width.max(1.0)) / 2.0,
+                0.0,
+                std::f64::consts::TAU,
+            );
+            let _ignored = cairo.fill();
+            continue;
+        }
         for point in &stroke.points[1..] {
             cairo.line_to(
-                f64::from(point.x - source_bounds.x) * scale_x,
-                f64::from(point.y - source_bounds.y) * scale_y,
+                f64::from(point.x - bounds.x),
+                f64::from(point.y - bounds.y),
             );
+        }
+        let _ignored = cairo.stroke();
+    }
+}
+
+fn snapshot_editable_ink(
+    snapshot: &gtk::Snapshot,
+    bounds: Rect,
+    strokes: &[EditableStroke],
+    pending: Option<&EditableStroke>,
+) {
+    if strokes.is_empty() && pending.is_none() {
+        return;
+    }
+    let cairo = snapshot.append_cairo(&graphene_rect(bounds));
+    cairo.translate(f64::from(bounds.x), f64::from(bounds.y));
+    for stroke in strokes.iter().chain(pending) {
+        let Some(first) = stroke.points.first() else {
+            continue;
+        };
+        cairo.set_source_rgba(
+            f64::from(stroke.color.red) / 255.0,
+            f64::from(stroke.color.green) / 255.0,
+            f64::from(stroke.color.blue) / 255.0,
+            f64::from(stroke.color.alpha) / 255.0,
+        );
+        cairo.set_line_width(f64::from(stroke.width.max(1.0)));
+        cairo.set_line_cap(gtk::cairo::LineCap::Round);
+        cairo.set_line_join(gtk::cairo::LineJoin::Round);
+        let x = f64::from(first.x - bounds.x);
+        let y = f64::from(first.y - bounds.y);
+        cairo.move_to(x, y);
+        if stroke.points.len() == 1 {
+            cairo.arc(
+                x,
+                y,
+                f64::from(stroke.width.max(1.0)) / 2.0,
+                0.0,
+                std::f64::consts::TAU,
+            );
+            let _ignored = cairo.fill();
+            continue;
+        }
+        for point in &stroke.points[1..] {
+            cairo.line_to(f64::from(point.x - bounds.x), f64::from(point.y - bounds.y));
         }
         let _ignored = cairo.stroke();
     }
@@ -1305,6 +2579,7 @@ fn snapshot_line(
     width: f32,
 ) {
     let cairo = snapshot.append_cairo(&graphene_rect(resolved_bounds));
+    cairo.translate(f64::from(resolved_bounds.x), f64::from(resolved_bounds.y));
     cairo.set_source_rgba(
         f64::from(color.red) / 255.0,
         f64::from(color.green) / 255.0,
@@ -1327,6 +2602,7 @@ fn snapshot_attachment_border(
     width: f64,
 ) {
     let cairo = snapshot.append_cairo(&graphene_rect(bounds));
+    cairo.translate(f64::from(bounds.x), f64::from(bounds.y));
     cairo.set_source_rgba(
         f64::from(color.red()),
         f64::from(color.green()),
@@ -1348,7 +2624,10 @@ fn snapshot_file_icon(snapshot: &gtk::Snapshot, bounds: Rect, color: gdk::RGBA) 
     let icon_size = bounds.height.min(24.0).min(bounds.width).max(1.0);
     let scale = f64::from(icon_size / 24.0);
     let cairo = snapshot.append_cairo(&graphene_rect(bounds));
-    cairo.translate(4.0, f64::from((bounds.height - icon_size) / 2.0));
+    cairo.translate(
+        f64::from(bounds.x) + 4.0,
+        f64::from(bounds.y) + f64::from((bounds.height - icon_size) / 2.0),
+    );
     cairo.scale(scale, scale);
     cairo.set_source_rgba(
         f64::from(color.red()),
@@ -1393,17 +2672,23 @@ fn image_failure_label(
     }
 }
 
-fn ink_bounds(strokes: &[onenote_core::InkStroke]) -> Option<Rect> {
-    strokes
-        .iter()
-        .flat_map(|stroke| stroke.points.iter())
-        .map(|point| Rect {
-            x: point.x,
-            y: point.y,
-            width: 0.0,
-            height: 0.0,
-        })
-        .reduce(Rect::union)
+
+fn point_segment_distance(
+    point: onenote_core::InkPoint,
+    start: onenote_core::InkPoint,
+    end: onenote_core::InkPoint,
+) -> f32 {
+    let dx = end.x - start.x;
+    let dy = end.y - start.y;
+    let length_squared = dx * dx + dy * dy;
+    if length_squared <= f32::EPSILON {
+        return ((point.x - start.x).powi(2) + (point.y - start.y).powi(2)).sqrt();
+    }
+    let projection =
+        (((point.x - start.x) * dx + (point.y - start.y) * dy) / length_squared).clamp(0.0, 1.0);
+    let nearest_x = start.x + projection * dx;
+    let nearest_y = start.y + projection * dy;
+    ((point.x - nearest_x).powi(2) + (point.y - nearest_y).powi(2)).sqrt()
 }
 
 fn rgba(color: Color) -> gdk::RGBA {

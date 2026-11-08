@@ -1,0 +1,21 @@
+---
+source: crates/parser/tests/lib.rs
+expression: parser.parse_notebook(path).unwrap()
+---
+Notebook {
+    file_identity: FileIdentity(
+        Guid {9CF59D79-CD9E-4936-9333-44274544B327},
+    ),
+    entries: [],
+    color: Some(
+        Color {
+            alpha: 255,
+            r: 155,
+            g: 187,
+            b: 210,
+        },
+    ),
+    report: Report {
+        warnings: [],
+    },
+}

@@ -5,13 +5,16 @@
 mod app;
 mod attachment;
 mod dialogs;
+mod ink_edits;
 mod input;
 mod navigation;
 mod navigation_history;
 mod navigation_state;
 mod settings;
+mod templates;
 #[cfg(test)]
 mod test_support;
+mod word_editor;
 mod worker;
 mod workspace;
 

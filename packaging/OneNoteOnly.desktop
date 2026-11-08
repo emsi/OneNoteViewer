@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=OneNoteOnly
+GenericName=OneNote Workstation & Sketch Editor
+Comment=The Native Linux OneNote Editor & Viewer — Vector Inks, Sketches, Rich Text & Arbitrary Note Canvas
+Exec=onenoteonly %F
+Icon=onenoteonly
+Terminal=false
+Type=Application
+Categories=Office;WordProcessor;Graphics;VectorGraphics;
+MimeType=application/ms-onenote;application/x-onenote;
+StartupNotify=true
+StartupWMClass=onenoteonly
+Keywords=onenote;notes;notebook;sketch;ink;drawing;word;office;

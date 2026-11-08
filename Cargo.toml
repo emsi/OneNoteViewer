@@ -6,7 +6,7 @@ members = [
     "crates/onenote-render-gtk",
     "crates/onenote-viewer",
 ]
-exclude = ["third_party/onenote.rs"]
+exclude = ["third_party/onenote.rs", "third_party/onenote-parser-v2"]
 resolver = "2"
 
 [workspace.package]
@@ -20,7 +20,7 @@ license = "GPL-3.0-or-later"
 [workspace.dependencies]
 anyhow = "1.0.98"
 blake3 = "1.8.2"
-gtk = { package = "gtk4", version = "0.9.6", features = ["v4_14"] }
+gtk = { package = "gtk4", version = "0.9.6", features = ["v4_6"] }
 glib-build-tools = "0.20.0"
 image = { version = "=0.25.8", default-features = false, features = ["bmp", "gif", "jpeg", "png", "tiff", "webp"] }
 linkify = "0.11.0"
@@ -44,6 +44,9 @@ typst-render = "=0.12.0"
 unicode-normalization = "0.1.24"
 uuid = { version = "1.16.0", features = ["serde", "v4", "v5"] }
 
+[patch."https://github.com/emsi/onenote.rs"]
+onenote_parser = { path = "third_party/onenote-parser-v2/crates/parser" }
+
 [workspace.lints.rust]
 unsafe_code = "forbid"
 unused_must_use = "deny"
@@ -55,6 +58,6 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 
 [profile.release]
-codegen-units = 1
-lto = "thin"
+codegen-units = 16
+lto = false
 strip = "symbols"

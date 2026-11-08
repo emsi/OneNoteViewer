@@ -11,9 +11,10 @@
   </developer>
   <description>
     <p>
-      OneNote Viewer is a native, read-only Linux application for opening,
-      rendering, indexing, and searching local Microsoft OneNote notebooks
-      while preserving their freeform page layout.
+      OneNote Viewer is a native Linux application for opening, rendering,
+      indexing, and searching local Microsoft OneNote notebooks while
+      preserving their freeform page layout. It can layer local ink and text
+      edits over a page without modifying the original OneNote section.
     </p>
     <p>
       It opens native OneNote sections, notebook directories, and OneNote

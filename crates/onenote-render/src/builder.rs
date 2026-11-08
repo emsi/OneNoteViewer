@@ -260,13 +260,21 @@ impl BuildState<'_> {
                 Ok(())
             }
             ElementContent::Ink(ink) => {
+                let (extent_w, extent_h) = ink_dimensions(ink);
                 let bounds = Rect {
                     x: cursor.x,
                     y: cursor.y,
-                    width: cursor.width,
-                    height: ink_height(ink).max(32.0),
+                    width: extent_w.max(cursor.width.min(60.0)),
+                    height: extent_h.max(24.0),
                 };
-                self.ink(object, bounds, ink, z_index, &flow_path)?;
+                let mut positioned_ink = ink.clone();
+                for stroke in &mut positioned_ink.strokes {
+                    for point in &mut stroke.points {
+                        point.x += cursor.x;
+                        point.y += cursor.y;
+                    }
+                }
+                self.ink(object, bounds, &positioned_ink, z_index, &flow_path)?;
                 cursor.y += bounds.height + self.options.content_padding;
                 Ok(())
             }
@@ -1050,11 +1058,31 @@ fn estimate_text_height(text: &TextBlock, width: f32, options: SceneOptions) -> 
     (line_height * lines).max(math_height)
 }
 
+fn ink_dimensions(ink: &Ink) -> (f32, f32) {
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    let mut max_stroke = 1.0_f32;
+    for stroke in &ink.strokes {
+        max_stroke = max_stroke.max(stroke.width).max(stroke.height);
+        for point in &stroke.points {
+            min_x = min_x.min(point.x);
+            min_y = min_y.min(point.y);
+            max_x = max_x.max(point.x);
+            max_y = max_y.max(point.y);
+        }
+    }
+    if min_x.is_finite() && max_x.is_finite() {
+        let padding = (max_stroke / 2.0).ceil() + 1.0;
+        (max_x - min_x + 2.0 * padding, max_y - min_y + 2.0 * padding)
+    } else {
+        (32.0, 32.0)
+    }
+}
+
 fn ink_height(ink: &Ink) -> f32 {
-    ink.strokes
-        .iter()
-        .map(|stroke| stroke.height)
-        .fold(0.0_f32, f32::max)
+    ink_dimensions(ink).1
 }
 
 fn bounded_label(text: &str, maximum: usize) -> String {

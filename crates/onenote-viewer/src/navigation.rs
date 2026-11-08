@@ -461,8 +461,8 @@ fn tree_factory(
     expansion: Rc<ExpansionRegistry>,
 ) -> gtk::SignalListItemFactory {
     let factory = gtk::SignalListItemFactory::new();
-    factory.connect_setup(|_, item| setup_tree_item(item));
-    factory.connect_bind(move |_, item| bind_tree_item(item, &model, &expansion));
+    factory.connect_setup(|_, item| setup_tree_item(item.upcast_ref()));
+    factory.connect_bind(move |_, item| bind_tree_item(item.upcast_ref(), &model, &expansion));
     factory
 }
 
